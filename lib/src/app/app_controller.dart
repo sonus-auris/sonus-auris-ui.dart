@@ -235,6 +235,10 @@ class AppController {
       s3SecretAccessKey: secrets.s3SecretAccessKey.trim(),
       s3SessionToken: secrets.s3SessionToken.trim(),
       backendDeviceToken: secrets.backendDeviceToken.trim(),
+      // Must be carried through: dropping it here deletes the persisted Supabase
+      // identity token (it has no settings form field), which silently demotes
+      // the device to install-id auth on the next backend call.
+      supabaseAccessToken: secrets.supabaseAccessToken.trim(),
     );
     if (_backendSessionKey != _sessionKey(_config.valueOrNull, normalized)) {
       _backendSession = null;
