@@ -130,9 +130,13 @@ class SoundRecorderBackendClient {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(_errorMessage(body, 'Backend session failed.'));
     }
-    final session = body['session'] as Map<String, dynamic>;
+    final session = _requireMap(body['session'], 'session');
+    final id = session['id'];
+    if (id is! String || id.trim().isEmpty) {
+      throw StateError('Backend session response did not include a session id.');
+    }
     return BackendUploadSession(
-      id: session['id'] as String,
+      id: id,
       expiresAtUtc: _dateTime(session['expiresAt']),
       maxSegmentBytes: _asInt(session['maxSegmentBytes']),
     );
@@ -761,6 +765,16 @@ class SoundRecorderBackendClient {
     }
     final value = jsonDecode(response.body);
     return value is Map<String, dynamic> ? value : const {};
+  }
+
+  /// Returns [value] as a JSON object, or throws a clean [StateError] (rather
+  /// than letting a raw `as` cast surface an uncaught `TypeError`) when an
+  /// authenticated-but-malformed backend response omits an expected object.
+  Map<String, dynamic> _requireMap(Object? value, String what) {
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+    throw StateError('Backend response is missing a "$what" object.');
   }
 
   String _errorMessage(Map<String, dynamic> body, String fallback) {
