@@ -40,6 +40,12 @@ class LocalNotificationsService {
   static const int _scheduleSpan = 64;
   static const int _consentId = 800000;
 
+  /// iOS allows at most 64 *pending* local notifications per app. Cap the total
+  /// scheduled (start + stop) below that, leaving headroom for the consent
+  /// prompt and any other notification, so iOS never silently drops the soonest
+  /// reminders. The schedule re-syncs whenever the app is alive, topping this up.
+  static const int _maxScheduledNotifications = 56;
+
   Future<void> ensureInitialized() async {
     if (_ready) {
       return;
@@ -129,6 +135,11 @@ class LocalNotificationsService {
     var stopIdx = 0;
     final nowLocal = tz.TZDateTime.now(tz.local);
     for (final t in transitions) {
+      // Stay under the iOS pending-notification ceiling. Transitions are
+      // chronological, so this keeps the soonest reminders.
+      if (startIdx + stopIdx >= _maxScheduledNotifications) {
+        break;
+      }
       final when = tz.TZDateTime.from(t.at, tz.local);
       if (when.isBefore(nowLocal)) {
         continue;

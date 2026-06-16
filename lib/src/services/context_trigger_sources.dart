@@ -244,9 +244,14 @@ class NearbyDeviceTriggerSource extends _BaseTriggerSource {
       // Forget previously-seen devices each cycle so a device that leaves and
       // returns re-triggers, while a stationary device doesn't spam every scan.
       _seen.clear();
-      await FlutterBluePlus.startScan(timeout: _scanFor);
+      // lowPower scan mode — these are periodic background-style sweeps that may
+      // run through a long window, so favor battery over latency.
+      await FlutterBluePlus.startScan(
+        timeout: _scanFor,
+        androidScanMode: AndroidScanMode.lowPower,
+      );
     } catch (_) {
-      // Permission denied / adapter off — skip this cycle.
+      // Permission denied / adapter off / a scan already running — skip.
     }
   }
 
