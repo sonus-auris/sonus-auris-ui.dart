@@ -15,6 +15,7 @@ import '../models/cloud_connection.dart';
 import '../models/recording_segment.dart';
 import '../models/supabase_session.dart';
 import '../models/transfer_gate_status.dart';
+import '../services/ambient_trigger_service.dart';
 import '../services/background_capture_service.dart';
 import '../services/crypto/flutter_secure_key_store.dart';
 import '../services/crypto/key_manager.dart';
@@ -25,6 +26,7 @@ import '../services/diagnostic_log.dart';
 import '../services/playback_service.dart';
 import '../services/power_network_gate.dart';
 import '../services/recording_feedback.dart';
+import '../services/recording_schedule_service.dart';
 import '../services/spectral_sidecar.dart';
 import '../services/s3_storage_client.dart';
 import '../services/segment_index.dart';
@@ -59,6 +61,8 @@ class AppController {
     IcloudSyncService? icloudSyncService,
     DiagnosticLog? diagnosticLog,
     RecordingFeedback? feedback,
+    RecordingScheduleService? recordingScheduleService,
+    AmbientTriggerService? ambientTriggerService,
     LocationService? locationService,
     PowerNetworkGate? powerNetworkGate,
     SupabaseRestClient? supabaseRestClient,
@@ -95,6 +99,12 @@ class AppController {
           icloudSyncService ?? IcloudSyncService(encryptor: encryptor),
       diagnostics: effectiveDiagnostics,
       feedback: feedback ?? RecordingFeedback(),
+      recordingScheduleService:
+          recordingScheduleService ??
+          RecordingScheduleService(diagnostics: effectiveDiagnostics),
+      ambientTriggerService:
+          ambientTriggerService ??
+          AmbientTriggerService(diagnostics: effectiveDiagnostics),
       locationService: locationService ?? LocationService(),
       powerNetworkGate: powerNetworkGate ?? PowerNetworkGate(),
       supabaseRestClient: supabaseRestClient ?? SupabaseRestClient(),
@@ -120,6 +130,8 @@ class AppController {
     required this._icloudSyncService,
     required this._diagnostics,
     required this._feedback,
+    required this._recordingScheduleService,
+    required this._ambientTriggerService,
     required this._locationService,
     required this._powerNetworkGate,
     required this._supabaseRestClient,
@@ -144,27 +156,29 @@ class AppController {
           (isUploading, transfer) =>
               (isUploading: isUploading, transfer: transfer),
         );
-    // Fold the message and detections list into one slot (combineLatest is at
-    // its max arity of 9 below).
+    // Fold messages, consent prompts, and detections into one slot
+    // (combineLatest is at its max arity of 9 below).
     final messageAndDetections =
-        Rx.combineLatest2<
+        Rx.combineLatest3<
           String?,
           List<AcousticDetection>,
-          ({String? message, List<AcousticDetection> detections})
+          RecordingConsentRequest?,
+          ({
+            String? message,
+            List<AcousticDetection> detections,
+            RecordingConsentRequest? consent,
+          })
         >(
           _message,
           _detectionsList,
-          (message, detections) =>
-              (message: message, detections: detections),
+          _recordingConsentRequest,
+          (message, detections, consent) =>
+              (message: message, detections: detections, consent: consent),
         );
     // Fold the init + starting flags into one slot (combineLatest is at its max
     // arity of 9 below).
     final lifecycle =
-        Rx.combineLatest2<
-          bool,
-          bool,
-          ({bool isInitializing, bool isStarting})
-        >(
+        Rx.combineLatest2<bool, bool, ({bool isInitializing, bool isStarting})>(
           _isInitializing,
           _isStarting,
           (isInitializing, isStarting) =>
@@ -180,7 +194,11 @@ class AppController {
               List<String>,
               ({bool isInitializing, bool isStarting}),
               ({bool isUploading, TransferGateStatus transfer}),
-              ({String? message, List<AcousticDetection> detections}),
+              ({
+                String? message,
+                List<AcousticDetection> detections,
+                RecordingConsentRequest? consent,
+              }),
               AppViewModel
             >(
               _config,
@@ -215,6 +233,7 @@ class AppController {
                   isUploading: uploadState.isUploading,
                   transferStatus: uploadState.transfer,
                   message: messageState.message,
+                  recordingConsentRequest: messageState.consent,
                   detections: messageState.detections,
                 );
               },
@@ -233,6 +252,8 @@ class AppController {
   final IcloudSyncService _icloudSyncService;
   final DiagnosticLog _diagnostics;
   final RecordingFeedback _feedback;
+  final RecordingScheduleService _recordingScheduleService;
+  final AmbientTriggerService _ambientTriggerService;
   final LocationService _locationService;
   final PowerNetworkGate _powerNetworkGate;
   final SupabaseRestClient _supabaseRestClient;
@@ -250,26 +271,33 @@ class AppController {
   Future<void>? _supabaseRefreshInFlight;
   Future<void>? _icloudSyncInFlight;
   StreamSubscription<void>? _transferConditionsSubscription;
+  StreamSubscription<AmbientRecordingTrigger>? _ambientTriggerSubscription;
   String? _lastReportedTransferSignature;
   DateTime? _lastTransferReportAt;
+  DateTime? _lastAmbientPromptAt;
 
   /// While paused, the device re-affirms its state to the backend at least this
   /// often so the server-side pause lease (which the cloud-copy drain honors)
   /// stays fresh. Must be comfortably shorter than the backend lease window.
   static const Duration _transferReaffirmInterval = Duration(minutes: 5);
+  static const Duration _ambientPromptCooldown = Duration(minutes: 10);
 
   final BehaviorSubject<AppConfig> _config = BehaviorSubject();
   final BehaviorSubject<CloudSecrets> _secrets = BehaviorSubject();
   final BehaviorSubject<List<RecordingSegment>> _segments =
       BehaviorSubject.seeded(const []);
   final BehaviorSubject<bool> _isInitializing = BehaviorSubject.seeded(true);
+
   /// True while [startRecording] is in flight (permission prompts loading, mic
   /// stream opening) so the UI can show a spinner instead of a frozen button.
   final BehaviorSubject<bool> _isStarting = BehaviorSubject.seeded(false);
   final BehaviorSubject<bool> _isUploading = BehaviorSubject.seeded(false);
-  final BehaviorSubject<TransferGateStatus> _transfer =
-      BehaviorSubject.seeded(const TransferGateStatus.unknown());
+  final BehaviorSubject<TransferGateStatus> _transfer = BehaviorSubject.seeded(
+    const TransferGateStatus.unknown(),
+  );
   final BehaviorSubject<String?> _message = BehaviorSubject.seeded(null);
+  final BehaviorSubject<RecordingConsentRequest?> _recordingConsentRequest =
+      BehaviorSubject.seeded(null);
   final BehaviorSubject<List<AcousticDetection>> _detectionsList =
       BehaviorSubject.seeded(const []);
   final PublishSubject<void> _uploadRequests = PublishSubject();
@@ -351,18 +379,38 @@ class AppController {
         _diagnostics.add('Transfer condition watch failed: $error');
       },
     );
+    _ambientTriggerSubscription = _ambientTriggerService.events.listen(
+      (event) => unawaited(_onAmbientRecordingTrigger(event)),
+      onError: (Object error) {
+        _diagnostics.add('Ambient trigger watch failed: $error');
+      },
+    );
+    await _ambientTriggerService.start();
     await _refreshTransferStatus();
     _isInitializing.add(false);
     _diagnostics.add('App controller init completed.');
     await _ensureSupabaseReady();
     requestUploadDrain();
     await _enforceRetention();
-    // "Always-on": if the user enabled auto-start, begin capturing on launch
-    // (including the boot-triggered relaunch) without them pressing Start.
-    if (config.autoStartCaptureEnabled && !_recorder.isRecording) {
+    await _applyRecordingSchedule(config);
+    // "Always-on": if the user enabled auto-start and no weekly schedule is
+    // taking over consent windows, begin capturing on launch (including the
+    // boot-triggered relaunch) without them pressing Start.
+    if (!config.recordingSchedule.hasAnyWindows &&
+        config.autoStartCaptureEnabled &&
+        !_recorder.isRecording) {
       _diagnostics.add('Auto-start capture is enabled; starting recording.');
-      await startRecording();
+      await _startRecordingAllowed();
     }
+  }
+
+  Future<void> _applyRecordingSchedule(AppConfig config) {
+    return _recordingScheduleService.configure(
+      schedule: config.recordingSchedule,
+      onStart: _startRecordingAllowed,
+      onStop: stopRecording,
+      isRecording: () => _recorder.isRecording,
+    );
   }
 
   Future<void> _onTransferConditionsChanged() async {
@@ -372,6 +420,47 @@ class AppController {
       requestUploadDrain();
       unawaited(syncIcloudBackups());
     }
+  }
+
+  Future<void> _onAmbientRecordingTrigger(AmbientRecordingTrigger event) async {
+    final config = _config.valueOrNull;
+    if (config == null) {
+      return;
+    }
+    final now = DateTime.now();
+    if (!config.recordingSchedule.hasAnyWindows ||
+        !config.recordingSchedule.isActiveAt(now)) {
+      _diagnostics.add(
+        'Ambient trigger ignored outside the recording schedule.',
+      );
+      return;
+    }
+    if (_recorder.isRecording || _isStarting.value) {
+      _diagnostics.add('Ambient trigger ignored because recording is active.');
+      return;
+    }
+    if (_recordingConsentRequest.valueOrNull != null) {
+      _diagnostics.add(
+        'Ambient trigger ignored; consent prompt already shown.',
+      );
+      return;
+    }
+    final lastPromptAt = _lastAmbientPromptAt;
+    if (lastPromptAt != null &&
+        now.difference(lastPromptAt) < _ambientPromptCooldown) {
+      _diagnostics.add('Ambient trigger ignored during prompt cooldown.');
+      return;
+    }
+    _lastAmbientPromptAt = now;
+    _recordingConsentRequest.add(
+      RecordingConsentRequest(
+        id: now.microsecondsSinceEpoch.toString(),
+        title: '${event.label}. Start recording?',
+        detail: event.detail.isEmpty
+            ? 'This is inside your scheduled recording window.'
+            : '${event.detail} is inside your scheduled recording window.',
+      ),
+    );
   }
 
   /// Evaluates the current power/network gate against config, publishes the
@@ -410,8 +499,7 @@ class AppController {
     // fresh even when the gate decision itself hasn't changed.
     final needsReaffirm =
         status.isPaused &&
-        (lastAt == null ||
-            now.difference(lastAt) >= _transferReaffirmInterval);
+        (lastAt == null || now.difference(lastAt) >= _transferReaffirmInterval);
     if (signature == _lastReportedTransferSignature && !needsReaffirm) {
       return;
     }
@@ -486,6 +574,7 @@ class AppController {
     await _settingsStore.saveConfig(normalized);
     _config.add(normalized);
     _message.add('Settings saved.');
+    await _applyRecordingSchedule(normalized);
     // Battery-saver / network-policy may have changed; re-evaluate the gate (and
     // report the new policy to the backend) before draining.
     await _refreshTransferStatus();
@@ -738,9 +827,7 @@ class AppController {
       _diagnostics.add('Device registered with backend.');
       requestUploadDrain();
     } catch (error) {
-      _diagnostics.add(
-        'Device registration failed: ${_describeError(error)}',
-      );
+      _diagnostics.add('Device registration failed: ${_describeError(error)}');
     }
   }
 
@@ -768,7 +855,22 @@ class AppController {
   }
 
   Future<void> startRecording() async {
+    final config = _config.valueOrNull;
+    if (config != null &&
+        config.recordingSchedule.hasAnyWindows &&
+        !config.recordingSchedule.isActiveAt(DateTime.now())) {
+      _diagnostics.add(
+        'Start blocked outside the configured recording schedule.',
+      );
+      _message.add('Recording schedule is off right now.');
+      return;
+    }
+    await _startRecordingAllowed();
+  }
+
+  Future<void> _startRecordingAllowed() async {
     _diagnostics.add('Start recording requested.');
+    _recordingConsentRequest.add(null);
     // Surface a busy state for the whole flow — the notification + microphone
     // permission prompts can take a moment to appear, and the button should
     // spin rather than look unresponsive while the user waits for them.
@@ -1080,28 +1182,28 @@ class AppController {
       _secrets.valueOrNull?.hasSoundCloudToken ?? false;
 
   Future<void> linkSpotify() => _linkMusic(
-        label: 'Spotify',
-        config: MusicOAuthService.spotify(
-          clientId: MusicOAuthConstants.spotifyClientId,
-          redirectUri: MusicOAuthConstants.redirectUri,
-        ),
-        apply: (secrets, tokens) => secrets.copyWith(
-          spotifyAccessToken: tokens.accessToken,
-          spotifyRefreshToken: tokens.refreshToken ?? '',
-        ),
-      );
+    label: 'Spotify',
+    config: MusicOAuthService.spotify(
+      clientId: MusicOAuthConstants.spotifyClientId,
+      redirectUri: MusicOAuthConstants.redirectUri,
+    ),
+    apply: (secrets, tokens) => secrets.copyWith(
+      spotifyAccessToken: tokens.accessToken,
+      spotifyRefreshToken: tokens.refreshToken ?? '',
+    ),
+  );
 
   Future<void> linkSoundCloud() => _linkMusic(
-        label: 'SoundCloud',
-        config: MusicOAuthService.soundCloud(
-          clientId: MusicOAuthConstants.soundCloudClientId,
-          redirectUri: MusicOAuthConstants.redirectUri,
-        ),
-        apply: (secrets, tokens) => secrets.copyWith(
-          soundCloudAccessToken: tokens.accessToken,
-          soundCloudRefreshToken: tokens.refreshToken ?? '',
-        ),
-      );
+    label: 'SoundCloud',
+    config: MusicOAuthService.soundCloud(
+      clientId: MusicOAuthConstants.soundCloudClientId,
+      redirectUri: MusicOAuthConstants.redirectUri,
+    ),
+    apply: (secrets, tokens) => secrets.copyWith(
+      soundCloudAccessToken: tokens.accessToken,
+      soundCloudRefreshToken: tokens.refreshToken ?? '',
+    ),
+  );
 
   Future<void> unlinkSpotify() async {
     if (!_secrets.hasValue) return;
@@ -1287,8 +1389,10 @@ class AppController {
         ),
       );
     } catch (error) {
-      _message.add('Starting ${provider.label} link failed: '
-          '${_describeError(error)}');
+      _message.add(
+        'Starting ${provider.label} link failed: '
+        '${_describeError(error)}',
+      );
       return null;
     }
   }
@@ -1405,15 +1509,34 @@ class AppController {
     _message.add(null);
   }
 
+  Future<void> approveRecordingConsentRequest(String id) async {
+    final request = _recordingConsentRequest.valueOrNull;
+    if (request == null || request.id != id) {
+      return;
+    }
+    _recordingConsentRequest.add(null);
+    await startRecording();
+  }
+
+  Future<void> dismissRecordingConsentRequest(String id) async {
+    final request = _recordingConsentRequest.valueOrNull;
+    if (request != null && request.id == id) {
+      _recordingConsentRequest.add(null);
+    }
+  }
+
   Future<void> dispose() async {
     await _closedSegmentsSubscription?.cancel();
     await _triggerSubscription?.cancel();
     await _detectionsSubscription?.cancel();
     await _uploadSubscription?.cancel();
     await _transferConditionsSubscription?.cancel();
+    await _ambientTriggerSubscription?.cancel();
     await _uploadRequests.close();
     await _recorder.dispose();
     await _playback.dispose();
+    _recordingScheduleService.dispose();
+    await _ambientTriggerService.dispose();
     _s3StorageClient.close();
     _icloudSyncService.close();
     _backendClient.close();
@@ -1433,6 +1556,7 @@ class AppController {
     await _isUploading.close();
     await _transfer.close();
     await _message.close();
+    await _recordingConsentRequest.close();
     await _detectionsList.close();
   }
 
@@ -1475,8 +1599,9 @@ class AppController {
     // multi-day backfill is intentionally out of scope.
     if (!_archiveCaughtUp) {
       _archiveCaughtUp = true;
-      final yesterday =
-          _localDateOnly(DateTime.now().subtract(const Duration(days: 1)));
+      final yesterday = _localDateOnly(
+        DateTime.now().subtract(const Duration(days: 1)),
+      );
       if (_lastArchivedDay == null || yesterday.isAfter(_lastArchivedDay!)) {
         await _archiveDayOfLife(yesterday);
       }
@@ -1531,7 +1656,8 @@ class AppController {
         detections: detections,
         geo: geo,
         resolvePlaces:
-            _config.value.placeNamesEnabled && _config.value.locationTaggingEnabled,
+            _config.value.placeNamesEnabled &&
+            _config.value.locationTaggingEnabled,
       );
       if (result.didUpload) {
         _lastArchivedDay = dayLocal;

@@ -8,6 +8,18 @@ import '../models/recording_segment.dart';
 import '../models/storage_estimate.dart';
 import '../models/transfer_gate_status.dart';
 
+class RecordingConsentRequest {
+  const RecordingConsentRequest({
+    required this.id,
+    required this.title,
+    required this.detail,
+  });
+
+  final String id;
+  final String title;
+  final String detail;
+}
+
 class AppViewModel {
   const AppViewModel({
     required this.config,
@@ -21,6 +33,7 @@ class AppViewModel {
     this.isStarting = false,
     this.transferStatus = const TransferGateStatus.unknown(),
     this.message,
+    this.recordingConsentRequest,
     this.detections = const [],
   });
 
@@ -45,6 +58,7 @@ class AppViewModel {
   /// true, cloud uploads are deferred (local capture continues).
   final TransferGateStatus transferStatus;
   final String? message;
+  final RecordingConsentRequest? recordingConsentRequest;
 
   /// True when uploads are configured but currently held back by the battery /
   /// network gate (as opposed to simply having nothing to upload).
@@ -55,8 +69,9 @@ class AppViewModel {
   bool get isSignedIn => secrets.hasSupabaseSession;
 
   /// Email of the signed-in user, or null when signed out / unknown.
-  String? get signedInEmail =>
-      secrets.supabaseEmail.trim().isEmpty ? null : secrets.supabaseEmail.trim();
+  String? get signedInEmail => secrets.supabaseEmail.trim().isEmpty
+      ? null
+      : secrets.supabaseEmail.trim();
 
   /// True once the device holds a backend device token issued after sign-in.
   bool get isDeviceRegistered => secrets.hasBackendDeviceToken;

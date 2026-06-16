@@ -240,6 +240,40 @@ class _SettingsPageState extends State<SettingsPage> {
           body: SafeArea(
             child: Column(
               children: [
+                if (viewModel.recordingConsentRequest != null)
+                  MaterialBanner(
+                    content: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(viewModel.recordingConsentRequest!.title),
+                        Text(
+                          viewModel.recordingConsentRequest!.detail,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                    leading: const Icon(Icons.sensors),
+                    actions: [
+                      TextButton(
+                        onPressed: () =>
+                            widget.controller.dismissRecordingConsentRequest(
+                              viewModel.recordingConsentRequest!.id,
+                            ),
+                        child: const Text('Not now'),
+                      ),
+                      FilledButton.icon(
+                        onPressed: viewModel.isStarting
+                            ? null
+                            : () => widget.controller
+                                  .approveRecordingConsentRequest(
+                                    viewModel.recordingConsentRequest!.id,
+                                  ),
+                        icon: const Icon(Icons.mic),
+                        label: const Text('Start'),
+                      ),
+                    ],
+                  ),
                 if (viewModel.message != null)
                   MaterialBanner(
                     content: Text(viewModel.message!),
@@ -308,12 +342,11 @@ class _SettingsPageState extends State<SettingsPage> {
           onStopPlayback: widget.controller.stopPlayback,
           onSendAlert: widget.controller.sendManualAlert,
           earliestLocalUtc: widget.controller.earliestLocalSegmentUtc,
-          onPlayRange: (startUtc, endUtc, loop) =>
-              widget.controller.playRange(
-                startUtc: startUtc,
-                endUtc: endUtc,
-                loop: loop,
-              ),
+          onPlayRange: (startUtc, endUtc, loop) => widget.controller.playRange(
+            startUtc: startUtc,
+            endUtc: endUtc,
+            loop: loop,
+          ),
           onSaveRangePermanently: (startedAtUtc, endedAtUtc) =>
               widget.controller.saveRangePermanently(
                 startedAtUtc: startedAtUtc,
@@ -611,8 +644,10 @@ class _DetectionsSection extends StatelessWidget {
       child: detections.isEmpty
           ? const Padding(
               padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text('No detections yet. The engine activates when sound '
-                  'is sustained.'),
+              child: Text(
+                'No detections yet. The engine activates when sound '
+                'is sustained.',
+              ),
             )
           : Column(
               children: [
@@ -653,7 +688,8 @@ class _PlaybackView extends StatefulWidget {
   final DateTime? earliestLocalUtc;
 
   /// Play a chosen wall-clock window (loop optional) across the rolling buffer.
-  final void Function(DateTime startUtc, DateTime endUtc, bool loop) onPlayRange;
+  final void Function(DateTime startUtc, DateTime endUtc, bool loop)
+  onPlayRange;
   final Future<void> Function(DateTime startedAtUtc, DateTime endedAtUtc)
   onSaveRangePermanently;
 
@@ -888,11 +924,15 @@ class _PlaybackViewState extends State<_PlaybackView> {
   Widget _buildRangePlayback(BuildContext context, AppViewModel viewModel) {
     final theme = Theme.of(context);
     final now = DateTime.now();
-    final earliest = widget.earliestLocalUtc?.toLocal() ??
+    final earliest =
+        widget.earliestLocalUtc?.toLocal() ??
         now.subtract(Duration(hours: viewModel.config.deviceRetentionHours));
     // Lazy seed: default to the last 10 minutes up to "now".
     _playEnd ??= now;
-    _playStart ??= _maxDate(earliest, now.subtract(const Duration(minutes: 10)));
+    _playStart ??= _maxDate(
+      earliest,
+      now.subtract(const Duration(minutes: 10)),
+    );
 
     var domainMin = earliest;
     var domainMax = now;
@@ -903,8 +943,7 @@ class _PlaybackViewState extends State<_PlaybackView> {
     final end = _clampDate(_maxDate(_playEnd!, start), domainMin, domainMax);
     final minMs = domainMin.millisecondsSinceEpoch.toDouble();
     final maxMs = domainMax.millisecondsSinceEpoch.toDouble();
-    final startMs =
-        start.millisecondsSinceEpoch.toDouble().clamp(minMs, maxMs);
+    final startMs = start.millisecondsSinceEpoch.toDouble().clamp(minMs, maxMs);
     final endMs = end.millisecondsSinceEpoch.toDouble().clamp(startMs, maxMs);
     final hasAudio = viewModel.localSegments.isNotEmpty;
     // Whether any local segment actually overlaps the chosen window — so we can
@@ -924,8 +963,9 @@ class _PlaybackViewState extends State<_PlaybackView> {
         Text(
           'Pick a window from the last ${viewModel.config.deviceRetentionHours} h '
           'up to now, then play it — or loop it.',
-          style: theme.textTheme.bodySmall
-              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
         RangeSlider(
           min: minMs,
@@ -934,11 +974,11 @@ class _PlaybackViewState extends State<_PlaybackView> {
           labels: RangeLabels(_clockLabel(start), _clockLabel(end)),
           onChanged: hasAudio
               ? (v) => setState(() {
-                    _playStart =
-                        DateTime.fromMillisecondsSinceEpoch(v.start.round());
-                    _playEnd =
-                        DateTime.fromMillisecondsSinceEpoch(v.end.round());
-                  })
+                  _playStart = DateTime.fromMillisecondsSinceEpoch(
+                    v.start.round(),
+                  );
+                  _playEnd = DateTime.fromMillisecondsSinceEpoch(v.end.round());
+                })
               : null,
         ),
         Row(
@@ -947,8 +987,10 @@ class _PlaybackViewState extends State<_PlaybackView> {
               child: OutlinedButton.icon(
                 onPressed: () => _pickDateTime(true, domainMin, domainMax),
                 icon: const Icon(Icons.first_page, size: 16),
-                label: Text('Start  ${_clockLabel(start)}',
-                    overflow: TextOverflow.ellipsis),
+                label: Text(
+                  'Start  ${_clockLabel(start)}',
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ),
             const SizedBox(width: 8),
@@ -956,8 +998,10 @@ class _PlaybackViewState extends State<_PlaybackView> {
               child: OutlinedButton.icon(
                 onPressed: () => _pickDateTime(false, domainMin, domainMax),
                 icon: const Icon(Icons.last_page, size: 16),
-                label: Text('End  ${_clockLabel(end)}',
-                    overflow: TextOverflow.ellipsis),
+                label: Text(
+                  'End  ${_clockLabel(end)}',
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ),
           ],
@@ -975,11 +1019,13 @@ class _PlaybackViewState extends State<_PlaybackView> {
                 label: Text(preset.label),
                 onPressed: hasAudio
                     ? () => setState(() {
-                          final e = DateTime.now();
-                          _playEnd = e;
-                          _playStart = _maxDate(
-                              earliest, e.subtract(Duration(minutes: preset.minutes)));
-                        })
+                        final e = DateTime.now();
+                        _playEnd = e;
+                        _playStart = _maxDate(
+                          earliest,
+                          e.subtract(Duration(minutes: preset.minutes)),
+                        );
+                      })
                     : null,
               ),
           ],
@@ -995,8 +1041,11 @@ class _PlaybackViewState extends State<_PlaybackView> {
           children: [
             FilledButton.icon(
               onPressed: hasAudio && rangeHasAudio
-                  ? () =>
-                      widget.onPlayRange(start.toUtc(), end.toUtc(), _loopRange)
+                  ? () => widget.onPlayRange(
+                      start.toUtc(),
+                      end.toUtc(),
+                      _loopRange,
+                    )
                   : null,
               icon: Icon(_loopRange ? Icons.repeat : Icons.play_arrow),
               label: Text(_loopRange ? 'Play range (loop)' : 'Play range'),
@@ -1006,8 +1055,9 @@ class _PlaybackViewState extends State<_PlaybackView> {
               Expanded(
                 child: Text(
                   'No local audio in that time range.',
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],
@@ -1035,8 +1085,13 @@ class _PlaybackViewState extends State<_PlaybackView> {
     if (time == null || !mounted) {
       return;
     }
-    final picked =
-        DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    final picked = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
     setState(() {
       if (isStart) {
         _playStart = picked;
@@ -1219,6 +1274,11 @@ class _ConfigureView extends StatelessWidget {
           },
         ),
         const SizedBox(height: 16),
+        _RecordingScheduleSection(
+          config: viewModel.config,
+          onChanged: onAudioConfigChanged,
+        ),
+        const SizedBox(height: 16),
         _TransferPolicySection(
           config: viewModel.config,
           status: viewModel.transferStatus,
@@ -1298,9 +1358,7 @@ class _AccountSectionState extends State<_AccountSection> {
     super.dispose();
   }
 
-  Future<void> _run(
-    Future<void> Function(String, String) action,
-  ) async {
+  Future<void> _run(Future<void> Function(String, String) action) async {
     if (_busy) {
       return;
     }
@@ -1375,9 +1433,7 @@ class _AccountSectionState extends State<_AccountSection> {
           const SizedBox(height: 12),
           TextField(
             controller: widget.supabaseAnonKeyController,
-            decoration: const InputDecoration(
-              labelText: 'Supabase anon key',
-            ),
+            decoration: const InputDecoration(labelText: 'Supabase anon key'),
             obscureText: true,
             autocorrect: false,
             enableSuggestions: false,
@@ -1428,6 +1484,441 @@ class _AccountSectionState extends State<_AccountSection> {
         ],
       ),
     );
+  }
+}
+
+class _RecordingScheduleSection extends StatelessWidget {
+  const _RecordingScheduleSection({
+    required this.config,
+    required this.onChanged,
+  });
+
+  final AppConfig config;
+  final ValueChanged<AppConfig> onChanged;
+
+  void _updateDay(RecordingDaySchedule updated) {
+    final days = config.recordingSchedule.normalizedDays
+        .map((day) => day.dayOfWeek == updated.dayOfWeek ? updated : day)
+        .toList();
+    onChanged(
+      config.copyWith(recordingSchedule: WeeklyRecordingSchedule(days: days)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final days = config.recordingSchedule.normalizedDays;
+    return _Section(
+      title: 'Recording Schedule',
+      child: Column(
+        children: [
+          for (var i = 0; i < days.length; i += 1) ...[
+            _ScheduleDayRow(day: days[i], onChanged: _updateDay),
+            if (i != days.length - 1) const Divider(height: 22),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ScheduleDayRow extends StatelessWidget {
+  const _ScheduleDayRow({required this.day, required this.onChanged});
+
+  final RecordingDaySchedule day;
+  final ValueChanged<RecordingDaySchedule> onChanged;
+
+  static const _labels = <int, String>{
+    DateTime.monday: 'Mon',
+    DateTime.tuesday: 'Tue',
+    DateTime.wednesday: 'Wed',
+    DateTime.thursday: 'Thu',
+    DateTime.friday: 'Fri',
+    DateTime.saturday: 'Sat',
+    DateTime.sunday: 'Sun',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final label = Text(
+      _labels[day.dayOfWeek] ?? '',
+      style: theme.textTheme.titleSmall,
+    );
+    final allDay = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Checkbox(
+          value: day.allDay,
+          onChanged: (value) {
+            onChanged(day.copyWith(allDay: value ?? false));
+          },
+        ),
+        const Text('All day'),
+      ],
+    );
+    final track = _ScheduleTrack(day: day, onChanged: onChanged);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 620;
+        if (compact) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  SizedBox(width: 56, child: label),
+                  allDay,
+                ],
+              ),
+              const SizedBox(height: 8),
+              track,
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(width: 52, child: label),
+            SizedBox(width: 118, child: allDay),
+            const SizedBox(width: 12),
+            Expanded(child: track),
+          ],
+        );
+      },
+    );
+  }
+}
+
+enum _ScheduleDragKind { start, end, segment }
+
+class _ScheduleDrag {
+  const _ScheduleDrag({
+    required this.index,
+    required this.kind,
+    this.minuteOffset = 0,
+  });
+
+  final int index;
+  final _ScheduleDragKind kind;
+  final int minuteOffset;
+}
+
+class _ScheduleTrack extends StatefulWidget {
+  const _ScheduleTrack({required this.day, required this.onChanged});
+
+  final RecordingDaySchedule day;
+  final ValueChanged<RecordingDaySchedule> onChanged;
+
+  @override
+  State<_ScheduleTrack> createState() => _ScheduleTrackState();
+}
+
+class _ScheduleTrackState extends State<_ScheduleTrack> {
+  static const _minWindowMinutes = 15;
+  static const _snapMinutes = 15;
+
+  RecordingDaySchedule? _draftDay;
+  _ScheduleDrag? _drag;
+  Offset? _doubleTapPosition;
+
+  RecordingDaySchedule get _activeDay => _draftDay ?? widget.day;
+
+  @override
+  void didUpdateWidget(covariant _ScheduleTrack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_draftDay != null && widget.day == _draftDay) {
+      _draftDay = null;
+    } else if (_drag == null && oldWidget.day != widget.day) {
+      _draftDay = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = !_activeDay.allDay;
+    return Column(
+      children: [
+        SizedBox(
+          height: 44,
+          child: Semantics(
+            label: '${_weekdayName(_activeDay.dayOfWeek)} recording schedule',
+            child: MouseRegion(
+              cursor: enabled
+                  ? SystemMouseCursors.click
+                  : SystemMouseCursors.basic,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onDoubleTapDown: enabled
+                    ? (details) => _doubleTapPosition = details.localPosition
+                    : null,
+                onDoubleTap: enabled ? _splitOrCreateWindow : null,
+                onPanStart: enabled ? _startDrag : null,
+                onPanUpdate: enabled ? _updateDrag : null,
+                onPanEnd: enabled ? (_) => _finishDrag() : null,
+                onPanCancel: enabled ? _finishDrag : null,
+                child: CustomPaint(
+                  painter: _ScheduleTrackPainter(
+                    windows: _activeDay.effectiveWindows,
+                    disabled: !enabled,
+                  ),
+                  child: const SizedBox.expand(),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 2),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: const [
+            Text('00'),
+            Text('06'),
+            Text('12'),
+            Text('18'),
+            Text('24'),
+          ],
+        ),
+      ],
+    );
+  }
+
+  void _splitOrCreateWindow() {
+    final position = _doubleTapPosition;
+    final width = context.size?.width ?? 0;
+    if (position == null || width <= 0) {
+      return;
+    }
+    final minute = _snapMinute(_minuteForX(position.dx, width));
+    final windows = _activeDay.normalizedWindows.toList();
+    final index = windows.indexWhere((window) => window.containsMinute(minute));
+    if (index < 0) {
+      final start = (minute - 30).clamp(0, RecordingWindow.minutesPerDay - 60);
+      windows.add(RecordingWindow(startMinute: start, endMinute: start + 60));
+      _setDraft(windows, commit: true);
+      return;
+    }
+    final window = windows[index];
+    if (window.endMinute - window.startMinute < _minWindowMinutes * 2) {
+      return;
+    }
+    final split = minute.clamp(
+      window.startMinute + _minWindowMinutes,
+      window.endMinute - _minWindowMinutes,
+    );
+    windows
+      ..removeAt(index)
+      ..insertAll(index, [
+        RecordingWindow(startMinute: window.startMinute, endMinute: split),
+        RecordingWindow(startMinute: split, endMinute: window.endMinute),
+      ]);
+    _setDraft(windows, commit: true);
+  }
+
+  void _startDrag(DragStartDetails details) {
+    final width = context.size?.width ?? 0;
+    if (width <= 0) {
+      return;
+    }
+    _drag = _dragFor(details.localPosition, width);
+  }
+
+  void _updateDrag(DragUpdateDetails details) {
+    final drag = _drag;
+    final width = context.size?.width ?? 0;
+    if (drag == null || width <= 0) {
+      return;
+    }
+    final windows = _activeDay.normalizedWindows.toList();
+    if (drag.index >= windows.length) {
+      return;
+    }
+    final window = windows[drag.index];
+    final minute = _snapMinute(_minuteForX(details.localPosition.dx, width));
+    switch (drag.kind) {
+      case _ScheduleDragKind.start:
+        windows[drag.index] = window.copyWith(
+          startMinute: minute.clamp(0, window.endMinute - _minWindowMinutes),
+        );
+        break;
+      case _ScheduleDragKind.end:
+        windows[drag.index] = window.copyWith(
+          endMinute: minute.clamp(
+            window.startMinute + _minWindowMinutes,
+            RecordingWindow.minutesPerDay,
+          ),
+        );
+        break;
+      case _ScheduleDragKind.segment:
+        final length = window.endMinute - window.startMinute;
+        final start = (minute - drag.minuteOffset).clamp(
+          0,
+          RecordingWindow.minutesPerDay - length,
+        );
+        windows[drag.index] = RecordingWindow(
+          startMinute: start,
+          endMinute: start + length,
+        );
+        break;
+    }
+    _setDraft(windows);
+  }
+
+  void _finishDrag() {
+    final draft = _draftDay;
+    _drag = null;
+    if (draft != null) {
+      widget.onChanged(draft);
+    }
+  }
+
+  _ScheduleDrag? _dragFor(Offset position, double width) {
+    final windows = _activeDay.normalizedWindows;
+    _ScheduleDrag? best;
+    var bestDistance = double.infinity;
+    for (var i = 0; i < windows.length; i += 1) {
+      final window = windows[i];
+      final startX = _xForMinute(window.startMinute, width);
+      final endX = _xForMinute(window.endMinute, width);
+      final startDistance = (position.dx - startX).abs();
+      final endDistance = (position.dx - endX).abs();
+      if (startDistance < bestDistance && startDistance <= 22) {
+        best = _ScheduleDrag(index: i, kind: _ScheduleDragKind.start);
+        bestDistance = startDistance;
+      }
+      if (endDistance < bestDistance && endDistance <= 22) {
+        best = _ScheduleDrag(index: i, kind: _ScheduleDragKind.end);
+        bestDistance = endDistance;
+      }
+      if (best == null && startX <= position.dx && position.dx <= endX) {
+        final minute = _minuteForX(position.dx, width);
+        best = _ScheduleDrag(
+          index: i,
+          kind: _ScheduleDragKind.segment,
+          minuteOffset: minute - window.startMinute,
+        );
+      }
+    }
+    return best;
+  }
+
+  void _setDraft(List<RecordingWindow> windows, {bool commit = false}) {
+    final day = _activeDay.copyWith(allDay: false, windows: windows);
+    setState(() => _draftDay = day);
+    if (commit) {
+      widget.onChanged(day);
+    }
+  }
+
+  int _minuteForX(double x, double width) {
+    final ratio = (x / width).clamp(0.0, 1.0);
+    return (ratio * RecordingWindow.minutesPerDay).round();
+  }
+
+  double _xForMinute(int minute, double width) {
+    return width * (minute / RecordingWindow.minutesPerDay);
+  }
+
+  int _snapMinute(int minute) {
+    final snapped = (minute / _snapMinutes).round() * _snapMinutes;
+    return snapped.clamp(0, RecordingWindow.minutesPerDay);
+  }
+
+  String _weekdayName(int weekday) {
+    switch (weekday) {
+      case DateTime.monday:
+        return 'Monday';
+      case DateTime.tuesday:
+        return 'Tuesday';
+      case DateTime.wednesday:
+        return 'Wednesday';
+      case DateTime.thursday:
+        return 'Thursday';
+      case DateTime.friday:
+        return 'Friday';
+      case DateTime.saturday:
+        return 'Saturday';
+      case DateTime.sunday:
+        return 'Sunday';
+    }
+    return 'Day';
+  }
+}
+
+class _ScheduleTrackPainter extends CustomPainter {
+  const _ScheduleTrackPainter({required this.windows, required this.disabled});
+
+  final List<RecordingWindow> windows;
+  final bool disabled;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final centerY = size.height / 2;
+    final trackRect = Rect.fromLTWH(0, centerY - 5, size.width, 10);
+    final trackRadius = Radius.circular(trackRect.height / 2);
+    final basePaint = Paint()
+      ..color = disabled ? SonusColors.green50 : const Color(0xFFE8F3EC);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(trackRect, trackRadius),
+      basePaint,
+    );
+
+    final tickPaint = Paint()
+      ..color = SonusColors.hairline
+      ..strokeWidth = 1;
+    for (final hour in const [0, 6, 12, 18, 24]) {
+      final x = size.width * (hour / 24);
+      canvas.drawLine(
+        Offset(x, centerY - 14),
+        Offset(x, centerY + 14),
+        tickPaint,
+      );
+    }
+
+    for (final window in windows) {
+      final left =
+          size.width * (window.startMinute / RecordingWindow.minutesPerDay);
+      final right =
+          size.width * (window.endMinute / RecordingWindow.minutesPerDay);
+      final rect = Rect.fromLTRB(left, centerY - 11, right, centerY + 11);
+      final activePaint = Paint()
+        ..shader = SonusColors.markGradient.createShader(rect);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(11)),
+        activePaint,
+      );
+      _paintHandle(canvas, Offset(left, centerY));
+      _paintHandle(canvas, Offset(right, centerY));
+    }
+  }
+
+  void _paintHandle(Canvas canvas, Offset center) {
+    final fill = Paint()..color = Colors.white;
+    final border = Paint()
+      ..color = SonusColors.green700
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas
+      ..drawCircle(center, 8, fill)
+      ..drawCircle(center, 8, border);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ScheduleTrackPainter oldDelegate) {
+    return disabled != oldDelegate.disabled ||
+        !_windowsEqual(windows, oldDelegate.windows);
+  }
+
+  bool _windowsEqual(List<RecordingWindow> a, List<RecordingWindow> b) {
+    if (a.length != b.length) {
+      return false;
+    }
+    for (var i = 0; i < a.length; i += 1) {
+      if (a[i] != b[i]) {
+        return false;
+      }
+    }
+    return true;
   }
 }
 
@@ -1887,9 +2378,11 @@ class _MusicMemoriesSectionState extends State<_MusicMemoriesSection> {
             trailing: TextButton(
               onPressed: _busy
                   ? null
-                  : () => _run(scLinked
-                      ? widget.controller.unlinkSoundCloud
-                      : widget.controller.linkSoundCloud),
+                  : () => _run(
+                      scLinked
+                          ? widget.controller.unlinkSoundCloud
+                          : widget.controller.linkSoundCloud,
+                    ),
               child: Text(scLinked ? 'Unlink' : 'Link'),
             ),
           ),
@@ -1903,8 +2396,8 @@ class _MusicMemoriesSectionState extends State<_MusicMemoriesSection> {
             value: widget.config.soundCloudDailyArchive,
             onChanged: scLinked
                 ? (v) => widget.onChanged(
-                      widget.config.copyWith(soundCloudDailyArchive: v),
-                    )
+                    widget.config.copyWith(soundCloudDailyArchive: v),
+                  )
                 : null,
           ),
           const Divider(),
@@ -1916,9 +2409,11 @@ class _MusicMemoriesSectionState extends State<_MusicMemoriesSection> {
             trailing: TextButton(
               onPressed: _busy
                   ? null
-                  : () => _run(spLinked
-                      ? widget.controller.unlinkSpotify
-                      : widget.controller.linkSpotify),
+                  : () => _run(
+                      spLinked
+                          ? widget.controller.unlinkSpotify
+                          : widget.controller.linkSpotify,
+                    ),
               child: Text(spLinked ? 'Unlink' : 'Link'),
             ),
           ),
@@ -1932,8 +2427,8 @@ class _MusicMemoriesSectionState extends State<_MusicMemoriesSection> {
             value: widget.config.spotifyAutoPlaylist,
             onChanged: spLinked
                 ? (v) => widget.onChanged(
-                      widget.config.copyWith(spotifyAutoPlaylist: v),
-                    )
+                    widget.config.copyWith(spotifyAutoPlaylist: v),
+                  )
                 : null,
           ),
         ],
@@ -2101,8 +2596,10 @@ class _AcousticSectionState extends State<_AcousticSection> {
               onChanged: (v) => setState(() => _activationDb = v),
             ),
             const Divider(),
-            Text('Keyword alerts (cloud speech-to-text)',
-                style: Theme.of(context).textTheme.titleSmall),
+            Text(
+              'Keyword alerts (cloud speech-to-text)',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Transcribe speech for keywords'),
@@ -2157,8 +2654,9 @@ class _AcousticSectionState extends State<_AcousticSection> {
                 initialValue: _captureRates.contains(_captureRate)
                     ? _captureRate
                     : 48000,
-                decoration:
-                    const InputDecoration(labelText: 'Loud capture rate'),
+                decoration: const InputDecoration(
+                  labelText: 'Loud capture rate',
+                ),
                 items: [
                   for (final r in _captureRates)
                     DropdownMenuItem(value: r, child: Text('$r Hz')),
@@ -2170,10 +2668,12 @@ class _AcousticSectionState extends State<_AcousticSection> {
                 },
               ),
               DropdownButtonFormField<int>(
-                initialValue:
-                    _quietRates.contains(_quietRate) ? _quietRate : 16000,
-                decoration:
-                    const InputDecoration(labelText: 'Quiet storage rate'),
+                initialValue: _quietRates.contains(_quietRate)
+                    ? _quietRate
+                    : 16000,
+                decoration: const InputDecoration(
+                  labelText: 'Quiet storage rate',
+                ),
                 items: [
                   for (final r in _quietRates)
                     DropdownMenuItem(value: r, child: Text('$r Hz')),
@@ -2333,9 +2833,7 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
               if (connections.isEmpty) {
                 return const Text('No cloud destinations linked yet.');
               }
-              return Column(
-                children: [for (final c in connections) _tile(c)],
-              );
+              return Column(children: [for (final c in connections) _tile(c)]);
             },
           ),
           const Divider(height: 24),
@@ -2344,19 +2842,23 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
             runSpacing: 8,
             children: [
               OutlinedButton.icon(
-                onPressed: _busy ? null : () => _run(widget.controller.linkICloud),
+                onPressed: _busy
+                    ? null
+                    : () => _run(widget.controller.linkICloud),
                 icon: const Icon(Icons.cloud_outlined),
                 label: const Text('Link iCloud'),
               ),
               OutlinedButton.icon(
-                onPressed:
-                    _busy ? null : () => _linkProvider(CloudProvider.googleDrive),
+                onPressed: _busy
+                    ? null
+                    : () => _linkProvider(CloudProvider.googleDrive),
                 icon: const Icon(Icons.add_to_drive_outlined),
                 label: const Text('Link Google Drive'),
               ),
               OutlinedButton.icon(
-                onPressed:
-                    _busy ? null : () => _linkProvider(CloudProvider.oneDrive),
+                onPressed: _busy
+                    ? null
+                    : () => _linkProvider(CloudProvider.oneDrive),
                 icon: const Icon(Icons.cloud_sync_outlined),
                 label: const Text('Link OneDrive'),
               ),
@@ -2394,8 +2896,8 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
         onPressed: _busy
             ? null
             : () => _run(
-                  () => widget.controller.revokeCloudConnection(connection.id),
-                ),
+                () => widget.controller.revokeCloudConnection(connection.id),
+              ),
       ),
     );
   }
@@ -2419,8 +2921,9 @@ class _ProviderLinkDialog extends StatefulWidget {
 }
 
 class _ProviderLinkDialogState extends State<_ProviderLinkDialog> {
-  late final TextEditingController _redirect =
-      TextEditingController(text: widget.defaultRedirectUri);
+  late final TextEditingController _redirect = TextEditingController(
+    text: widget.defaultRedirectUri,
+  );
   final TextEditingController _code = TextEditingController();
   CloudLinkStart? _start;
   bool _busy = false;
@@ -2483,7 +2986,8 @@ class _ProviderLinkDialogState extends State<_ProviderLinkDialog> {
               controller: _redirect,
               decoration: const InputDecoration(
                 labelText: 'Redirect URI',
-                helperText: 'Must match the OAuth client registered on the server.',
+                helperText:
+                    'Must match the OAuth client registered on the server.',
               ),
             ),
             const SizedBox(height: 12),
@@ -2498,7 +3002,8 @@ class _ProviderLinkDialogState extends State<_ProviderLinkDialog> {
               SelectableText(authUrl),
               const SizedBox(height: 4),
               TextButton.icon(
-                onPressed: () => Clipboard.setData(ClipboardData(text: authUrl)),
+                onPressed: () =>
+                    Clipboard.setData(ClipboardData(text: authUrl)),
                 icon: const Icon(Icons.copy, size: 18),
                 label: const Text('Copy link'),
               ),
@@ -2506,7 +3011,9 @@ class _ProviderLinkDialogState extends State<_ProviderLinkDialog> {
               const Text('2. Paste the authorization code from the redirect:'),
               TextField(
                 controller: _code,
-                decoration: const InputDecoration(labelText: 'Authorization code'),
+                decoration: const InputDecoration(
+                  labelText: 'Authorization code',
+                ),
               ),
             ],
           ],
@@ -2729,7 +3236,9 @@ class _StatusSection extends StatelessWidget {
               FilledButton.tonalIcon(
                 onPressed: onToggleHighQuality,
                 icon: Icon(
-                  isHighQuality ? Icons.high_quality : Icons.high_quality_outlined,
+                  isHighQuality
+                      ? Icons.high_quality
+                      : Icons.high_quality_outlined,
                 ),
                 label: Text(
                   isHighQuality ? 'High quality: On' : 'High quality: Off',
@@ -3248,7 +3757,10 @@ class _SignInNotice extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.account_circle, color: theme.colorScheme.onSecondaryContainer),
+          Icon(
+            Icons.account_circle,
+            color: theme.colorScheme.onSecondaryContainer,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
