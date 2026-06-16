@@ -18,8 +18,8 @@ class LocalNotificationsService {
   LocalNotificationsService({
     DiagnosticLog? diagnostics,
     FlutterLocalNotificationsPlugin? plugin,
-  })  : _diagnostics = diagnostics,
-        _plugin = plugin ?? FlutterLocalNotificationsPlugin();
+  }) : _diagnostics = diagnostics,
+       _plugin = plugin ?? FlutterLocalNotificationsPlugin();
 
   final DiagnosticLog? _diagnostics;
   final FlutterLocalNotificationsPlugin _plugin;
@@ -31,11 +31,13 @@ class LocalNotificationsService {
 
   /// Payload tag identifying the context-trigger consent prompt.
   static const String consentPayload = 'context-consent';
+  static const String scheduleStartPayload = 'schedule-start';
+  static const String scheduleStopPayload = 'schedule-stop';
 
   // Notification id partitions.
   static const int _scheduleStartBase = 780000;
   static const int _scheduleStopBase = 790000;
-  static const int _scheduleSpan = 10000;
+  static const int _scheduleSpan = 64;
   static const int _consentId = 800000;
 
   Future<void> ensureInitialized() async {
@@ -64,17 +66,19 @@ class LocalNotificationsService {
   }
 
   void _onResponse(NotificationResponse response) {
-    if (response.payload == consentPayload) {
+    if (response.payload == consentPayload ||
+        response.payload == scheduleStartPayload) {
       onConsentTap?.call();
     }
   }
 
-  /// True when the app was launched by tapping a consent notification (cold
-  /// start). The controller checks this on init to honor the tap.
+  /// True when the app was launched by tapping a recording-consent notification
+  /// (cold start). The controller checks this on init to honor the tap.
   Future<bool> launchedFromConsent() async {
     final details = await _plugin.getNotificationAppLaunchDetails();
     if (details?.didNotificationLaunchApp ?? false) {
-      return details!.notificationResponse?.payload == consentPayload;
+      final payload = details!.notificationResponse?.payload;
+      return payload == consentPayload || payload == scheduleStartPayload;
     }
     return false;
   }
@@ -84,14 +88,16 @@ class LocalNotificationsService {
     if (Platform.isIOS) {
       final granted = await _plugin
           .resolvePlatformSpecificImplementation<
-              IOSFlutterLocalNotificationsPlugin>()
+            IOSFlutterLocalNotificationsPlugin
+          >()
           ?.requestPermissions(alert: true, badge: false, sound: true);
       return granted ?? false;
     }
     if (Platform.isAndroid) {
       final granted = await _plugin
           .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
+            AndroidFlutterLocalNotificationsPlugin
+          >()
           ?.requestNotificationsPermission();
       return granted ?? false;
     }
@@ -137,7 +143,7 @@ class LocalNotificationsService {
           androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
           uiLocalNotificationDateInterpretation:
               UILocalNotificationDateInterpretation.absoluteTime,
-          payload: 'schedule-start',
+          payload: scheduleStartPayload,
         );
       } else if (!t.startsRecording && stopIdx < _scheduleSpan) {
         await _plugin.zonedSchedule(
@@ -149,13 +155,11 @@ class LocalNotificationsService {
           androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
           uiLocalNotificationDateInterpretation:
               UILocalNotificationDateInterpretation.absoluteTime,
-          payload: 'schedule-stop',
+          payload: scheduleStopPayload,
         );
       }
     }
-    _diagnostics?.add(
-      'Scheduled $startIdx start + $stopIdx stop reminder(s).',
-    );
+    _diagnostics?.add('Scheduled $startIdx start + $stopIdx stop reminder(s).');
   }
 
   Future<void> cancelScheduled() async {

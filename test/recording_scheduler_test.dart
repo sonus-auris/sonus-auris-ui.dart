@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 class _RecordingPlatform implements SchedulePlatform {
   final List<List<ScheduleTransition>> registered = [];
   int cancelCount = 0;
+  bool? pendingShouldRecord;
 
   @override
   Future<void> register(List<ScheduleTransition> transitions) async {
@@ -15,6 +16,13 @@ class _RecordingPlatform implements SchedulePlatform {
   @override
   Future<void> cancelAll() async {
     cancelCount++;
+  }
+
+  @override
+  Future<bool?> drainPendingShouldRecord() async {
+    final pending = pendingShouldRecord;
+    pendingShouldRecord = null;
+    return pending;
   }
 }
 
@@ -68,5 +76,13 @@ void main() {
 
       scheduler.dispose();
     });
+  });
+
+  test('drains pending OS schedule command through the platform', () async {
+    final platform = _RecordingPlatform()..pendingShouldRecord = true;
+    final scheduler = RecordingScheduler(platform: platform);
+
+    expect(await scheduler.drainPendingShouldRecord(), isTrue);
+    expect(await scheduler.drainPendingShouldRecord(), isNull);
   });
 }

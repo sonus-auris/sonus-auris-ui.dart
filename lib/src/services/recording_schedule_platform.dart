@@ -31,8 +31,8 @@ class PluginSchedulePlatform implements SchedulePlatform {
   PluginSchedulePlatform({
     required LocalNotificationsService notifications,
     DiagnosticLog? diagnostics,
-  })  : _notifications = notifications,
-        _diagnostics = diagnostics;
+  }) : _notifications = notifications,
+       _diagnostics = diagnostics;
 
   final LocalNotificationsService _notifications;
   final DiagnosticLog? _diagnostics;
@@ -55,15 +55,34 @@ class PluginSchedulePlatform implements SchedulePlatform {
     }
   }
 
+  @override
+  Future<bool?> drainPendingShouldRecord() async {
+    if (!Platform.isAndroid) {
+      return null;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final pending = prefs.getBool(kSchedulePendingShouldRecordKey);
+    if (pending != null) {
+      await prefs.remove(kSchedulePendingShouldRecordKey);
+    }
+    return pending;
+  }
+
   // --- Android: exact alarms + background isolate ---------------------------
 
   Future<void> _registerAndroid(List<ScheduleTransition> transitions) async {
     await _cancelAndroid();
     final capped = transitions.take(_maxAlarms).toList();
     final actions = <String, bool>{};
+    final prefs = await SharedPreferences.getInstance();
     for (var i = 0; i < capped.length; i++) {
       final id = _alarmBaseId + i;
       actions['$id'] = capped[i].startsRecording;
+    }
+    await prefs.setString(_kAlarmActionsKey, jsonEncode(actions));
+    for (var i = 0; i < capped.length; i++) {
+      final id = _alarmBaseId + i;
       final ok = await AndroidAlarmManager.oneShotAt(
         capped[i].at,
         id,
@@ -77,8 +96,6 @@ class PluginSchedulePlatform implements SchedulePlatform {
         _diagnostics?.add('Failed to register exact alarm $id.');
       }
     }
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kAlarmActionsKey, jsonEncode(actions));
     _diagnostics?.add('Registered ${capped.length} exact alarm(s).');
   }
 

@@ -62,8 +62,9 @@ class AppViewModel {
   bool get isSignedIn => secrets.hasSupabaseSession;
 
   /// Email of the signed-in user, or null when signed out / unknown.
-  String? get signedInEmail =>
-      secrets.supabaseEmail.trim().isEmpty ? null : secrets.supabaseEmail.trim();
+  String? get signedInEmail => secrets.supabaseEmail.trim().isEmpty
+      ? null
+      : secrets.supabaseEmail.trim();
 
   /// True once the device holds a backend device token issued after sign-in.
   bool get isDeviceRegistered => secrets.hasBackendDeviceToken;

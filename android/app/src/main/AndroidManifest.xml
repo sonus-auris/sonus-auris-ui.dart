@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Resume the capture foreground service automatically after a reboot, so
          the rolling window keeps running without the user re-opening the app. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />

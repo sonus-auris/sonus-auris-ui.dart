@@ -86,7 +86,8 @@ class AppController {
     final effectiveDiagnostics = diagnosticLog ?? DiagnosticLog();
     // One notifications instance for both schedule reminders and consent prompts
     // so there is a single tap-response handler.
-    final notifications = localNotifications ??
+    final notifications =
+        localNotifications ??
         LocalNotificationsService(diagnostics: effectiveDiagnostics);
     // One device-bound encryptor shared by every cloud path, so audio is sealed
     // on-device before upload and only ever opened locally. The master key lives
@@ -121,7 +122,8 @@ class AppController {
       oauthBrowser: oauthBrowser ?? const FlutterWebAuthBrowser(),
       speechToTextClient: speechToTextClient ?? SpeechToTextClient(),
       onDeviceSpeechClient: onDeviceSpeechClient ?? OnDeviceSpeechClient(),
-      recordingScheduler: recordingScheduler ??
+      scheduler:
+          recordingScheduler ??
           RecordingScheduler(
             diagnostics: effectiveDiagnostics,
             platform: PluginSchedulePlatform(
@@ -130,7 +132,8 @@ class AppController {
             ),
           ),
       localNotifications: notifications,
-      contextTriggers: contextTriggerService ??
+      contextTriggers:
+          contextTriggerService ??
           ContextTriggerService(
             sources: defaultContextTriggerSources(),
             diagnostics: effectiveDiagnostics,
@@ -160,12 +163,10 @@ class AppController {
     required this._oauthBrowser,
     required this._speechToTextClient,
     required this._onDeviceSpeechClient,
-    required RecordingScheduler recordingScheduler,
-    required LocalNotificationsService localNotifications,
-    required ContextTriggerService contextTriggers,
-  })  : _scheduler = recordingScheduler,
-        _localNotifications = localNotifications,
-        _contextTriggers = contextTriggers {
+    required this._scheduler,
+    required this._localNotifications,
+    required this._contextTriggers,
+  }) {
     _scheduler.onTransition = _onScheduleTransition;
     _contextTriggers.onTrigger = _onContextTrigger;
     _localNotifications.onConsentTap = acceptContextConsent;
@@ -207,11 +208,7 @@ class AppController {
     // Fold the init + starting flags into one slot (combineLatest is at its max
     // arity of 9 below).
     final lifecycle =
-        Rx.combineLatest2<
-          bool,
-          bool,
-          ({bool isInitializing, bool isStarting})
-        >(
+        Rx.combineLatest2<bool, bool, ({bool isInitializing, bool isStarting})>(
           _isInitializing,
           _isStarting,
           (isInitializing, isStarting) =>
@@ -327,12 +324,14 @@ class AppController {
   final BehaviorSubject<List<RecordingSegment>> _segments =
       BehaviorSubject.seeded(const []);
   final BehaviorSubject<bool> _isInitializing = BehaviorSubject.seeded(true);
+
   /// True while [startRecording] is in flight (permission prompts loading, mic
   /// stream opening) so the UI can show a spinner instead of a frozen button.
   final BehaviorSubject<bool> _isStarting = BehaviorSubject.seeded(false);
   final BehaviorSubject<bool> _isUploading = BehaviorSubject.seeded(false);
-  final BehaviorSubject<TransferGateStatus> _transfer =
-      BehaviorSubject.seeded(const TransferGateStatus.unknown());
+  final BehaviorSubject<TransferGateStatus> _transfer = BehaviorSubject.seeded(
+    const TransferGateStatus.unknown(),
+  );
   final BehaviorSubject<String?> _message = BehaviorSubject.seeded(null);
   final BehaviorSubject<List<AcousticDetection>> _detectionsList =
       BehaviorSubject.seeded(const []);
@@ -423,22 +422,42 @@ class AppController {
     await _ensureSupabaseReady();
     requestUploadDrain();
     await _enforceRetention();
-    // "Always-on": if the user enabled auto-start, begin capturing on launch
-    // (including the boot-triggered relaunch) without them pressing Start.
-    if (config.autoStartCaptureEnabled && !_recorder.isRecording) {
+    // "Always-on": if the user enabled auto-start and no weekly schedule is
+    // taking over consent windows, begin capturing on launch (including the
+    // boot-triggered relaunch) without them pressing Start.
+    if (!config.recordingSchedule.hasAnyWindows &&
+        config.autoStartCaptureEnabled &&
+        !_recorder.isRecording) {
       _diagnostics.add('Auto-start capture is enabled; starting recording.');
       await startRecording();
     }
+    await _localNotifications.ensureInitialized();
+    final launchedFromConsent = await _localNotifications.launchedFromConsent();
     // Register OS alarms/notifications for the recording schedule and reconcile
-    // current capture against the schedule — e.g. an exact alarm woke the app
-    // mid-window, or the app simply launched inside a scheduled window.
+    // current capture against the schedule. iOS requires a notification tap to
+    // begin inside an active scheduled window.
     await _scheduler.sync(config.recordingSchedule);
-    await _reconcileWithSchedule(config.recordingSchedule);
+    final pendingScheduleCommand = await _scheduler.drainPendingShouldRecord();
+    if (pendingScheduleCommand != null) {
+      _diagnostics.add(
+        'Drained pending schedule command: '
+        '${pendingScheduleCommand ? "start" : "stop"}.',
+      );
+    }
+    if (_shouldWaitForIosScheduleTap(
+      config.recordingSchedule,
+      launchedFromConsent,
+    )) {
+      _diagnostics.add(
+        'Schedule window active on iOS; waiting for notification tap.',
+      );
+    } else {
+      await _reconcileWithSchedule(config.recordingSchedule);
+    }
     // Arm context triggers and honor a consent notification the user may have
     // tapped to launch the app.
-    await _localNotifications.ensureInitialized();
     await _updateContextTriggers();
-    if (await _localNotifications.launchedFromConsent()) {
+    if (launchedFromConsent) {
       _diagnostics.add('Launched from a consent notification.');
       acceptContextConsent();
     }
@@ -450,7 +469,24 @@ class AppController {
     if (config == null || !config.recordingSchedule.enabled) {
       return;
     }
+    if (shouldRecord &&
+        _shouldWaitForIosScheduleTap(config.recordingSchedule, false)) {
+      _diagnostics.add(
+        'Schedule start reached on iOS; waiting for notification tap.',
+      );
+      return;
+    }
     unawaited(_applyScheduleState(shouldRecord));
+  }
+
+  bool _shouldWaitForIosScheduleTap(
+    RecordingSchedule schedule,
+    bool launchedFromConsent,
+  ) {
+    return Platform.isIOS &&
+        !launchedFromConsent &&
+        schedule.enabled &&
+        schedule.isActiveAt(DateTime.now());
   }
 
   /// Brings capture in line with what the schedule says should be happening
@@ -493,7 +529,8 @@ class AppController {
       return;
     }
     final schedule = config.recordingSchedule;
-    final active = schedule.enabled &&
+    final active =
+        schedule.enabled &&
         schedule.isActiveAt(DateTime.now()) &&
         !_recorder.isRecording;
     await _contextTriggers.update(
@@ -543,8 +580,8 @@ class AppController {
     return state == null || state == AppLifecycleState.resumed;
   }
 
-  /// Accept a pending context-trigger consent request (in-app banner "Start" or
-  /// a tapped consent notification): start recording if the gate still holds.
+  /// Accept a pending recording-consent request (in-app banner "Start" or a
+  /// tapped notification): start recording if the gate still holds.
   void acceptContextConsent() {
     _consentRequest.add(null);
     unawaited(_localNotifications.clearConsentPrompt());
@@ -556,7 +593,7 @@ class AppController {
     if (!schedule.enabled || !schedule.isActiveAt(DateTime.now())) {
       return; // window closed before the user responded
     }
-    _diagnostics.add('Context consent accepted; starting recording.');
+    _diagnostics.add('Recording consent accepted; starting recording.');
     unawaited(startRecording(scheduleInitiated: true));
   }
 
@@ -611,8 +648,7 @@ class AppController {
     // fresh even when the gate decision itself hasn't changed.
     final needsReaffirm =
         status.isPaused &&
-        (lastAt == null ||
-            now.difference(lastAt) >= _transferReaffirmInterval);
+        (lastAt == null || now.difference(lastAt) >= _transferReaffirmInterval);
     if (signature == _lastReportedTransferSignature && !needsReaffirm) {
       return;
     }
@@ -979,9 +1015,7 @@ class AppController {
       _diagnostics.add('Device registered with backend.');
       requestUploadDrain();
     } catch (error) {
-      _diagnostics.add(
-        'Device registration failed: ${_describeError(error)}',
-      );
+      _diagnostics.add('Device registration failed: ${_describeError(error)}');
     }
   }
 
@@ -1014,6 +1048,7 @@ class AppController {
     // barrier (see [_applyScheduleState]).
     _scheduleStartedRecording = scheduleInitiated;
     _diagnostics.add('Start recording requested.');
+    _consentRequest.add(null);
     // Surface a busy state for the whole flow — the notification + microphone
     // permission prompts can take a moment to appear, and the button should
     // spin rather than look unresponsive while the user waits for them.
@@ -1333,28 +1368,28 @@ class AppController {
       _secrets.valueOrNull?.hasSoundCloudToken ?? false;
 
   Future<void> linkSpotify() => _linkMusic(
-        label: 'Spotify',
-        config: MusicOAuthService.spotify(
-          clientId: MusicOAuthConstants.spotifyClientId,
-          redirectUri: MusicOAuthConstants.redirectUri,
-        ),
-        apply: (secrets, tokens) => secrets.copyWith(
-          spotifyAccessToken: tokens.accessToken,
-          spotifyRefreshToken: tokens.refreshToken ?? '',
-        ),
-      );
+    label: 'Spotify',
+    config: MusicOAuthService.spotify(
+      clientId: MusicOAuthConstants.spotifyClientId,
+      redirectUri: MusicOAuthConstants.redirectUri,
+    ),
+    apply: (secrets, tokens) => secrets.copyWith(
+      spotifyAccessToken: tokens.accessToken,
+      spotifyRefreshToken: tokens.refreshToken ?? '',
+    ),
+  );
 
   Future<void> linkSoundCloud() => _linkMusic(
-        label: 'SoundCloud',
-        config: MusicOAuthService.soundCloud(
-          clientId: MusicOAuthConstants.soundCloudClientId,
-          redirectUri: MusicOAuthConstants.redirectUri,
-        ),
-        apply: (secrets, tokens) => secrets.copyWith(
-          soundCloudAccessToken: tokens.accessToken,
-          soundCloudRefreshToken: tokens.refreshToken ?? '',
-        ),
-      );
+    label: 'SoundCloud',
+    config: MusicOAuthService.soundCloud(
+      clientId: MusicOAuthConstants.soundCloudClientId,
+      redirectUri: MusicOAuthConstants.redirectUri,
+    ),
+    apply: (secrets, tokens) => secrets.copyWith(
+      soundCloudAccessToken: tokens.accessToken,
+      soundCloudRefreshToken: tokens.refreshToken ?? '',
+    ),
+  );
 
   Future<void> unlinkSpotify() async {
     if (!_secrets.hasValue) return;
@@ -1540,8 +1575,10 @@ class AppController {
         ),
       );
     } catch (error) {
-      _message.add('Starting ${provider.label} link failed: '
-          '${_describeError(error)}');
+      _message.add(
+        'Starting ${provider.label} link failed: '
+        '${_describeError(error)}',
+      );
       return null;
     }
   }
@@ -1731,8 +1768,9 @@ class AppController {
     // multi-day backfill is intentionally out of scope.
     if (!_archiveCaughtUp) {
       _archiveCaughtUp = true;
-      final yesterday =
-          _localDateOnly(DateTime.now().subtract(const Duration(days: 1)));
+      final yesterday = _localDateOnly(
+        DateTime.now().subtract(const Duration(days: 1)),
+      );
       if (_lastArchivedDay == null || yesterday.isAfter(_lastArchivedDay!)) {
         await _archiveDayOfLife(yesterday);
       }
@@ -1787,7 +1825,8 @@ class AppController {
         detections: detections,
         geo: geo,
         resolvePlaces:
-            _config.value.placeNamesEnabled && _config.value.locationTaggingEnabled,
+            _config.value.placeNamesEnabled &&
+            _config.value.locationTaggingEnabled,
       );
       if (result.didUpload) {
         _lastArchivedDay = dayLocal;

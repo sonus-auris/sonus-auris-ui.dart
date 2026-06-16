@@ -32,7 +32,7 @@ abstract class _BaseTriggerSource implements ContextTriggerSource {
 /// switch). Uses connectivity_plus — no extra permissions.
 class ConnectivityTriggerSource extends _BaseTriggerSource {
   ConnectivityTriggerSource({Connectivity? connectivity})
-      : _connectivity = connectivity ?? Connectivity();
+    : _connectivity = connectivity ?? Connectivity();
 
   final Connectivity _connectivity;
   StreamSubscription<List<ConnectivityResult>>? _sub;
@@ -80,8 +80,8 @@ class ConnectivityTriggerSource extends _BaseTriggerSource {
 /// SSID via network_info_plus, re-checked whenever connectivity changes.
 class WifiSsidTriggerSource extends _BaseTriggerSource {
   WifiSsidTriggerSource({Connectivity? connectivity, NetworkInfo? networkInfo})
-      : _connectivity = connectivity ?? Connectivity(),
-        _networkInfo = networkInfo ?? NetworkInfo();
+    : _connectivity = connectivity ?? Connectivity(),
+      _networkInfo = networkInfo ?? NetworkInfo();
 
   final Connectivity _connectivity;
   final NetworkInfo _networkInfo;
@@ -133,12 +133,12 @@ class WifiSsidTriggerSource extends _BaseTriggerSource {
   }
 }
 
-/// A Bluetooth device connected to the system, or the adapter was switched on.
-/// Polls the OS-connected-device set (the cross-platform signal flutter_blue_plus
-/// exposes) and watches adapter state.
+/// A Bluetooth device connected to the system. Polls the OS-connected-device set
+/// (the cross-platform signal flutter_blue_plus exposes) and uses adapter state
+/// changes to refresh that set.
 class BluetoothTriggerSource extends _BaseTriggerSource {
   BluetoothTriggerSource({Duration pollInterval = const Duration(seconds: 15)})
-      : _pollInterval = pollInterval;
+    : _pollInterval = pollInterval;
 
   final Duration _pollInterval;
   StreamSubscription<BluetoothAdapterState>? _adapterSub;
@@ -157,7 +157,7 @@ class BluetoothTriggerSource extends _BaseTriggerSource {
     try {
       _adapterSub = FlutterBluePlus.adapterState.listen((state) {
         if (state == BluetoothAdapterState.on) {
-          _emit('Bluetooth turned on');
+          unawaited(_tick());
         }
       });
     } catch (_) {
@@ -202,8 +202,8 @@ class NearbyDeviceTriggerSource extends _BaseTriggerSource {
   NearbyDeviceTriggerSource({
     Duration scanEvery = const Duration(seconds: 90),
     Duration scanFor = const Duration(seconds: 6),
-  })  : _scanEvery = scanEvery,
-        _scanFor = scanFor;
+  }) : _scanEvery = scanEvery,
+       _scanFor = scanFor;
 
   final Duration _scanEvery;
   final Duration _scanFor;
@@ -266,8 +266,8 @@ class NearbyDeviceTriggerSource extends _BaseTriggerSource {
 
 /// All the production sources, ready to hand to a [ContextTriggerService].
 List<ContextTriggerSource> defaultContextTriggerSources() => [
-      ConnectivityTriggerSource(),
-      WifiSsidTriggerSource(),
-      BluetoothTriggerSource(),
-      NearbyDeviceTriggerSource(),
-    ];
+  ConnectivityTriggerSource(),
+  WifiSsidTriggerSource(),
+  BluetoothTriggerSource(),
+  NearbyDeviceTriggerSource(),
+];

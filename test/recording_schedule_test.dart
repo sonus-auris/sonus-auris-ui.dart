@@ -7,13 +7,15 @@ RecordingWindow w(int start, int end) =>
 void main() {
   group('DaySchedule.normalize', () {
     test('sorts, drops empties, and clamps out-of-range windows', () {
-      final day = DaySchedule(windows: [
-        w(600, 540), // inverted -> dropped
-        w(120, 60), // negative length -> dropped
-        w(540, 600),
-        w(60, 120),
-        w(-30, 30), // clamps to 0..30
-      ]);
+      final day = DaySchedule(
+        windows: [
+          w(600, 540), // inverted -> dropped
+          w(120, 60), // negative length -> dropped
+          w(540, 600),
+          w(60, 120),
+          w(-30, 30), // clamps to 0..30
+        ],
+      );
       expect(day.normalizedWindows(), [w(0, 30), w(60, 120), w(540, 600)]);
     });
 
@@ -45,10 +47,7 @@ void main() {
     test('is false when disabled regardless of windows', () {
       final schedule = RecordingSchedule(
         enabled: false,
-        days: List.generate(
-          7,
-          (_) => const DaySchedule(allDay: true),
-        ),
+        days: List.generate(7, (_) => const DaySchedule(allDay: true)),
       );
       expect(schedule.isActiveAt(DateTime(2026, 6, 15, 10)), isFalse);
     });
@@ -169,6 +168,38 @@ void main() {
       expect(restored.days.length, 7);
       expect(restored.days[0].normalizedWindows(), [w(60, 120)]);
       expect(restored.days[6], DaySchedule.empty);
+    });
+
+    test('accepts legacy startMinute/endMinute window fields', () {
+      final restored = RecordingSchedule.fromJson({
+        'enabled': true,
+        'days': [
+          {
+            'allDay': false,
+            'windows': [
+              {'startMinute': 480, 'endMinute': 540},
+            ],
+          },
+        ],
+      });
+      expect(restored.days[0].normalizedWindows(), [w(480, 540)]);
+    });
+
+    test('places legacy dayOfWeek entries on the matching weekday', () {
+      final restored = RecordingSchedule.fromJson({
+        'enabled': true,
+        'days': [
+          {
+            'dayOfWeek': 3,
+            'allDay': false,
+            'windows': [
+              {'startMinute': 600, 'endMinute': 660},
+            ],
+          },
+        ],
+      });
+      expect(restored.days[0], DaySchedule.empty);
+      expect(restored.days[2].normalizedWindows(), [w(600, 660)]);
     });
   });
 }

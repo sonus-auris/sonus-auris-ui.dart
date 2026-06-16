@@ -552,14 +552,19 @@ class AppConfig {
       ),
       acousticAnalysisEnabled:
           json['acousticAnalysisEnabled'] as bool? ?? false,
-      spectralSidecarEnabled:
-          json['spectralSidecarEnabled'] as bool? ?? true,
-      analysisActivationDb: _asDouble(json['analysisActivationDb'], -40.0)
-          .clamp(-90.0, 0.0),
-      analysisSustainSeconds: _asDouble(json['analysisSustainSeconds'], 2.0)
-          .clamp(0.5, 30.0),
-      analysisHoldSeconds:
-          _asDouble(json['analysisHoldSeconds'], 45.0).clamp(0.0, 600.0),
+      spectralSidecarEnabled: json['spectralSidecarEnabled'] as bool? ?? true,
+      analysisActivationDb: _asDouble(
+        json['analysisActivationDb'],
+        -40.0,
+      ).clamp(-90.0, 0.0),
+      analysisSustainSeconds: _asDouble(
+        json['analysisSustainSeconds'],
+        2.0,
+      ).clamp(0.5, 30.0),
+      analysisHoldSeconds: _asDouble(
+        json['analysisHoldSeconds'],
+        45.0,
+      ).clamp(0.0, 600.0),
       snoreDetectionEnabled: json['snoreDetectionEnabled'] as bool? ?? true,
       musicDetectionEnabled: json['musicDetectionEnabled'] as bool? ?? true,
       speechDetectionEnabled: json['speechDetectionEnabled'] as bool? ?? true,
@@ -568,17 +573,24 @@ class AppConfig {
       sttEnabled: json['sttEnabled'] as bool? ?? false,
       sttEndpoint: json['sttEndpoint'] as String? ?? '',
       adaptiveQualityEnabled: json['adaptiveQualityEnabled'] as bool? ?? false,
-      captureSampleRate:
-          _asInt(json['captureSampleRate'], 48000).clamp(8000, 48000),
-      quietSampleRate:
-          _asInt(json['quietSampleRate'], 16000).clamp(8000, 48000),
-      adaptiveLoudnessDb:
-          _asDouble(json['adaptiveLoudnessDb'], -40.0).clamp(-90.0, 0.0),
-      contextTriggersEnabled:
-          json['contextTriggersEnabled'] as bool? ?? false,
+      captureSampleRate: _asInt(
+        json['captureSampleRate'],
+        48000,
+      ).clamp(8000, 48000),
+      quietSampleRate: _asInt(
+        json['quietSampleRate'],
+        16000,
+      ).clamp(8000, 48000),
+      adaptiveLoudnessDb: _asDouble(
+        json['adaptiveLoudnessDb'],
+        -40.0,
+      ).clamp(-90.0, 0.0),
+      contextTriggersEnabled: json['contextTriggersEnabled'] as bool? ?? false,
       contextTriggerKinds: _asStringList(json['contextTriggerKinds']),
-      contextTriggerCooldownSeconds:
-          _asInt(json['contextTriggerCooldownSeconds'], 300).clamp(10, 3600),
+      contextTriggerCooldownSeconds: _asInt(
+        json['contextTriggerCooldownSeconds'],
+        300,
+      ).clamp(10, 3600),
       recordingSchedule: RecordingSchedule.fromJson(
         (json['recordingSchedule'] as Map?)?.cast<String, dynamic>(),
       ),

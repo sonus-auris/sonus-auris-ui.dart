@@ -17,6 +17,10 @@ abstract class SchedulePlatform {
 
   /// Cancel every previously registered OS event.
   Future<void> cancelAll();
+
+  /// Return and clear the last OS barrier command, when a background callback
+  /// recorded one for the main isolate to reconcile.
+  Future<bool?> drainPendingShouldRecord();
 }
 
 /// No-op platform used on desktop and in tests.
@@ -25,6 +29,9 @@ class NoopSchedulePlatform implements SchedulePlatform {
 
   @override
   Future<void> cancelAll() async {}
+
+  @override
+  Future<bool?> drainPendingShouldRecord() async => null;
 
   @override
   Future<void> register(List<ScheduleTransition> transitions) async {}
@@ -44,9 +51,9 @@ class RecordingScheduler {
     DiagnosticLog? diagnostics,
     SchedulePlatform? platform,
     DateTime Function()? now,
-  })  : _diagnostics = diagnostics,
-        _platform = platform ?? const NoopSchedulePlatform(),
-        _now = now ?? DateTime.now;
+  }) : _diagnostics = diagnostics,
+       _platform = platform ?? const NoopSchedulePlatform(),
+       _now = now ?? DateTime.now;
 
   final DiagnosticLog? _diagnostics;
   final SchedulePlatform _platform;
@@ -86,6 +93,9 @@ class RecordingScheduler {
     }
     _armTimer(schedule, from);
   }
+
+  Future<bool?> drainPendingShouldRecord() =>
+      _platform.drainPendingShouldRecord();
 
   void _armTimer(RecordingSchedule schedule, DateTime from) {
     // Cancel any timer armed by a concurrent sync() so exactly one is live —

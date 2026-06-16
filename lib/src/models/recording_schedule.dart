@@ -36,8 +36,8 @@ class RecordingWindow {
 
   factory RecordingWindow.fromJson(Map<String, dynamic> json) =>
       RecordingWindow(
-        startMinute: _asInt(json['start'], 0),
-        endMinute: _asInt(json['end'], 0),
+        startMinute: _asInt(json['start'] ?? json['startMinute'], 0),
+        endMinute: _asInt(json['end'] ?? json['endMinute'], 0),
       );
 
   @override
@@ -97,9 +97,9 @@ class DaySchedule {
   /// Returns a copy with its windows normalized (and all-day collapsing the
   /// explicit list since it's unused while [allDay]).
   DaySchedule normalize() => DaySchedule(
-        allDay: allDay,
-        windows: allDay ? const [] : normalizedWindows(),
-      );
+    allDay: allDay,
+    windows: allDay ? const [] : normalizedWindows(),
+  );
 
   /// The windows that are actually active for this day: a single full-day window
   /// when [allDay], otherwise the normalized list.
@@ -119,17 +119,17 @@ class DaySchedule {
       );
 
   Map<String, dynamic> toJson() => {
-        'allDay': allDay,
-        'windows': normalizedWindows().map((w) => w.toJson()).toList(),
-      };
+    'allDay': allDay,
+    'windows': normalizedWindows().map((w) => w.toJson()).toList(),
+  };
 
   factory DaySchedule.fromJson(Map<String, dynamic> json) => DaySchedule(
-        allDay: json['allDay'] as bool? ?? false,
-        windows: (json['windows'] as List? ?? const [])
-            .whereType<Map>()
-            .map((e) => RecordingWindow.fromJson(e.cast<String, dynamic>()))
-            .toList(),
-      );
+    allDay: json['allDay'] as bool? ?? false,
+    windows: (json['windows'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => RecordingWindow.fromJson(e.cast<String, dynamic>()))
+        .toList(),
+  );
 
   @override
   bool operator ==(Object other) =>
@@ -161,11 +161,13 @@ class ScheduleTransition {
 /// through index 6 = Sunday, matching `DateTime.weekday` (1..7) minus one.
 class RecordingSchedule {
   RecordingSchedule({required this.enabled, required List<DaySchedule> days})
-      : assert(days.length == 7),
-        days = List.unmodifiable(days);
+    : assert(days.length == 7),
+      days = List.unmodifiable(days);
 
   final bool enabled;
   final List<DaySchedule> days;
+
+  bool get hasAnyWindows => days.any((day) => day.hasAnyWindow);
 
   /// Monday-first day labels aligned with [days].
   static const List<String> dayLabels = [
@@ -189,9 +191,9 @@ class RecordingSchedule {
   ];
 
   factory RecordingSchedule.defaultSchedule() => RecordingSchedule(
-        enabled: false,
-        days: List.generate(7, (_) => DaySchedule.empty),
-      );
+    enabled: false,
+    days: List.generate(7, (_) => DaySchedule.empty),
+  );
 
   /// The [days] index for a Dart [DateTime] (weekday 1=Mon..7=Sun).
   static int dayIndexFor(DateTime dateTime) => dateTime.weekday - 1;
@@ -290,23 +292,30 @@ class RecordingSchedule {
       copyWith(days: days.map((d) => d.normalize()).toList());
 
   Map<String, dynamic> toJson() => {
-        'enabled': enabled,
-        'days': days.map((d) => d.toJson()).toList(),
-      };
+    'enabled': enabled,
+    'days': days.map((d) => d.toJson()).toList(),
+  };
 
   factory RecordingSchedule.fromJson(Map<String, dynamic>? json) {
     if (json == null) {
       return RecordingSchedule.defaultSchedule();
     }
-    final rawDays = (json['days'] as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => DaySchedule.fromJson(e.cast<String, dynamic>()))
-        .toList();
-    // Tolerate a malformed/short list by padding to 7 empty days.
     final days = List<DaySchedule>.generate(
       7,
-      (i) => i < rawDays.length ? rawDays[i] : DaySchedule.empty,
+      (_) => DaySchedule.empty,
+      growable: false,
     );
+    final rawDays = json['days'] as List? ?? const [];
+    for (var index = 0; index < rawDays.length && index < 7; index++) {
+      final rawDay = rawDays[index];
+      if (rawDay is! Map) {
+        continue;
+      }
+      final map = rawDay.cast<String, dynamic>();
+      final weekday = _asInt(map['dayOfWeek'], index + 1);
+      final dayIndex = (weekday - 1).clamp(0, 6).toInt();
+      days[dayIndex] = DaySchedule.fromJson(map);
+    }
     return RecordingSchedule(
       enabled: json['enabled'] as bool? ?? false,
       days: days,

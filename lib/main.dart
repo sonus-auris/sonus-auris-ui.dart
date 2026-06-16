@@ -270,8 +270,10 @@ class _SettingsPageState extends State<SettingsPage> {
                       '${viewModel.consentRequest!.event.description} during '
                       'your recording window. Start recording?',
                     ),
-                    leading: const Icon(Icons.fiber_manual_record,
-                        color: SonusColors.orange500),
+                    leading: const Icon(
+                      Icons.fiber_manual_record,
+                      color: SonusColors.orange500,
+                    ),
                     actions: [
                       TextButton(
                         onPressed: widget.controller.dismissContextConsent,
@@ -340,12 +342,11 @@ class _SettingsPageState extends State<SettingsPage> {
           onStopPlayback: widget.controller.stopPlayback,
           onSendAlert: widget.controller.sendManualAlert,
           earliestLocalUtc: widget.controller.earliestLocalSegmentUtc,
-          onPlayRange: (startUtc, endUtc, loop) =>
-              widget.controller.playRange(
-                startUtc: startUtc,
-                endUtc: endUtc,
-                loop: loop,
-              ),
+          onPlayRange: (startUtc, endUtc, loop) => widget.controller.playRange(
+            startUtc: startUtc,
+            endUtc: endUtc,
+            loop: loop,
+          ),
           onSaveRangePermanently: (startedAtUtc, endedAtUtc) =>
               widget.controller.saveRangePermanently(
                 startedAtUtc: startedAtUtc,
@@ -643,8 +644,10 @@ class _DetectionsSection extends StatelessWidget {
       child: detections.isEmpty
           ? const Padding(
               padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text('No detections yet. The engine activates when sound '
-                  'is sustained.'),
+              child: Text(
+                'No detections yet. The engine activates when sound '
+                'is sustained.',
+              ),
             )
           : Column(
               children: [
@@ -685,7 +688,8 @@ class _PlaybackView extends StatefulWidget {
   final DateTime? earliestLocalUtc;
 
   /// Play a chosen wall-clock window (loop optional) across the rolling buffer.
-  final void Function(DateTime startUtc, DateTime endUtc, bool loop) onPlayRange;
+  final void Function(DateTime startUtc, DateTime endUtc, bool loop)
+  onPlayRange;
   final Future<void> Function(DateTime startedAtUtc, DateTime endedAtUtc)
   onSaveRangePermanently;
 
@@ -920,11 +924,15 @@ class _PlaybackViewState extends State<_PlaybackView> {
   Widget _buildRangePlayback(BuildContext context, AppViewModel viewModel) {
     final theme = Theme.of(context);
     final now = DateTime.now();
-    final earliest = widget.earliestLocalUtc?.toLocal() ??
+    final earliest =
+        widget.earliestLocalUtc?.toLocal() ??
         now.subtract(Duration(hours: viewModel.config.deviceRetentionHours));
     // Lazy seed: default to the last 10 minutes up to "now".
     _playEnd ??= now;
-    _playStart ??= _maxDate(earliest, now.subtract(const Duration(minutes: 10)));
+    _playStart ??= _maxDate(
+      earliest,
+      now.subtract(const Duration(minutes: 10)),
+    );
 
     var domainMin = earliest;
     var domainMax = now;
@@ -935,8 +943,7 @@ class _PlaybackViewState extends State<_PlaybackView> {
     final end = _clampDate(_maxDate(_playEnd!, start), domainMin, domainMax);
     final minMs = domainMin.millisecondsSinceEpoch.toDouble();
     final maxMs = domainMax.millisecondsSinceEpoch.toDouble();
-    final startMs =
-        start.millisecondsSinceEpoch.toDouble().clamp(minMs, maxMs);
+    final startMs = start.millisecondsSinceEpoch.toDouble().clamp(minMs, maxMs);
     final endMs = end.millisecondsSinceEpoch.toDouble().clamp(startMs, maxMs);
     final hasAudio = viewModel.localSegments.isNotEmpty;
     // Whether any local segment actually overlaps the chosen window — so we can
@@ -956,8 +963,9 @@ class _PlaybackViewState extends State<_PlaybackView> {
         Text(
           'Pick a window from the last ${viewModel.config.deviceRetentionHours} h '
           'up to now, then play it — or loop it.',
-          style: theme.textTheme.bodySmall
-              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
         RangeSlider(
           min: minMs,
@@ -966,11 +974,11 @@ class _PlaybackViewState extends State<_PlaybackView> {
           labels: RangeLabels(_clockLabel(start), _clockLabel(end)),
           onChanged: hasAudio
               ? (v) => setState(() {
-                    _playStart =
-                        DateTime.fromMillisecondsSinceEpoch(v.start.round());
-                    _playEnd =
-                        DateTime.fromMillisecondsSinceEpoch(v.end.round());
-                  })
+                  _playStart = DateTime.fromMillisecondsSinceEpoch(
+                    v.start.round(),
+                  );
+                  _playEnd = DateTime.fromMillisecondsSinceEpoch(v.end.round());
+                })
               : null,
         ),
         Row(
@@ -979,8 +987,10 @@ class _PlaybackViewState extends State<_PlaybackView> {
               child: OutlinedButton.icon(
                 onPressed: () => _pickDateTime(true, domainMin, domainMax),
                 icon: const Icon(Icons.first_page, size: 16),
-                label: Text('Start  ${_clockLabel(start)}',
-                    overflow: TextOverflow.ellipsis),
+                label: Text(
+                  'Start  ${_clockLabel(start)}',
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ),
             const SizedBox(width: 8),
@@ -988,8 +998,10 @@ class _PlaybackViewState extends State<_PlaybackView> {
               child: OutlinedButton.icon(
                 onPressed: () => _pickDateTime(false, domainMin, domainMax),
                 icon: const Icon(Icons.last_page, size: 16),
-                label: Text('End  ${_clockLabel(end)}',
-                    overflow: TextOverflow.ellipsis),
+                label: Text(
+                  'End  ${_clockLabel(end)}',
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ),
           ],
@@ -1007,11 +1019,13 @@ class _PlaybackViewState extends State<_PlaybackView> {
                 label: Text(preset.label),
                 onPressed: hasAudio
                     ? () => setState(() {
-                          final e = DateTime.now();
-                          _playEnd = e;
-                          _playStart = _maxDate(
-                              earliest, e.subtract(Duration(minutes: preset.minutes)));
-                        })
+                        final e = DateTime.now();
+                        _playEnd = e;
+                        _playStart = _maxDate(
+                          earliest,
+                          e.subtract(Duration(minutes: preset.minutes)),
+                        );
+                      })
                     : null,
               ),
           ],
@@ -1027,8 +1041,11 @@ class _PlaybackViewState extends State<_PlaybackView> {
           children: [
             FilledButton.icon(
               onPressed: hasAudio && rangeHasAudio
-                  ? () =>
-                      widget.onPlayRange(start.toUtc(), end.toUtc(), _loopRange)
+                  ? () => widget.onPlayRange(
+                      start.toUtc(),
+                      end.toUtc(),
+                      _loopRange,
+                    )
                   : null,
               icon: Icon(_loopRange ? Icons.repeat : Icons.play_arrow),
               label: Text(_loopRange ? 'Play range (loop)' : 'Play range'),
@@ -1038,8 +1055,9 @@ class _PlaybackViewState extends State<_PlaybackView> {
               Expanded(
                 child: Text(
                   'No local audio in that time range.',
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],
@@ -1067,8 +1085,13 @@ class _PlaybackViewState extends State<_PlaybackView> {
     if (time == null || !mounted) {
       return;
     }
-    final picked =
-        DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    final picked = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
     setState(() {
       if (isStart) {
         _playStart = picked;
@@ -1341,9 +1364,7 @@ class _AccountSectionState extends State<_AccountSection> {
     super.dispose();
   }
 
-  Future<void> _run(
-    Future<void> Function(String, String) action,
-  ) async {
+  Future<void> _run(Future<void> Function(String, String) action) async {
     if (_busy) {
       return;
     }
@@ -1418,9 +1439,7 @@ class _AccountSectionState extends State<_AccountSection> {
           const SizedBox(height: 12),
           TextField(
             controller: widget.supabaseAnonKeyController,
-            decoration: const InputDecoration(
-              labelText: 'Supabase anon key',
-            ),
+            decoration: const InputDecoration(labelText: 'Supabase anon key'),
             obscureText: true,
             autocorrect: false,
             enableSuggestions: false,
@@ -1930,9 +1949,11 @@ class _MusicMemoriesSectionState extends State<_MusicMemoriesSection> {
             trailing: TextButton(
               onPressed: _busy
                   ? null
-                  : () => _run(scLinked
-                      ? widget.controller.unlinkSoundCloud
-                      : widget.controller.linkSoundCloud),
+                  : () => _run(
+                      scLinked
+                          ? widget.controller.unlinkSoundCloud
+                          : widget.controller.linkSoundCloud,
+                    ),
               child: Text(scLinked ? 'Unlink' : 'Link'),
             ),
           ),
@@ -1946,8 +1967,8 @@ class _MusicMemoriesSectionState extends State<_MusicMemoriesSection> {
             value: widget.config.soundCloudDailyArchive,
             onChanged: scLinked
                 ? (v) => widget.onChanged(
-                      widget.config.copyWith(soundCloudDailyArchive: v),
-                    )
+                    widget.config.copyWith(soundCloudDailyArchive: v),
+                  )
                 : null,
           ),
           const Divider(),
@@ -1959,9 +1980,11 @@ class _MusicMemoriesSectionState extends State<_MusicMemoriesSection> {
             trailing: TextButton(
               onPressed: _busy
                   ? null
-                  : () => _run(spLinked
-                      ? widget.controller.unlinkSpotify
-                      : widget.controller.linkSpotify),
+                  : () => _run(
+                      spLinked
+                          ? widget.controller.unlinkSpotify
+                          : widget.controller.linkSpotify,
+                    ),
               child: Text(spLinked ? 'Unlink' : 'Link'),
             ),
           ),
@@ -1975,8 +1998,8 @@ class _MusicMemoriesSectionState extends State<_MusicMemoriesSection> {
             value: widget.config.spotifyAutoPlaylist,
             onChanged: spLinked
                 ? (v) => widget.onChanged(
-                      widget.config.copyWith(spotifyAutoPlaylist: v),
-                    )
+                    widget.config.copyWith(spotifyAutoPlaylist: v),
+                  )
                 : null,
           ),
         ],
@@ -2144,8 +2167,10 @@ class _AcousticSectionState extends State<_AcousticSection> {
               onChanged: (v) => setState(() => _activationDb = v),
             ),
             const Divider(),
-            Text('Keyword alerts (cloud speech-to-text)',
-                style: Theme.of(context).textTheme.titleSmall),
+            Text(
+              'Keyword alerts (cloud speech-to-text)',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Transcribe speech for keywords'),
@@ -2200,8 +2225,9 @@ class _AcousticSectionState extends State<_AcousticSection> {
                 initialValue: _captureRates.contains(_captureRate)
                     ? _captureRate
                     : 48000,
-                decoration:
-                    const InputDecoration(labelText: 'Loud capture rate'),
+                decoration: const InputDecoration(
+                  labelText: 'Loud capture rate',
+                ),
                 items: [
                   for (final r in _captureRates)
                     DropdownMenuItem(value: r, child: Text('$r Hz')),
@@ -2213,10 +2239,12 @@ class _AcousticSectionState extends State<_AcousticSection> {
                 },
               ),
               DropdownButtonFormField<int>(
-                initialValue:
-                    _quietRates.contains(_quietRate) ? _quietRate : 16000,
-                decoration:
-                    const InputDecoration(labelText: 'Quiet storage rate'),
+                initialValue: _quietRates.contains(_quietRate)
+                    ? _quietRate
+                    : 16000,
+                decoration: const InputDecoration(
+                  labelText: 'Quiet storage rate',
+                ),
                 items: [
                   for (final r in _quietRates)
                     DropdownMenuItem(value: r, child: Text('$r Hz')),
@@ -2376,9 +2404,7 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
               if (connections.isEmpty) {
                 return const Text('No cloud destinations linked yet.');
               }
-              return Column(
-                children: [for (final c in connections) _tile(c)],
-              );
+              return Column(children: [for (final c in connections) _tile(c)]);
             },
           ),
           const Divider(height: 24),
@@ -2387,19 +2413,23 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
             runSpacing: 8,
             children: [
               OutlinedButton.icon(
-                onPressed: _busy ? null : () => _run(widget.controller.linkICloud),
+                onPressed: _busy
+                    ? null
+                    : () => _run(widget.controller.linkICloud),
                 icon: const Icon(Icons.cloud_outlined),
                 label: const Text('Link iCloud'),
               ),
               OutlinedButton.icon(
-                onPressed:
-                    _busy ? null : () => _linkProvider(CloudProvider.googleDrive),
+                onPressed: _busy
+                    ? null
+                    : () => _linkProvider(CloudProvider.googleDrive),
                 icon: const Icon(Icons.add_to_drive_outlined),
                 label: const Text('Link Google Drive'),
               ),
               OutlinedButton.icon(
-                onPressed:
-                    _busy ? null : () => _linkProvider(CloudProvider.oneDrive),
+                onPressed: _busy
+                    ? null
+                    : () => _linkProvider(CloudProvider.oneDrive),
                 icon: const Icon(Icons.cloud_sync_outlined),
                 label: const Text('Link OneDrive'),
               ),
@@ -2437,8 +2467,8 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
         onPressed: _busy
             ? null
             : () => _run(
-                  () => widget.controller.revokeCloudConnection(connection.id),
-                ),
+                () => widget.controller.revokeCloudConnection(connection.id),
+              ),
       ),
     );
   }
@@ -2462,8 +2492,9 @@ class _ProviderLinkDialog extends StatefulWidget {
 }
 
 class _ProviderLinkDialogState extends State<_ProviderLinkDialog> {
-  late final TextEditingController _redirect =
-      TextEditingController(text: widget.defaultRedirectUri);
+  late final TextEditingController _redirect = TextEditingController(
+    text: widget.defaultRedirectUri,
+  );
   final TextEditingController _code = TextEditingController();
   CloudLinkStart? _start;
   bool _busy = false;
@@ -2526,7 +2557,8 @@ class _ProviderLinkDialogState extends State<_ProviderLinkDialog> {
               controller: _redirect,
               decoration: const InputDecoration(
                 labelText: 'Redirect URI',
-                helperText: 'Must match the OAuth client registered on the server.',
+                helperText:
+                    'Must match the OAuth client registered on the server.',
               ),
             ),
             const SizedBox(height: 12),
@@ -2541,7 +2573,8 @@ class _ProviderLinkDialogState extends State<_ProviderLinkDialog> {
               SelectableText(authUrl),
               const SizedBox(height: 4),
               TextButton.icon(
-                onPressed: () => Clipboard.setData(ClipboardData(text: authUrl)),
+                onPressed: () =>
+                    Clipboard.setData(ClipboardData(text: authUrl)),
                 icon: const Icon(Icons.copy, size: 18),
                 label: const Text('Copy link'),
               ),
@@ -2549,7 +2582,9 @@ class _ProviderLinkDialogState extends State<_ProviderLinkDialog> {
               const Text('2. Paste the authorization code from the redirect:'),
               TextField(
                 controller: _code,
-                decoration: const InputDecoration(labelText: 'Authorization code'),
+                decoration: const InputDecoration(
+                  labelText: 'Authorization code',
+                ),
               ),
             ],
           ],
@@ -2772,7 +2807,9 @@ class _StatusSection extends StatelessWidget {
               FilledButton.tonalIcon(
                 onPressed: onToggleHighQuality,
                 icon: Icon(
-                  isHighQuality ? Icons.high_quality : Icons.high_quality_outlined,
+                  isHighQuality
+                      ? Icons.high_quality
+                      : Icons.high_quality_outlined,
                 ),
                 label: Text(
                   isHighQuality ? 'High quality: On' : 'High quality: Off',
@@ -3262,8 +3299,7 @@ class _ScheduleSectionState extends State<_ScheduleSection> {
     super.didUpdateWidget(old);
     // Adopt an externally-changed config only when no local edit is pending, so
     // a debounced save round-trip doesn't clobber an in-progress drag.
-    if (_debounce == null &&
-        widget.config.recordingSchedule != _schedule) {
+    if (_debounce == null && widget.config.recordingSchedule != _schedule) {
       _schedule = widget.config.recordingSchedule;
     }
   }
@@ -3388,11 +3424,7 @@ class _DayRow extends StatelessWidget {
             ),
           ],
         ),
-        _DayTimeline(
-          day: day,
-          enabled: !day.allDay,
-          onChanged: onChanged,
-        ),
+        _DayTimeline(day: day, enabled: !day.allDay, onChanged: onChanged),
       ],
     );
   }
@@ -3434,9 +3466,8 @@ class _DayTimelineState extends State<_DayTimeline> {
 
   int _minuteAt(double dx) {
     final raw = (dx / _trackWidth) * kMinutesPerDay;
-    final snapped =
-        (raw / kScheduleSnapMinutes).round() * kScheduleSnapMinutes;
-    return snapped.clamp(0, kMinutesPerDay);
+    final snapped = (raw / kScheduleSnapMinutes).round() * kScheduleSnapMinutes;
+    return snapped.clamp(0, kMinutesPerDay).toInt();
   }
 
   double _xFor(int minute) => (minute / kMinutesPerDay) * _trackWidth;
@@ -3496,11 +3527,14 @@ class _DayTimelineState extends State<_DayTimeline> {
       if (_dragIsStart) {
         // Allowed to slide left into a neighbour (→ merge on release); kept a
         // snap-step short of its own end so the window can't invert.
-        final start = minute.clamp(0, w.endMinute - kScheduleSnapMinutes);
+        final start = minute
+            .clamp(0, w.endMinute - kScheduleSnapMinutes)
+            .toInt();
         _dragWindows![_dragWindowIndex] = w.copyWith(startMinute: start);
       } else {
-        final end =
-            minute.clamp(w.startMinute + kScheduleSnapMinutes, kMinutesPerDay);
+        final end = minute
+            .clamp(w.startMinute + kScheduleSnapMinutes, kMinutesPerDay)
+            .toInt();
         _dragWindows![_dragWindowIndex] = w.copyWith(endMinute: end);
       }
     });
@@ -3551,9 +3585,12 @@ class _DayTimelineState extends State<_DayTimeline> {
       return; // tap inside an existing window does nothing
     }
     final center = _minuteAt(details.localPosition.dx);
-    final start =
-        (center - 30).clamp(0, kMinutesPerDay - kScheduleSnapMinutes);
-    final end = (start + 60).clamp(start + kScheduleSnapMinutes, kMinutesPerDay);
+    final start = (center - 30)
+        .clamp(0, kMinutesPerDay - kScheduleSnapMinutes)
+        .toInt();
+    final end = (start + 60)
+        .clamp(start + kScheduleSnapMinutes, kMinutesPerDay)
+        .toInt();
     final next = List.of(widget.day.normalizedWindows())
       ..add(RecordingWindow(startMinute: start, endMinute: end));
     widget.onChanged(widget.day.copyWith(windows: next).normalize());
@@ -3566,8 +3603,8 @@ class _DayTimelineState extends State<_DayTimeline> {
         : _windows;
     final dragMinute = _dragWindows != null
         ? (_dragIsStart
-            ? _dragWindows![_dragWindowIndex].startMinute
-            : _dragWindows![_dragWindowIndex].endMinute)
+              ? _dragWindows![_dragWindowIndex].startMinute
+              : _dragWindows![_dragWindowIndex].endMinute)
         : null;
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -3619,8 +3656,7 @@ class _TimelinePainter extends CustomPainter {
     );
     canvas.drawRRect(
       barRect,
-      Paint()
-        ..color = enabled ? SonusColors.green50 : const Color(0xFFEDEDED),
+      Paint()..color = enabled ? SonusColors.green50 : const Color(0xFFEDEDED),
     );
 
     // Filled windows (clipped to the rounded track).
@@ -3653,9 +3689,7 @@ class _TimelinePainter extends CustomPainter {
         text: TextSpan(text: _hourLabel(h), style: _tickStyle),
         textDirection: TextDirection.ltr,
       )..layout();
-      final lx = h == 0
-          ? 0.0
-          : (h == 24 ? width - tp.width : x - tp.width / 2);
+      final lx = h == 0 ? 0.0 : (h == 24 ? width - tp.width : x - tp.width / 2);
       tp.paint(canvas, Offset(lx, barTop + _kTimelineBarHeight + 2));
     }
 
@@ -3844,8 +3878,11 @@ class _ContextTriggersSection extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.warning_amber_rounded,
-                        size: 18, color: SonusColors.orange600),
+                    const Icon(
+                      Icons.warning_amber_rounded,
+                      size: 18,
+                      color: SonusColors.orange600,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -3940,7 +3977,10 @@ class _SignInNotice extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.account_circle, color: theme.colorScheme.onSecondaryContainer),
+          Icon(
+            Icons.account_circle,
+            color: theme.colorScheme.onSecondaryContainer,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
