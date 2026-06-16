@@ -63,10 +63,27 @@ dependencies:
   battery_plus: ^6.2.1
   connectivity_plus: ^6.1.0
   fftea: ^1.5.0+1
+  # Scheduled recording: exact OS alarms (Android) fire at window barriers even
+  # when the app is killed; a background isolate toggles the capture service.
+  android_alarm_manager_plus: ^4.0.4
+  # iOS explicit-consent gate: a local notification at each window start that the
+  # user taps to begin capture (Apple forbids silent background mic start).
+  flutter_local_notifications: ^18.0.1
+  # Time-zone database required by flutter_local_notifications' zonedSchedule.
+  timezone: ^0.10.0
+  # Context triggers: read the joined Wi-Fi SSID to detect home/away network
+  # changes (needs location permission on Android).
+  network_info_plus: ^6.0.0
+  # Context triggers: Bluetooth adapter / connected-device / nearby-device (BLE
+  # scan) detection.
+  flutter_blue_plus: ^1.32.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
+  # Deterministic virtual time for scheduler timer tests.
+  fake_async: ^1.3.1
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

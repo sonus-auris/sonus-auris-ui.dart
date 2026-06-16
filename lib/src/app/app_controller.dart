@@ -2,16 +2,19 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
 import 'package:rxdart/rxdart.dart';
 
 import '../models/acoustic_detection.dart';
 import '../models/audio_trigger_event.dart';
 import '../models/app_config.dart';
 import '../models/cloud_provider.dart';
+import '../models/context_trigger.dart';
 import '../models/cloud_secrets.dart';
 import '../models/playback_snapshot.dart';
 import '../models/recorder_snapshot.dart';
 import '../models/cloud_connection.dart';
+import '../models/recording_schedule.dart';
 import '../models/recording_segment.dart';
 import '../models/supabase_session.dart';
 import '../models/transfer_gate_status.dart';
@@ -22,9 +25,14 @@ import '../services/crypto/segment_encryptor.dart';
 import '../services/icloud_sync_service.dart';
 import '../services/location_service.dart';
 import '../services/diagnostic_log.dart';
+import '../services/context_trigger_service.dart';
+import '../services/context_trigger_sources.dart';
+import '../services/local_notifications_service.dart';
 import '../services/playback_service.dart';
 import '../services/power_network_gate.dart';
 import '../services/recording_feedback.dart';
+import '../services/recording_scheduler.dart';
+import '../services/recording_schedule_platform.dart';
 import '../services/spectral_sidecar.dart';
 import '../services/s3_storage_client.dart';
 import '../services/segment_index.dart';
@@ -69,9 +77,16 @@ class AppController {
     OAuthBrowser? oauthBrowser,
     SpeechToTextClient? speechToTextClient,
     OnDeviceSpeechClient? onDeviceSpeechClient,
+    RecordingScheduler? recordingScheduler,
+    LocalNotificationsService? localNotifications,
+    ContextTriggerService? contextTriggerService,
   }) {
     final effectiveSegmentIndex = segmentIndex ?? SegmentIndex();
     final effectiveDiagnostics = diagnosticLog ?? DiagnosticLog();
+    // One notifications instance for both schedule reminders and consent prompts
+    // so there is a single tap-response handler.
+    final notifications = localNotifications ??
+        LocalNotificationsService(diagnostics: effectiveDiagnostics);
     // One device-bound encryptor shared by every cloud path, so audio is sealed
     // on-device before upload and only ever opened locally. The master key lives
     // in the Keychain/Keystore via FlutterSecureKeyStore.
@@ -105,6 +120,20 @@ class AppController {
       oauthBrowser: oauthBrowser ?? const FlutterWebAuthBrowser(),
       speechToTextClient: speechToTextClient ?? SpeechToTextClient(),
       onDeviceSpeechClient: onDeviceSpeechClient ?? OnDeviceSpeechClient(),
+      recordingScheduler: recordingScheduler ??
+          RecordingScheduler(
+            diagnostics: effectiveDiagnostics,
+            platform: PluginSchedulePlatform(
+              notifications: notifications,
+              diagnostics: effectiveDiagnostics,
+            ),
+          ),
+      localNotifications: notifications,
+      contextTriggers: contextTriggerService ??
+          ContextTriggerService(
+            sources: defaultContextTriggerSources(),
+            diagnostics: effectiveDiagnostics,
+          ),
     );
   }
 
@@ -130,7 +159,15 @@ class AppController {
     required this._oauthBrowser,
     required this._speechToTextClient,
     required this._onDeviceSpeechClient,
-  }) {
+    required RecordingScheduler recordingScheduler,
+    required LocalNotificationsService localNotifications,
+    required ContextTriggerService contextTriggers,
+  })  : _scheduler = recordingScheduler,
+        _localNotifications = localNotifications,
+        _contextTriggers = contextTriggers {
+    _scheduler.onTransition = _onScheduleTransition;
+    _contextTriggers.onTrigger = _onContextTrigger;
+    _localNotifications.onConsentTap = acceptContextConsent;
     // Pre-combine the upload flag and transfer-gate status into one record so
     // both ride a single slot of the (max-arity-9) combineLatest below.
     final uploadStatus =
@@ -144,18 +181,27 @@ class AppController {
           (isUploading, transfer) =>
               (isUploading: isUploading, transfer: transfer),
         );
-    // Fold the message and detections list into one slot (combineLatest is at
-    // its max arity of 9 below).
+    // Fold the message, detections list, and consent request into one slot
+    // (combineLatest is at its max arity of 9 below).
     final messageAndDetections =
-        Rx.combineLatest2<
+        Rx.combineLatest3<
           String?,
           List<AcousticDetection>,
-          ({String? message, List<AcousticDetection> detections})
+          ConsentRequest?,
+          ({
+            String? message,
+            List<AcousticDetection> detections,
+            ConsentRequest? consentRequest,
+          })
         >(
           _message,
           _detectionsList,
-          (message, detections) =>
-              (message: message, detections: detections),
+          _consentRequest,
+          (message, detections, consentRequest) => (
+            message: message,
+            detections: detections,
+            consentRequest: consentRequest,
+          ),
         );
     // Fold the init + starting flags into one slot (combineLatest is at its max
     // arity of 9 below).
@@ -180,7 +226,11 @@ class AppController {
               List<String>,
               ({bool isInitializing, bool isStarting}),
               ({bool isUploading, TransferGateStatus transfer}),
-              ({String? message, List<AcousticDetection> detections}),
+              ({
+                String? message,
+                List<AcousticDetection> detections,
+                ConsentRequest? consentRequest,
+              }),
               AppViewModel
             >(
               _config,
@@ -216,6 +266,7 @@ class AppController {
                   transferStatus: uploadState.transfer,
                   message: messageState.message,
                   detections: messageState.detections,
+                  consentRequest: messageState.consentRequest,
                 );
               },
             )
@@ -246,6 +297,18 @@ class AppController {
   bool _archiveCaughtUp = false;
   final SpeechToTextClient _speechToTextClient;
   final OnDeviceSpeechClient _onDeviceSpeechClient;
+  final RecordingScheduler _scheduler;
+  final LocalNotificationsService _localNotifications;
+  final ContextTriggerService _contextTriggers;
+
+  /// True when the *current* recording session was started by the schedule (not
+  /// by the user). A schedule-driven stop only stops a schedule-started session,
+  /// so it never kills a recording the user began manually — and vice-versa.
+  bool _scheduleStartedRecording = false;
+
+  /// When the last context-trigger consent prompt was raised, to honor the
+  /// per-event cooldown so a flurry of events doesn't nag repeatedly.
+  DateTime? _lastConsentPromptAt;
   Future<void>? _deviceRegistrationInFlight;
   Future<void>? _supabaseRefreshInFlight;
   Future<void>? _icloudSyncInFlight;
@@ -272,6 +335,8 @@ class AppController {
   final BehaviorSubject<String?> _message = BehaviorSubject.seeded(null);
   final BehaviorSubject<List<AcousticDetection>> _detectionsList =
       BehaviorSubject.seeded(const []);
+  final BehaviorSubject<ConsentRequest?> _consentRequest =
+      BehaviorSubject.seeded(null);
   final PublishSubject<void> _uploadRequests = PublishSubject();
 
   /// Newest-first rolling window of acoustic detections kept for the UI.
@@ -363,6 +428,138 @@ class AppController {
       _diagnostics.add('Auto-start capture is enabled; starting recording.');
       await startRecording();
     }
+    // Register OS alarms/notifications for the recording schedule and reconcile
+    // current capture against the schedule — e.g. an exact alarm woke the app
+    // mid-window, or the app simply launched inside a scheduled window.
+    await _scheduler.sync(config.recordingSchedule);
+    await _reconcileWithSchedule(config.recordingSchedule);
+    // Arm context triggers and honor a consent notification the user may have
+    // tapped to launch the app.
+    await _localNotifications.ensureInitialized();
+    await _updateContextTriggers();
+    if (await _localNotifications.launchedFromConsent()) {
+      _diagnostics.add('Launched from a consent notification.');
+      acceptContextConsent();
+    }
+  }
+
+  /// Called by [_scheduler] when an in-app timer reaches a window barrier.
+  void _onScheduleTransition(bool shouldRecord) {
+    final config = _config.valueOrNull;
+    if (config == null || !config.recordingSchedule.enabled) {
+      return;
+    }
+    unawaited(_applyScheduleState(shouldRecord));
+  }
+
+  /// Brings capture in line with what the schedule says should be happening
+  /// right now, without disturbing a session the user controls manually.
+  Future<void> _reconcileWithSchedule(RecordingSchedule schedule) async {
+    if (!schedule.enabled) {
+      return;
+    }
+    await _applyScheduleState(schedule.isActiveAt(DateTime.now()));
+  }
+
+  Future<void> _applyScheduleState(bool shouldRecord) async {
+    if (shouldRecord) {
+      if (!_recorder.isRecording) {
+        _diagnostics.add('Schedule window active; starting recording.');
+        await startRecording(scheduleInitiated: true);
+      }
+    } else {
+      // Only stop a session the schedule itself started — never a manual one.
+      if (_recorder.isRecording && _scheduleStartedRecording) {
+        _diagnostics.add('Schedule window ended; stopping recording.');
+        await stopRecording();
+        _scheduleStartedRecording = false;
+      }
+    }
+    // The window/recording state just changed — re-arm context sources to match
+    // (they run only inside an active window while idle).
+    await _updateContextTriggers();
+  }
+
+  // --- Context triggers: wake & ask for consent on meaningful events --------
+
+  /// Reconcile which context-trigger sensors run against the current config and
+  /// schedule state. Sources run only while context triggers are enabled, the
+  /// schedule is in an active window, and capture is idle (so BLE scanning etc.
+  /// never runs needlessly).
+  Future<void> _updateContextTriggers() async {
+    final config = _config.valueOrNull;
+    if (config == null) {
+      return;
+    }
+    final schedule = config.recordingSchedule;
+    final active = schedule.enabled &&
+        schedule.isActiveAt(DateTime.now()) &&
+        !_recorder.isRecording;
+    await _contextTriggers.update(
+      enabled: config.contextTriggersEnabled,
+      kinds: config.contextTriggerKindSet,
+      active: active,
+    );
+  }
+
+  /// A context source fired. Raise a consent request only when armed, inside an
+  /// active schedule window, idle, and past the cooldown.
+  void _onContextTrigger(ContextTriggerEvent event) {
+    final config = _config.valueOrNull;
+    if (config == null || !config.contextTriggersEnabled) {
+      return;
+    }
+    final schedule = config.recordingSchedule;
+    if (!schedule.enabled || !schedule.isActiveAt(DateTime.now())) {
+      return; // only ask inside a scheduled window
+    }
+    if (_recorder.isRecording) {
+      return; // only ask when not already recording
+    }
+    final now = DateTime.now();
+    final last = _lastConsentPromptAt;
+    if (last != null &&
+        now.difference(last).inSeconds < config.contextTriggerCooldownSeconds) {
+      return; // honor the cooldown so a burst of events doesn't nag
+    }
+    _lastConsentPromptAt = now;
+    _diagnostics.add('Context trigger consent prompt: ${event.description}');
+    if (_isForeground) {
+      // Surface an in-app "Start recording?" banner the user explicitly accepts.
+      _consentRequest.add(ConsentRequest(event: event));
+    } else {
+      // Backgrounded but alive — ask via a tappable notification (the tap is the
+      // consent). Killed-app events can't be observed, so nothing fires then.
+      unawaited(_localNotifications.showConsentPrompt(event));
+    }
+  }
+
+  bool get _isForeground {
+    final state = WidgetsBinding.instance.lifecycleState;
+    return state == null || state == AppLifecycleState.resumed;
+  }
+
+  /// Accept a pending context-trigger consent request (in-app banner "Start" or
+  /// a tapped consent notification): start recording if the gate still holds.
+  void acceptContextConsent() {
+    _consentRequest.add(null);
+    unawaited(_localNotifications.clearConsentPrompt());
+    final config = _config.valueOrNull;
+    if (config == null || _recorder.isRecording) {
+      return;
+    }
+    final schedule = config.recordingSchedule;
+    if (!schedule.enabled || !schedule.isActiveAt(DateTime.now())) {
+      return; // window closed before the user responded
+    }
+    _diagnostics.add('Context consent accepted; starting recording.');
+    unawaited(startRecording(scheduleInitiated: true));
+  }
+
+  /// Dismiss the pending consent request without recording ("Not now").
+  void dismissContextConsent() {
+    _consentRequest.add(null);
+    unawaited(_localNotifications.clearConsentPrompt());
   }
 
   Future<void> _onTransferConditionsChanged() async {
@@ -477,7 +674,10 @@ class AppController {
       captureSampleRate: config.captureSampleRate.clamp(8000, 48000),
       quietSampleRate: config.quietSampleRate.clamp(8000, 48000),
       adaptiveLoudnessDb: config.adaptiveLoudnessDb.clamp(-90.0, 0.0),
+      recordingSchedule: config.recordingSchedule.normalize(),
     );
+    final scheduleChanged =
+        _config.valueOrNull?.recordingSchedule != normalized.recordingSchedule;
     if (_backendSessionKey != _sessionKey(normalized, _secrets.valueOrNull)) {
       _backendSession = null;
       _backendSessionKey = null;
@@ -491,6 +691,20 @@ class AppController {
     await _refreshTransferStatus();
     requestUploadDrain();
     await _enforceRetention();
+    // Re-register OS events and reconcile capture when the schedule was edited.
+    if (scheduleChanged) {
+      await _scheduler.sync(normalized.recordingSchedule);
+      await _reconcileWithSchedule(normalized.recordingSchedule);
+    }
+    // Re-arm context sources for any change to trigger or schedule config.
+    await _updateContextTriggers();
+  }
+
+  /// Request the permissions context triggers depend on (notifications for the
+  /// background consent prompt). Bluetooth/location are prompted by the OS when a
+  /// scan first runs. Call from the UI when the user enables triggers.
+  Future<void> requestContextTriggerPermissions() async {
+    await _localNotifications.requestPermission();
   }
 
   Future<void> saveSecrets(CloudSecrets secrets) async {
@@ -767,7 +981,11 @@ class AppController {
     return error.toString();
   }
 
-  Future<void> startRecording() async {
+  Future<void> startRecording({bool scheduleInitiated = false}) async {
+    // Ownership: a manual start clears schedule ownership, a schedule-driven
+    // start claims it. Only a schedule-owned session is auto-stopped at a window
+    // barrier (see [_applyScheduleState]).
+    _scheduleStartedRecording = scheduleInitiated;
     _diagnostics.add('Start recording requested.');
     // Surface a busy state for the whole flow — the notification + microphone
     // permission prompts can take a moment to appear, and the button should
@@ -796,6 +1014,8 @@ class AppController {
     } finally {
       _isStarting.add(false);
     }
+    // Recording is now (probably) live — pause context sources while we capture.
+    await _updateContextTriggers();
   }
 
   Future<void> stopRecording() async {
@@ -818,6 +1038,9 @@ class AppController {
     );
     _diagnostics.add('Stop recording completed.');
     requestUploadDrain();
+    // Idle again — if we're still inside a window, re-arm context sources so a
+    // later event can offer to resume.
+    await _updateContextTriggers();
   }
 
   /// Battery-friendly voice profile (16 kHz) vs. the music-grade high-fidelity
@@ -866,8 +1089,11 @@ class AppController {
     if (announce) {
       await _feedback.say('Restarting recording', force: true);
     }
+    // Preserve schedule ownership across a restart (quality switch, fresh
+    // segment) so a mid-window restart doesn't reclassify the session as manual.
+    final wasScheduleOwned = _scheduleStartedRecording;
     await stopRecording();
-    await startRecording();
+    await startRecording(scheduleInitiated: wasScheduleOwned);
   }
 
   Future<void> playLocalWindow() async {
@@ -1411,6 +1637,8 @@ class AppController {
     await _detectionsSubscription?.cancel();
     await _uploadSubscription?.cancel();
     await _transferConditionsSubscription?.cancel();
+    _scheduler.dispose();
+    await _contextTriggers.dispose();
     await _uploadRequests.close();
     await _recorder.dispose();
     await _playback.dispose();
@@ -1434,6 +1662,7 @@ class AppController {
     await _transfer.close();
     await _message.close();
     await _detectionsList.close();
+    await _consentRequest.close();
   }
 
   Future<void> _onSegmentClosed(RecordingSegment segment) async {

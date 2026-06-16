@@ -37,6 +37,10 @@
 	<string>Sonus Auris records a rolling audio window only after you start capture.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Sonus Auris can tag recordings with their location so a clip can prove where it was captured. Location tagging is optional and off by default.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Sonus Auris can notice Bluetooth and nearby devices to offer to start a scheduled recording. This is optional and off by default.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Sonus Auris can notice Bluetooth and nearby devices to offer to start a scheduled recording. This is optional and off by default.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

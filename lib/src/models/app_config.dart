@@ -1,4 +1,8 @@
+// ignore_for_file: prefer_initializing_formals
+
 import 'cloud_provider.dart';
+import 'context_trigger.dart';
+import 'recording_schedule.dart';
 import 'upload_network_policy.dart';
 
 class AppConfig {
@@ -53,7 +57,11 @@ class AppConfig {
     this.captureSampleRate = 48000,
     this.quietSampleRate = 16000,
     this.adaptiveLoudnessDb = -40.0,
-  });
+    this.contextTriggersEnabled = false,
+    this.contextTriggerKinds = const [],
+    this.contextTriggerCooldownSeconds = 300,
+    RecordingSchedule? recordingSchedule,
+  }) : _recordingSchedule = recordingSchedule;
 
   /// Capture intents understood by both the app and the backend. Music turns off
   /// the speech-oriented DSP so dynamics and frequency content are preserved.
@@ -199,6 +207,35 @@ class AppConfig {
   final int quietSampleRate;
   final double adaptiveLoudnessDb;
 
+  /// Opt-in weekly recording schedule. When [RecordingSchedule.enabled], capture
+  /// starts/stops at the day/time windows the user drew in the Configure tab,
+  /// enforced both in-app and via OS-level alarms/notifications. Stored nullable
+  /// so the const constructor stays const; read through [recordingSchedule].
+  final RecordingSchedule? _recordingSchedule;
+
+  RecordingSchedule get recordingSchedule =>
+      _recordingSchedule ?? RecordingSchedule.defaultSchedule();
+
+  /// Master switch for context triggers: meaningful events (Bluetooth, Wi-Fi /
+  /// network changes, nearby devices) prompt for consent to start recording —
+  /// but only while idle and inside an active [recordingSchedule] window.
+  final bool contextTriggersEnabled;
+
+  /// Which [ContextTriggerKind]s are armed, by wire name. Open-ended so new
+  /// sensors can be added without a schema change.
+  final List<String> contextTriggerKinds;
+
+  /// Minimum gap between two context-trigger consent prompts, so a flurry of
+  /// connectivity events doesn't nag repeatedly.
+  final int contextTriggerCooldownSeconds;
+
+  Set<ContextTriggerKind> get contextTriggerKindSet =>
+      ContextTriggerKind.setFromWire(contextTriggerKinds);
+
+  /// Whether any context trigger is actually armed.
+  bool get hasContextTriggers =>
+      contextTriggersEnabled && contextTriggerKindSet.isNotEmpty;
+
   bool get isMusic => useCase == 'music';
 
   /// The sample rate the microphone stream actually opens at. Adaptive quality
@@ -329,6 +366,10 @@ class AppConfig {
     int? captureSampleRate,
     int? quietSampleRate,
     double? adaptiveLoudnessDb,
+    bool? contextTriggersEnabled,
+    List<String>? contextTriggerKinds,
+    int? contextTriggerCooldownSeconds,
+    RecordingSchedule? recordingSchedule,
   }) {
     return AppConfig(
       deviceId: deviceId ?? this.deviceId,
@@ -394,6 +435,12 @@ class AppConfig {
       captureSampleRate: captureSampleRate ?? this.captureSampleRate,
       quietSampleRate: quietSampleRate ?? this.quietSampleRate,
       adaptiveLoudnessDb: adaptiveLoudnessDb ?? this.adaptiveLoudnessDb,
+      contextTriggersEnabled:
+          contextTriggersEnabled ?? this.contextTriggersEnabled,
+      contextTriggerKinds: contextTriggerKinds ?? this.contextTriggerKinds,
+      contextTriggerCooldownSeconds:
+          contextTriggerCooldownSeconds ?? this.contextTriggerCooldownSeconds,
+      recordingSchedule: recordingSchedule ?? this.recordingSchedule,
     );
   }
 
@@ -449,6 +496,10 @@ class AppConfig {
       'captureSampleRate': captureSampleRate,
       'quietSampleRate': quietSampleRate,
       'adaptiveLoudnessDb': adaptiveLoudnessDb,
+      'contextTriggersEnabled': contextTriggersEnabled,
+      'contextTriggerKinds': contextTriggerKinds,
+      'contextTriggerCooldownSeconds': contextTriggerCooldownSeconds,
+      'recordingSchedule': recordingSchedule.toJson(),
     };
   }
 
@@ -523,6 +574,14 @@ class AppConfig {
           _asInt(json['quietSampleRate'], 16000).clamp(8000, 48000),
       adaptiveLoudnessDb:
           _asDouble(json['adaptiveLoudnessDb'], -40.0).clamp(-90.0, 0.0),
+      contextTriggersEnabled:
+          json['contextTriggersEnabled'] as bool? ?? false,
+      contextTriggerKinds: _asStringList(json['contextTriggerKinds']),
+      contextTriggerCooldownSeconds:
+          _asInt(json['contextTriggerCooldownSeconds'], 300).clamp(10, 3600),
+      recordingSchedule: RecordingSchedule.fromJson(
+        (json['recordingSchedule'] as Map?)?.cast<String, dynamic>(),
+      ),
     );
   }
 
