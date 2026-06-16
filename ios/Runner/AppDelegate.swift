@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -7,7 +8,12 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    RecordingScheduleBridge.registerBackgroundTaskIfNeeded()
+    // Route scheduled-recording local notifications through the app so a tap on
+    // the "scheduled recording is starting" consent prompt foregrounds the app
+    // and flutter_local_notifications can deliver the launch/response payload.
+    if #available(iOS 10.0, *) {
+      UNUserNotificationCenter.current().delegate = self
+    }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -19,12 +25,6 @@ import UIKit
     if #available(iOS 15.0, *),
        let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ShazamBridge") {
       ShazamBridge.register(messenger: registrar.messenger())
-    }
-    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "RecordingScheduleBridge") {
-      RecordingScheduleBridge.register(messenger: registrar.messenger())
-    }
-    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "AmbientTriggerBridge") {
-      AmbientTriggerBridge.register(messenger: registrar.messenger())
     }
   }
 }

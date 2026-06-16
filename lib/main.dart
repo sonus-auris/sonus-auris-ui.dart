@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
+// `show DateFormat` so intl's TextDirection enum doesn't shadow dart:ui's.
+import 'package:intl/intl.dart' show DateFormat;
 
 import 'src/app/app_controller.dart';
 import 'src/app/app_view_model.dart';
@@ -12,15 +16,21 @@ import 'src/models/acoustic_detection.dart';
 import 'src/models/app_config.dart';
 import 'src/models/cloud_connection.dart';
 import 'src/models/cloud_provider.dart';
+import 'src/models/context_trigger.dart';
+import 'src/models/recording_schedule.dart';
 import 'src/models/storage_estimate.dart';
 import 'src/models/transfer_gate_status.dart';
 import 'src/models/upload_network_policy.dart';
 import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   FlutterForegroundTask.initCommunicationPort();
+  // Exact-alarm scheduling backs the recording schedule's OS-level start/stop.
+  if (Platform.isAndroid) {
+    await AndroidAlarmManager.initialize();
+  }
   runApp(const AudioDashcamRoot());
 }
 
@@ -240,40 +250,6 @@ class _SettingsPageState extends State<SettingsPage> {
           body: SafeArea(
             child: Column(
               children: [
-                if (viewModel.recordingConsentRequest != null)
-                  MaterialBanner(
-                    content: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(viewModel.recordingConsentRequest!.title),
-                        Text(
-                          viewModel.recordingConsentRequest!.detail,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ],
-                    ),
-                    leading: const Icon(Icons.sensors),
-                    actions: [
-                      TextButton(
-                        onPressed: () =>
-                            widget.controller.dismissRecordingConsentRequest(
-                              viewModel.recordingConsentRequest!.id,
-                            ),
-                        child: const Text('Not now'),
-                      ),
-                      FilledButton.icon(
-                        onPressed: viewModel.isStarting
-                            ? null
-                            : () => widget.controller
-                                  .approveRecordingConsentRequest(
-                                    viewModel.recordingConsentRequest!.id,
-                                  ),
-                        icon: const Icon(Icons.mic),
-                        label: const Text('Start'),
-                      ),
-                    ],
-                  ),
                 if (viewModel.message != null)
                   MaterialBanner(
                     content: Text(viewModel.message!),
@@ -282,6 +258,30 @@ class _SettingsPageState extends State<SettingsPage> {
                       TextButton(
                         onPressed: widget.controller.clearMessage,
                         child: const Text('Dismiss'),
+                      ),
+                    ],
+                  ),
+                // Context-trigger consent: a meaningful event fired inside a
+                // scheduled window while idle — ask before recording.
+                if (viewModel.consentRequest != null)
+                  MaterialBanner(
+                    backgroundColor: SonusColors.green50,
+                    content: Text(
+                      '${viewModel.consentRequest!.event.description} during '
+                      'your recording window. Start recording?',
+                    ),
+                    leading: const Icon(
+                      Icons.fiber_manual_record,
+                      color: SonusColors.orange500,
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: widget.controller.dismissContextConsent,
+                        child: const Text('Not now'),
+                      ),
+                      FilledButton(
+                        onPressed: widget.controller.acceptContextConsent,
+                        child: const Text('Start recording'),
                       ),
                     ],
                   ),
@@ -1274,11 +1274,6 @@ class _ConfigureView extends StatelessWidget {
           },
         ),
         const SizedBox(height: 16),
-        _RecordingScheduleSection(
-          config: viewModel.config,
-          onChanged: onAudioConfigChanged,
-        ),
-        const SizedBox(height: 16),
         _TransferPolicySection(
           config: viewModel.config,
           status: viewModel.transferStatus,
@@ -1288,6 +1283,17 @@ class _ConfigureView extends StatelessWidget {
         _AudioTuningSection(
           config: viewModel.config,
           onChanged: onAudioConfigChanged,
+        ),
+        const SizedBox(height: 16),
+        _ScheduleSection(
+          config: viewModel.config,
+          onChanged: onAudioConfigChanged,
+        ),
+        const SizedBox(height: 16),
+        _ContextTriggersSection(
+          config: viewModel.config,
+          onChanged: onAudioConfigChanged,
+          controller: controller,
         ),
         const SizedBox(height: 16),
         _MusicMemoriesSection(
@@ -1484,441 +1490,6 @@ class _AccountSectionState extends State<_AccountSection> {
         ],
       ),
     );
-  }
-}
-
-class _RecordingScheduleSection extends StatelessWidget {
-  const _RecordingScheduleSection({
-    required this.config,
-    required this.onChanged,
-  });
-
-  final AppConfig config;
-  final ValueChanged<AppConfig> onChanged;
-
-  void _updateDay(RecordingDaySchedule updated) {
-    final days = config.recordingSchedule.normalizedDays
-        .map((day) => day.dayOfWeek == updated.dayOfWeek ? updated : day)
-        .toList();
-    onChanged(
-      config.copyWith(recordingSchedule: WeeklyRecordingSchedule(days: days)),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final days = config.recordingSchedule.normalizedDays;
-    return _Section(
-      title: 'Recording Schedule',
-      child: Column(
-        children: [
-          for (var i = 0; i < days.length; i += 1) ...[
-            _ScheduleDayRow(day: days[i], onChanged: _updateDay),
-            if (i != days.length - 1) const Divider(height: 22),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _ScheduleDayRow extends StatelessWidget {
-  const _ScheduleDayRow({required this.day, required this.onChanged});
-
-  final RecordingDaySchedule day;
-  final ValueChanged<RecordingDaySchedule> onChanged;
-
-  static const _labels = <int, String>{
-    DateTime.monday: 'Mon',
-    DateTime.tuesday: 'Tue',
-    DateTime.wednesday: 'Wed',
-    DateTime.thursday: 'Thu',
-    DateTime.friday: 'Fri',
-    DateTime.saturday: 'Sat',
-    DateTime.sunday: 'Sun',
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final label = Text(
-      _labels[day.dayOfWeek] ?? '',
-      style: theme.textTheme.titleSmall,
-    );
-    final allDay = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Checkbox(
-          value: day.allDay,
-          onChanged: (value) {
-            onChanged(day.copyWith(allDay: value ?? false));
-          },
-        ),
-        const Text('All day'),
-      ],
-    );
-    final track = _ScheduleTrack(day: day, onChanged: onChanged);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 620;
-        if (compact) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  SizedBox(width: 56, child: label),
-                  allDay,
-                ],
-              ),
-              const SizedBox(height: 8),
-              track,
-            ],
-          );
-        }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            SizedBox(width: 52, child: label),
-            SizedBox(width: 118, child: allDay),
-            const SizedBox(width: 12),
-            Expanded(child: track),
-          ],
-        );
-      },
-    );
-  }
-}
-
-enum _ScheduleDragKind { start, end, segment }
-
-class _ScheduleDrag {
-  const _ScheduleDrag({
-    required this.index,
-    required this.kind,
-    this.minuteOffset = 0,
-  });
-
-  final int index;
-  final _ScheduleDragKind kind;
-  final int minuteOffset;
-}
-
-class _ScheduleTrack extends StatefulWidget {
-  const _ScheduleTrack({required this.day, required this.onChanged});
-
-  final RecordingDaySchedule day;
-  final ValueChanged<RecordingDaySchedule> onChanged;
-
-  @override
-  State<_ScheduleTrack> createState() => _ScheduleTrackState();
-}
-
-class _ScheduleTrackState extends State<_ScheduleTrack> {
-  static const _minWindowMinutes = 15;
-  static const _snapMinutes = 15;
-
-  RecordingDaySchedule? _draftDay;
-  _ScheduleDrag? _drag;
-  Offset? _doubleTapPosition;
-
-  RecordingDaySchedule get _activeDay => _draftDay ?? widget.day;
-
-  @override
-  void didUpdateWidget(covariant _ScheduleTrack oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (_draftDay != null && widget.day == _draftDay) {
-      _draftDay = null;
-    } else if (_drag == null && oldWidget.day != widget.day) {
-      _draftDay = null;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = !_activeDay.allDay;
-    return Column(
-      children: [
-        SizedBox(
-          height: 44,
-          child: Semantics(
-            label: '${_weekdayName(_activeDay.dayOfWeek)} recording schedule',
-            child: MouseRegion(
-              cursor: enabled
-                  ? SystemMouseCursors.click
-                  : SystemMouseCursors.basic,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onDoubleTapDown: enabled
-                    ? (details) => _doubleTapPosition = details.localPosition
-                    : null,
-                onDoubleTap: enabled ? _splitOrCreateWindow : null,
-                onPanStart: enabled ? _startDrag : null,
-                onPanUpdate: enabled ? _updateDrag : null,
-                onPanEnd: enabled ? (_) => _finishDrag() : null,
-                onPanCancel: enabled ? _finishDrag : null,
-                child: CustomPaint(
-                  painter: _ScheduleTrackPainter(
-                    windows: _activeDay.effectiveWindows,
-                    disabled: !enabled,
-                  ),
-                  child: const SizedBox.expand(),
-                ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 2),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: const [
-            Text('00'),
-            Text('06'),
-            Text('12'),
-            Text('18'),
-            Text('24'),
-          ],
-        ),
-      ],
-    );
-  }
-
-  void _splitOrCreateWindow() {
-    final position = _doubleTapPosition;
-    final width = context.size?.width ?? 0;
-    if (position == null || width <= 0) {
-      return;
-    }
-    final minute = _snapMinute(_minuteForX(position.dx, width));
-    final windows = _activeDay.normalizedWindows.toList();
-    final index = windows.indexWhere((window) => window.containsMinute(minute));
-    if (index < 0) {
-      final start = (minute - 30).clamp(0, RecordingWindow.minutesPerDay - 60);
-      windows.add(RecordingWindow(startMinute: start, endMinute: start + 60));
-      _setDraft(windows, commit: true);
-      return;
-    }
-    final window = windows[index];
-    if (window.endMinute - window.startMinute < _minWindowMinutes * 2) {
-      return;
-    }
-    final split = minute.clamp(
-      window.startMinute + _minWindowMinutes,
-      window.endMinute - _minWindowMinutes,
-    );
-    windows
-      ..removeAt(index)
-      ..insertAll(index, [
-        RecordingWindow(startMinute: window.startMinute, endMinute: split),
-        RecordingWindow(startMinute: split, endMinute: window.endMinute),
-      ]);
-    _setDraft(windows, commit: true);
-  }
-
-  void _startDrag(DragStartDetails details) {
-    final width = context.size?.width ?? 0;
-    if (width <= 0) {
-      return;
-    }
-    _drag = _dragFor(details.localPosition, width);
-  }
-
-  void _updateDrag(DragUpdateDetails details) {
-    final drag = _drag;
-    final width = context.size?.width ?? 0;
-    if (drag == null || width <= 0) {
-      return;
-    }
-    final windows = _activeDay.normalizedWindows.toList();
-    if (drag.index >= windows.length) {
-      return;
-    }
-    final window = windows[drag.index];
-    final minute = _snapMinute(_minuteForX(details.localPosition.dx, width));
-    switch (drag.kind) {
-      case _ScheduleDragKind.start:
-        windows[drag.index] = window.copyWith(
-          startMinute: minute.clamp(0, window.endMinute - _minWindowMinutes),
-        );
-        break;
-      case _ScheduleDragKind.end:
-        windows[drag.index] = window.copyWith(
-          endMinute: minute.clamp(
-            window.startMinute + _minWindowMinutes,
-            RecordingWindow.minutesPerDay,
-          ),
-        );
-        break;
-      case _ScheduleDragKind.segment:
-        final length = window.endMinute - window.startMinute;
-        final start = (minute - drag.minuteOffset).clamp(
-          0,
-          RecordingWindow.minutesPerDay - length,
-        );
-        windows[drag.index] = RecordingWindow(
-          startMinute: start,
-          endMinute: start + length,
-        );
-        break;
-    }
-    _setDraft(windows);
-  }
-
-  void _finishDrag() {
-    final draft = _draftDay;
-    _drag = null;
-    if (draft != null) {
-      widget.onChanged(draft);
-    }
-  }
-
-  _ScheduleDrag? _dragFor(Offset position, double width) {
-    final windows = _activeDay.normalizedWindows;
-    _ScheduleDrag? best;
-    var bestDistance = double.infinity;
-    for (var i = 0; i < windows.length; i += 1) {
-      final window = windows[i];
-      final startX = _xForMinute(window.startMinute, width);
-      final endX = _xForMinute(window.endMinute, width);
-      final startDistance = (position.dx - startX).abs();
-      final endDistance = (position.dx - endX).abs();
-      if (startDistance < bestDistance && startDistance <= 22) {
-        best = _ScheduleDrag(index: i, kind: _ScheduleDragKind.start);
-        bestDistance = startDistance;
-      }
-      if (endDistance < bestDistance && endDistance <= 22) {
-        best = _ScheduleDrag(index: i, kind: _ScheduleDragKind.end);
-        bestDistance = endDistance;
-      }
-      if (best == null && startX <= position.dx && position.dx <= endX) {
-        final minute = _minuteForX(position.dx, width);
-        best = _ScheduleDrag(
-          index: i,
-          kind: _ScheduleDragKind.segment,
-          minuteOffset: minute - window.startMinute,
-        );
-      }
-    }
-    return best;
-  }
-
-  void _setDraft(List<RecordingWindow> windows, {bool commit = false}) {
-    final day = _activeDay.copyWith(allDay: false, windows: windows);
-    setState(() => _draftDay = day);
-    if (commit) {
-      widget.onChanged(day);
-    }
-  }
-
-  int _minuteForX(double x, double width) {
-    final ratio = (x / width).clamp(0.0, 1.0);
-    return (ratio * RecordingWindow.minutesPerDay).round();
-  }
-
-  double _xForMinute(int minute, double width) {
-    return width * (minute / RecordingWindow.minutesPerDay);
-  }
-
-  int _snapMinute(int minute) {
-    final snapped = (minute / _snapMinutes).round() * _snapMinutes;
-    return snapped.clamp(0, RecordingWindow.minutesPerDay);
-  }
-
-  String _weekdayName(int weekday) {
-    switch (weekday) {
-      case DateTime.monday:
-        return 'Monday';
-      case DateTime.tuesday:
-        return 'Tuesday';
-      case DateTime.wednesday:
-        return 'Wednesday';
-      case DateTime.thursday:
-        return 'Thursday';
-      case DateTime.friday:
-        return 'Friday';
-      case DateTime.saturday:
-        return 'Saturday';
-      case DateTime.sunday:
-        return 'Sunday';
-    }
-    return 'Day';
-  }
-}
-
-class _ScheduleTrackPainter extends CustomPainter {
-  const _ScheduleTrackPainter({required this.windows, required this.disabled});
-
-  final List<RecordingWindow> windows;
-  final bool disabled;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final centerY = size.height / 2;
-    final trackRect = Rect.fromLTWH(0, centerY - 5, size.width, 10);
-    final trackRadius = Radius.circular(trackRect.height / 2);
-    final basePaint = Paint()
-      ..color = disabled ? SonusColors.green50 : const Color(0xFFE8F3EC);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(trackRect, trackRadius),
-      basePaint,
-    );
-
-    final tickPaint = Paint()
-      ..color = SonusColors.hairline
-      ..strokeWidth = 1;
-    for (final hour in const [0, 6, 12, 18, 24]) {
-      final x = size.width * (hour / 24);
-      canvas.drawLine(
-        Offset(x, centerY - 14),
-        Offset(x, centerY + 14),
-        tickPaint,
-      );
-    }
-
-    for (final window in windows) {
-      final left =
-          size.width * (window.startMinute / RecordingWindow.minutesPerDay);
-      final right =
-          size.width * (window.endMinute / RecordingWindow.minutesPerDay);
-      final rect = Rect.fromLTRB(left, centerY - 11, right, centerY + 11);
-      final activePaint = Paint()
-        ..shader = SonusColors.markGradient.createShader(rect);
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(rect, const Radius.circular(11)),
-        activePaint,
-      );
-      _paintHandle(canvas, Offset(left, centerY));
-      _paintHandle(canvas, Offset(right, centerY));
-    }
-  }
-
-  void _paintHandle(Canvas canvas, Offset center) {
-    final fill = Paint()..color = Colors.white;
-    final border = Paint()
-      ..color = SonusColors.green700
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    canvas
-      ..drawCircle(center, 8, fill)
-      ..drawCircle(center, 8, border);
-  }
-
-  @override
-  bool shouldRepaint(covariant _ScheduleTrackPainter oldDelegate) {
-    return disabled != oldDelegate.disabled ||
-        !_windowsEqual(windows, oldDelegate.windows);
-  }
-
-  bool _windowsEqual(List<RecordingWindow> a, List<RecordingWindow> b) {
-    if (a.length != b.length) {
-      return false;
-    }
-    for (var i = 0; i < a.length; i += 1) {
-      if (a[i] != b[i]) {
-        return false;
-      }
-    }
-    return true;
   }
 }
 
@@ -3695,6 +3266,649 @@ class _NumberField extends StatelessWidget {
         }
         return null;
       },
+    );
+  }
+}
+
+/// Weekly recording schedule editor. Each day gets a horizontal 0–24h timeline
+/// the user paints recording windows onto; pre-defining the windows is the
+/// consent to record during them, and [AppController] registers OS alarms /
+/// iOS notifications at the barriers so capture starts/stops on time.
+class _ScheduleSection extends StatefulWidget {
+  const _ScheduleSection({required this.config, required this.onChanged});
+
+  final AppConfig config;
+  final ValueChanged<AppConfig> onChanged;
+
+  @override
+  State<_ScheduleSection> createState() => _ScheduleSectionState();
+}
+
+class _ScheduleSectionState extends State<_ScheduleSection> {
+  late RecordingSchedule _schedule;
+  Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    _schedule = widget.config.recordingSchedule;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ScheduleSection old) {
+    super.didUpdateWidget(old);
+    // Adopt an externally-changed config only when no local edit is pending, so
+    // a debounced save round-trip doesn't clobber an in-progress drag.
+    if (_debounce == null && widget.config.recordingSchedule != _schedule) {
+      _schedule = widget.config.recordingSchedule;
+    }
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _commit(RecordingSchedule next, {bool immediate = false}) {
+    setState(() => _schedule = next);
+    _debounce?.cancel();
+    if (immediate) {
+      _debounce = null;
+      widget.onChanged(widget.config.copyWith(recordingSchedule: next));
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 450), () {
+      _debounce = null;
+      widget.onChanged(widget.config.copyWith(recordingSchedule: _schedule));
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return _Section(
+      title: 'Recording Schedule',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Record automatically during the windows you set for each day. '
+            'Setting these times is your consent to record then — on iOS each '
+            'window asks you to tap to begin.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: SonusColors.inkSoft,
+            ),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Scheduled recording'),
+            value: _schedule.enabled,
+            onChanged: (value) =>
+                _commit(_schedule.copyWith(enabled: value), immediate: true),
+          ),
+          if (_schedule.enabled) ...[
+            const SizedBox(height: 2),
+            for (var i = 0; i < 7; i++) ...[
+              _DayRow(
+                label: RecordingSchedule.dayShortLabels[i],
+                day: _schedule.days[i],
+                onChanged: (day) => _commit(_schedule.withDay(i, day)),
+              ),
+              if (i < 6) const Divider(height: 20),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.touch_app_outlined,
+                  size: 16,
+                  color: SonusColors.inkSoft,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Tap an empty area to add a window · double-tap a bar to '
+                    'split it · drag a handle onto its neighbour to merge.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: SonusColors.inkSoft,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DayRow extends StatelessWidget {
+  const _DayRow({
+    required this.label,
+    required this.day,
+    required this.onChanged,
+  });
+
+  final String label;
+  final DaySchedule day;
+  final ValueChanged<DaySchedule> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 40,
+              child: Text(
+                label,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const Spacer(),
+            Text('All day', style: theme.textTheme.bodySmall),
+            Checkbox(
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              value: day.allDay,
+              onChanged: (value) =>
+                  onChanged(day.copyWith(allDay: value ?? false)),
+            ),
+          ],
+        ),
+        _DayTimeline(day: day, enabled: !day.allDay, onChanged: onChanged),
+      ],
+    );
+  }
+}
+
+const double _kTimelineBarHeight = 22;
+const double _kTimelineLabelHeight = 14;
+const double _kHandleHitRadius = 22;
+
+/// A single day's 0–24h editable timeline. Pure widget (no app deps) so it stays
+/// testable and reusable. Resize = drag a window edge handle; split = double-tap
+/// a window; create = tap empty track; merge = drag a handle onto its neighbour
+/// (overlapping windows fuse via [DaySchedule.normalize] on release).
+class _DayTimeline extends StatefulWidget {
+  const _DayTimeline({
+    required this.day,
+    required this.onChanged,
+    this.enabled = true,
+  });
+
+  final DaySchedule day;
+  final ValueChanged<DaySchedule> onChanged;
+  final bool enabled;
+
+  @override
+  State<_DayTimeline> createState() => _DayTimelineState();
+}
+
+class _DayTimelineState extends State<_DayTimeline> {
+  // During a handle drag we hold a mutable working copy so the drag is smooth
+  // and overlaps are allowed; the merge happens once on release.
+  List<RecordingWindow>? _dragWindows;
+  int _dragWindowIndex = -1;
+  bool _dragIsStart = false;
+  double _trackWidth = 1;
+
+  List<RecordingWindow> get _windows =>
+      _dragWindows ?? widget.day.normalizedWindows();
+
+  int _minuteAt(double dx) {
+    final raw = (dx / _trackWidth) * kMinutesPerDay;
+    final snapped = (raw / kScheduleSnapMinutes).round() * kScheduleSnapMinutes;
+    return snapped.clamp(0, kMinutesPerDay).toInt();
+  }
+
+  double _xFor(int minute) => (minute / kMinutesPerDay) * _trackWidth;
+
+  ({int index, bool isStart})? _handleNear(double dx) {
+    var best = _kHandleHitRadius;
+    ({int index, bool isStart})? hit;
+    final windows = _windows;
+    for (var i = 0; i < windows.length; i++) {
+      final startDist = (dx - _xFor(windows[i].startMinute)).abs();
+      if (startDist <= best) {
+        best = startDist;
+        hit = (index: i, isStart: true);
+      }
+      final endDist = (dx - _xFor(windows[i].endMinute)).abs();
+      if (endDist <= best) {
+        best = endDist;
+        hit = (index: i, isStart: false);
+      }
+    }
+    return hit;
+  }
+
+  int? _windowIndexAt(double dx) {
+    final minute = _minuteAt(dx);
+    final windows = _windows;
+    for (var i = 0; i < windows.length; i++) {
+      if (windows[i].contains(minute)) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  void _onPanStart(DragStartDetails details) {
+    if (!widget.enabled) {
+      return;
+    }
+    final hit = _handleNear(details.localPosition.dx);
+    if (hit == null) {
+      return;
+    }
+    setState(() {
+      _dragWindows = List.of(widget.day.normalizedWindows());
+      _dragWindowIndex = hit.index;
+      _dragIsStart = hit.isStart;
+    });
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    if (_dragWindows == null) {
+      return;
+    }
+    final minute = _minuteAt(details.localPosition.dx);
+    final w = _dragWindows![_dragWindowIndex];
+    setState(() {
+      if (_dragIsStart) {
+        // Allowed to slide left into a neighbour (→ merge on release); kept a
+        // snap-step short of its own end so the window can't invert.
+        final start = minute
+            .clamp(0, w.endMinute - kScheduleSnapMinutes)
+            .toInt();
+        _dragWindows![_dragWindowIndex] = w.copyWith(startMinute: start);
+      } else {
+        final end = minute
+            .clamp(w.startMinute + kScheduleSnapMinutes, kMinutesPerDay)
+            .toInt();
+        _dragWindows![_dragWindowIndex] = w.copyWith(endMinute: end);
+      }
+    });
+  }
+
+  void _onPanEnd(DragEndDetails details) {
+    final windows = _dragWindows;
+    setState(() {
+      _dragWindows = null;
+      _dragWindowIndex = -1;
+    });
+    if (windows != null) {
+      widget.onChanged(widget.day.copyWith(windows: windows).normalize());
+    }
+  }
+
+  void _onDoubleTapDown(TapDownDetails details) {
+    if (!widget.enabled) {
+      return;
+    }
+    final idx = _windowIndexAt(details.localPosition.dx);
+    if (idx == null) {
+      return;
+    }
+    final windows = widget.day.normalizedWindows();
+    final w = windows[idx];
+    final split = _minuteAt(details.localPosition.dx);
+    final rightStart = split + kScheduleSnapMinutes;
+    // Need a snap-step of room on each side and a visible gap between the halves.
+    if (split - w.startMinute < kScheduleSnapMinutes ||
+        w.endMinute - rightStart < kScheduleSnapMinutes) {
+      return;
+    }
+    final next = List.of(windows);
+    next[idx] = RecordingWindow(startMinute: w.startMinute, endMinute: split);
+    next.insert(
+      idx + 1,
+      RecordingWindow(startMinute: rightStart, endMinute: w.endMinute),
+    );
+    widget.onChanged(widget.day.copyWith(windows: next));
+  }
+
+  void _onTapUp(TapUpDetails details) {
+    if (!widget.enabled) {
+      return;
+    }
+    if (_windowIndexAt(details.localPosition.dx) != null) {
+      return; // tap inside an existing window does nothing
+    }
+    final center = _minuteAt(details.localPosition.dx);
+    final start = (center - 30)
+        .clamp(0, kMinutesPerDay - kScheduleSnapMinutes)
+        .toInt();
+    final end = (start + 60)
+        .clamp(start + kScheduleSnapMinutes, kMinutesPerDay)
+        .toInt();
+    final next = List.of(widget.day.normalizedWindows())
+      ..add(RecordingWindow(startMinute: start, endMinute: end));
+    widget.onChanged(widget.day.copyWith(windows: next).normalize());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final windows = widget.day.allDay
+        ? const [RecordingWindow(startMinute: 0, endMinute: kMinutesPerDay)]
+        : _windows;
+    final dragMinute = _dragWindows != null
+        ? (_dragIsStart
+              ? _dragWindows![_dragWindowIndex].startMinute
+              : _dragWindows![_dragWindowIndex].endMinute)
+        : null;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _trackWidth = constraints.maxWidth;
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapUp: _onTapUp,
+          onDoubleTapDown: _onDoubleTapDown,
+          onHorizontalDragStart: _onPanStart,
+          onHorizontalDragUpdate: _onPanUpdate,
+          onHorizontalDragEnd: _onPanEnd,
+          child: SizedBox(
+            height: _kTimelineBarHeight + _kTimelineLabelHeight + 18,
+            width: double.infinity,
+            child: CustomPaint(
+              painter: _TimelinePainter(
+                windows: windows,
+                enabled: widget.enabled,
+                dragMinute: dragMinute,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _TimelinePainter extends CustomPainter {
+  _TimelinePainter({
+    required this.windows,
+    required this.enabled,
+    this.dragMinute,
+  });
+
+  final List<RecordingWindow> windows;
+  final bool enabled;
+  final int? dragMinute;
+
+  static const _hourMarks = [0, 6, 12, 18, 24];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final width = size.width;
+    final barTop = _kTimelineLabelHeight + 2;
+    final barRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0, barTop, width, _kTimelineBarHeight),
+      const Radius.circular(8),
+    );
+    canvas.drawRRect(
+      barRect,
+      Paint()..color = enabled ? SonusColors.green50 : const Color(0xFFEDEDED),
+    );
+
+    // Filled windows (clipped to the rounded track).
+    canvas.save();
+    canvas.clipRRect(barRect);
+    final fill = Paint()
+      ..color = enabled ? SonusColors.green500 : const Color(0xFFC4C4C4);
+    for (final w in windows) {
+      final sx = (w.startMinute / kMinutesPerDay) * width;
+      final ex = (w.endMinute / kMinutesPerDay) * width;
+      canvas.drawRect(
+        Rect.fromLTRB(sx, barTop, ex, barTop + _kTimelineBarHeight),
+        fill,
+      );
+    }
+    canvas.restore();
+
+    // Hour gridlines + labels.
+    final tickPaint = Paint()
+      ..color = SonusColors.hairline
+      ..strokeWidth = 1;
+    for (final h in _hourMarks) {
+      final x = (h / 24) * width;
+      canvas.drawLine(
+        Offset(x.clamp(0.5, width - 0.5), barTop),
+        Offset(x.clamp(0.5, width - 0.5), barTop + _kTimelineBarHeight),
+        tickPaint,
+      );
+      final tp = TextPainter(
+        text: TextSpan(text: _hourLabel(h), style: _tickStyle),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final lx = h == 0 ? 0.0 : (h == 24 ? width - tp.width : x - tp.width / 2);
+      tp.paint(canvas, Offset(lx, barTop + _kTimelineBarHeight + 2));
+    }
+
+    // Edge handles.
+    if (enabled) {
+      final handlePaint = Paint()..color = SonusColors.green700;
+      for (final w in windows) {
+        for (final m in [w.startMinute, w.endMinute]) {
+          final x = ((m / kMinutesPerDay) * width).clamp(3.0, width - 3.0);
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(
+              Rect.fromCenter(
+                center: Offset(x, barTop + _kTimelineBarHeight / 2),
+                width: 6,
+                height: _kTimelineBarHeight + 8,
+              ),
+              const Radius.circular(3),
+            ),
+            handlePaint,
+          );
+        }
+      }
+    }
+
+    // Empty-day hint.
+    if (enabled && windows.isEmpty) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: 'Tap to add a recording window',
+          style: _tickStyle.copyWith(color: SonusColors.inkSoft),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(
+        canvas,
+        Offset(
+          (width - tp.width) / 2,
+          barTop + (_kTimelineBarHeight - tp.height) / 2,
+        ),
+      );
+    }
+
+    // Floating time label on the handle being dragged.
+    if (dragMinute != null) {
+      final x = (dragMinute! / kMinutesPerDay) * width;
+      final tp = TextPainter(
+        text: TextSpan(
+          text: _formatMinuteOfDay(dragMinute!),
+          style: const TextStyle(
+            color: SonusColors.paper,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final lx = (x - tp.width / 2 - 4).clamp(0.0, width - tp.width - 8);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(lx, 0, tp.width + 8, _kTimelineLabelHeight),
+          const Radius.circular(4),
+        ),
+        Paint()..color = SonusColors.ink,
+      );
+      tp.paint(canvas, Offset(lx + 4, 1));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _TimelinePainter old) =>
+      old.enabled != enabled ||
+      old.dragMinute != dragMinute ||
+      !_windowListEquals(old.windows, windows);
+}
+
+const TextStyle _tickStyle = TextStyle(
+  color: SonusColors.inkSoft,
+  fontSize: 9,
+  fontWeight: FontWeight.w600,
+);
+
+bool _windowListEquals(List<RecordingWindow> a, List<RecordingWindow> b) {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+String _hourLabel(int hour) {
+  if (hour == 0 || hour == 24) {
+    return '12a';
+  }
+  if (hour == 12) {
+    return '12p';
+  }
+  return hour < 12 ? '${hour}a' : '${hour - 12}p';
+}
+
+String _formatMinuteOfDay(int minute) {
+  final m = minute.clamp(0, kMinutesPerDay);
+  // 1440 (end-of-day midnight) reads as 12:00 AM.
+  final dt = DateTime(2020, 1, 1).add(Duration(minutes: m % kMinutesPerDay));
+  return DateFormat.jm().format(dt);
+}
+
+/// Wake-on-event triggers: meaningful events (Bluetooth, Wi-Fi/network changes,
+/// nearby devices) prompt for consent to record — only while idle and inside an
+/// active [RecordingSchedule] window.
+class _ContextTriggersSection extends StatelessWidget {
+  const _ContextTriggersSection({
+    required this.config,
+    required this.onChanged,
+    required this.controller,
+  });
+
+  final AppConfig config;
+  final ValueChanged<AppConfig> onChanged;
+  final AppController controller;
+
+  void _setEnabled(bool value) {
+    if (value) {
+      // Make sure the background consent notification can be delivered.
+      unawaited(controller.requestContextTriggerPermissions());
+    }
+    onChanged(config.copyWith(contextTriggersEnabled: value));
+  }
+
+  void _toggleKind(ContextTriggerKind kind, bool on) {
+    final kinds = config.contextTriggerKindSet;
+    final next = {...kinds};
+    if (on) {
+      next.add(kind);
+    } else {
+      next.remove(kind);
+    }
+    onChanged(
+      config.copyWith(
+        contextTriggerKinds: next.map((k) => k.wireName).toList(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final selected = config.contextTriggerKindSet;
+    final scheduleOff = !config.recordingSchedule.enabled;
+    return _Section(
+      title: 'Wake-on-Event Triggers',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Let meaningful events ask you to start recording — but only when '
+            'you are not already recording and only inside an active schedule '
+            'window. Each prompt asks for your explicit consent first.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: SonusColors.inkSoft,
+            ),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Ask to record on events'),
+            value: config.contextTriggersEnabled,
+            onChanged: _setEnabled,
+          ),
+          if (config.contextTriggersEnabled) ...[
+            if (scheduleOff)
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: SonusColors.orange200,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.warning_amber_rounded,
+                      size: 18,
+                      color: SonusColors.orange600,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Triggers only fire inside a scheduled window. Turn on '
+                        'the Recording Schedule above and add a window.',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            for (final kind in ContextTriggerKind.values)
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text(kind.label),
+                value: selected.contains(kind),
+                onChanged: (value) => _toggleKind(kind, value ?? false),
+              ),
+            const SizedBox(height: 4),
+            Text(
+              'Bluetooth and nearby-device detection request Bluetooth (and, for '
+              'Wi-Fi names, location) permission. Nearby-device scanning uses more '
+              'battery and only runs during your scheduled windows.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: SonusColors.inkSoft,
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

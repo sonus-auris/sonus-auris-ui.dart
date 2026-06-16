@@ -29,5 +29,14 @@
 	-->
 	<key>com.apple.developer.shazamkit</key>
 	<true/>
+	<!--
+	  Access WiFi Information capability for the Wi-Fi context trigger (reading the
+	  joined SSID to detect home/away changes). Enable "Access WiFi Information" on
+	  the App ID in the Apple Developer portal. Without it (and location
+	  permission) the SSID reads as null and the Wi-Fi trigger simply fails soft —
+	  the connectivity (network-change) trigger is unaffected.
+	-->
+	<key>com.apple.developer.networking.wifi-info</key>
+	<true/>
 </dict>
 </plist>

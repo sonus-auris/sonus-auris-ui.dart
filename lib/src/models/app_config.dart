@@ -1,282 +1,9 @@
+// ignore_for_file: prefer_initializing_formals
+
 import 'cloud_provider.dart';
+import 'context_trigger.dart';
+import 'recording_schedule.dart';
 import 'upload_network_policy.dart';
-
-class RecordingWindow {
-  const RecordingWindow({required this.startMinute, required this.endMinute});
-
-  static const int minutesPerDay = 24 * 60;
-  static const RecordingWindow fullDay = RecordingWindow(
-    startMinute: 0,
-    endMinute: minutesPerDay,
-  );
-
-  final int startMinute;
-  final int endMinute;
-
-  bool get isValid =>
-      startMinute >= 0 && endMinute <= minutesPerDay && startMinute < endMinute;
-
-  bool containsMinute(int minute) {
-    final clamped = minute.clamp(0, minutesPerDay - 1);
-    return startMinute <= clamped && clamped < endMinute;
-  }
-
-  RecordingWindow copyWith({int? startMinute, int? endMinute}) {
-    return RecordingWindow(
-      startMinute: startMinute ?? this.startMinute,
-      endMinute: endMinute ?? this.endMinute,
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {'startMinute': startMinute, 'endMinute': endMinute};
-  }
-
-  factory RecordingWindow.fromJson(Object? json) {
-    if (json is! Map<String, dynamic>) {
-      return const RecordingWindow(startMinute: 9 * 60, endMinute: 17 * 60);
-    }
-    return RecordingWindow(
-      startMinute: AppConfig._asInt(
-        json['startMinute'],
-        9 * 60,
-      ).clamp(0, minutesPerDay - 1),
-      endMinute: AppConfig._asInt(
-        json['endMinute'],
-        17 * 60,
-      ).clamp(1, minutesPerDay),
-    );
-  }
-
-  @override
-  bool operator ==(Object other) {
-    return other is RecordingWindow &&
-        startMinute == other.startMinute &&
-        endMinute == other.endMinute;
-  }
-
-  @override
-  int get hashCode => Object.hash(startMinute, endMinute);
-}
-
-class RecordingDaySchedule {
-  const RecordingDaySchedule({
-    required this.dayOfWeek,
-    this.allDay = false,
-    this.windows = const [],
-  });
-
-  final int dayOfWeek;
-  final bool allDay;
-  final List<RecordingWindow> windows;
-
-  bool get hasWindows => allDay || normalizedWindows.isNotEmpty;
-
-  List<RecordingWindow> get effectiveWindows =>
-      allDay ? const [RecordingWindow.fullDay] : normalizedWindows;
-
-  List<RecordingWindow> get normalizedWindows => _normalizeWindows(windows);
-
-  bool containsMinute(int minute) {
-    if (allDay) {
-      return true;
-    }
-    return normalizedWindows.any((window) => window.containsMinute(minute));
-  }
-
-  RecordingDaySchedule copyWith({
-    int? dayOfWeek,
-    bool? allDay,
-    List<RecordingWindow>? windows,
-  }) {
-    return RecordingDaySchedule(
-      dayOfWeek: dayOfWeek ?? this.dayOfWeek,
-      allDay: allDay ?? this.allDay,
-      windows: windows ?? this.windows,
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'dayOfWeek': dayOfWeek,
-      'allDay': allDay,
-      'windows': normalizedWindows.map((window) => window.toJson()).toList(),
-    };
-  }
-
-  factory RecordingDaySchedule.fromJson(Object? json) {
-    if (json is! Map<String, dynamic>) {
-      return const RecordingDaySchedule(dayOfWeek: DateTime.monday);
-    }
-    final rawWindows = json['windows'];
-    return RecordingDaySchedule(
-      dayOfWeek: AppConfig._asInt(
-        json['dayOfWeek'],
-        DateTime.monday,
-      ).clamp(1, 7),
-      allDay: json['allDay'] as bool? ?? false,
-      windows: rawWindows is List
-          ? rawWindows
-                .map(RecordingWindow.fromJson)
-                .where((w) => w.isValid)
-                .toList()
-          : const [],
-    );
-  }
-
-  static List<RecordingWindow> _normalizeWindows(
-    List<RecordingWindow> windows,
-  ) {
-    final sorted =
-        windows
-            .where((window) => window.isValid)
-            .map(
-              (window) => RecordingWindow(
-                startMinute: window.startMinute.clamp(
-                  0,
-                  RecordingWindow.minutesPerDay - 1,
-                ),
-                endMinute: window.endMinute.clamp(
-                  1,
-                  RecordingWindow.minutesPerDay,
-                ),
-              ),
-            )
-            .toList()
-          ..sort((a, b) => a.startMinute.compareTo(b.startMinute));
-    final merged = <RecordingWindow>[];
-    for (final window in sorted) {
-      if (merged.isEmpty || window.startMinute > merged.last.endMinute) {
-        merged.add(window);
-        continue;
-      }
-      final last = merged.removeLast();
-      merged.add(
-        RecordingWindow(
-          startMinute: last.startMinute,
-          endMinute: window.endMinute > last.endMinute
-              ? window.endMinute
-              : last.endMinute,
-        ),
-      );
-    }
-    return List.unmodifiable(merged);
-  }
-
-  @override
-  bool operator ==(Object other) {
-    return other is RecordingDaySchedule &&
-        dayOfWeek == other.dayOfWeek &&
-        allDay == other.allDay &&
-        _listEquals(normalizedWindows, other.normalizedWindows);
-  }
-
-  @override
-  int get hashCode =>
-      Object.hash(dayOfWeek, allDay, Object.hashAll(normalizedWindows));
-}
-
-class WeeklyRecordingSchedule {
-  const WeeklyRecordingSchedule({this.days = const []});
-
-  final List<RecordingDaySchedule> days;
-
-  bool get hasAnyWindows => normalizedDays.any((day) => day.hasWindows);
-
-  List<RecordingDaySchedule> get normalizedDays {
-    final byDay = <int, RecordingDaySchedule>{
-      for (
-        var weekday = DateTime.monday;
-        weekday <= DateTime.sunday;
-        weekday += 1
-      )
-        weekday: RecordingDaySchedule(dayOfWeek: weekday),
-    };
-    for (final day in days) {
-      final weekday = day.dayOfWeek.clamp(DateTime.monday, DateTime.sunday);
-      final current = byDay[weekday]!;
-      byDay[weekday] = RecordingDaySchedule(
-        dayOfWeek: weekday,
-        allDay: current.allDay || day.allDay,
-        windows: [...current.windows, ...day.normalizedWindows],
-      );
-    }
-    return List.unmodifiable(byDay.values);
-  }
-
-  RecordingDaySchedule day(int weekday) {
-    final clamped = weekday.clamp(DateTime.monday, DateTime.sunday);
-    return normalizedDays.firstWhere((day) => day.dayOfWeek == clamped);
-  }
-
-  bool isActiveAt(DateTime instant) {
-    if (!hasAnyWindows) {
-      return false;
-    }
-    final local = instant.toLocal();
-    final minute = local.hour * 60 + local.minute;
-    return day(local.weekday).containsMinute(minute);
-  }
-
-  DateTime? nextBarrierAfter(DateTime instant) {
-    if (!hasAnyWindows) {
-      return null;
-    }
-    final now = instant.toLocal();
-    final activeNow = isActiveAt(now);
-    final today = DateTime(now.year, now.month, now.day);
-    DateTime? best;
-    for (var offset = 0; offset <= 8; offset += 1) {
-      final date = today.add(Duration(days: offset));
-      final daySchedule = day(date.weekday);
-      for (final window in daySchedule.effectiveWindows) {
-        for (final minute in [window.startMinute, window.endMinute]) {
-          final candidate = date.add(Duration(minutes: minute));
-          if (!candidate.isAfter(now)) {
-            continue;
-          }
-          if (isActiveAt(candidate.add(const Duration(seconds: 1))) ==
-              activeNow) {
-            continue;
-          }
-          if (best == null || candidate.isBefore(best)) {
-            best = candidate;
-          }
-        }
-      }
-    }
-    return best;
-  }
-
-  WeeklyRecordingSchedule copyWith({List<RecordingDaySchedule>? days}) {
-    return WeeklyRecordingSchedule(days: days ?? this.days);
-  }
-
-  Map<String, dynamic> toJson() {
-    return {'days': normalizedDays.map((day) => day.toJson()).toList()};
-  }
-
-  factory WeeklyRecordingSchedule.fromJson(Object? json) {
-    if (json is! Map<String, dynamic>) {
-      return const WeeklyRecordingSchedule();
-    }
-    final rawDays = json['days'];
-    return WeeklyRecordingSchedule(
-      days: rawDays is List
-          ? rawDays.map(RecordingDaySchedule.fromJson).toList()
-          : const [],
-    );
-  }
-
-  @override
-  bool operator ==(Object other) {
-    return other is WeeklyRecordingSchedule &&
-        _listEquals(normalizedDays, other.normalizedDays);
-  }
-
-  @override
-  int get hashCode => Object.hashAll(normalizedDays);
-}
 
 class AppConfig {
   const AppConfig({
@@ -330,8 +57,11 @@ class AppConfig {
     this.captureSampleRate = 48000,
     this.quietSampleRate = 16000,
     this.adaptiveLoudnessDb = -40.0,
-    this.recordingSchedule = const WeeklyRecordingSchedule(),
-  });
+    this.contextTriggersEnabled = false,
+    this.contextTriggerKinds = const [],
+    this.contextTriggerCooldownSeconds = 300,
+    RecordingSchedule? recordingSchedule,
+  }) : _recordingSchedule = recordingSchedule;
 
   /// Capture intents understood by both the app and the backend. Music turns off
   /// the speech-oriented DSP so dynamics and frequency content are preserved.
@@ -477,9 +207,34 @@ class AppConfig {
   final int quietSampleRate;
   final double adaptiveLoudnessDb;
 
-  /// Optional weekly recording consent schedule. Empty means scheduling is off
-  /// and manual/auto-start recording behaves exactly as before.
-  final WeeklyRecordingSchedule recordingSchedule;
+  /// Opt-in weekly recording schedule. When [RecordingSchedule.enabled], capture
+  /// starts/stops at the day/time windows the user drew in the Configure tab,
+  /// enforced both in-app and via OS-level alarms/notifications. Stored nullable
+  /// so the const constructor stays const; read through [recordingSchedule].
+  final RecordingSchedule? _recordingSchedule;
+
+  RecordingSchedule get recordingSchedule =>
+      _recordingSchedule ?? RecordingSchedule.defaultSchedule();
+
+  /// Master switch for context triggers: meaningful events (Bluetooth, Wi-Fi /
+  /// network changes, nearby devices) prompt for consent to start recording —
+  /// but only while idle and inside an active [recordingSchedule] window.
+  final bool contextTriggersEnabled;
+
+  /// Which [ContextTriggerKind]s are armed, by wire name. Open-ended so new
+  /// sensors can be added without a schema change.
+  final List<String> contextTriggerKinds;
+
+  /// Minimum gap between two context-trigger consent prompts, so a flurry of
+  /// connectivity events doesn't nag repeatedly.
+  final int contextTriggerCooldownSeconds;
+
+  Set<ContextTriggerKind> get contextTriggerKindSet =>
+      ContextTriggerKind.setFromWire(contextTriggerKinds);
+
+  /// Whether any context trigger is actually armed.
+  bool get hasContextTriggers =>
+      contextTriggersEnabled && contextTriggerKindSet.isNotEmpty;
 
   bool get isMusic => useCase == 'music';
 
@@ -611,7 +366,10 @@ class AppConfig {
     int? captureSampleRate,
     int? quietSampleRate,
     double? adaptiveLoudnessDb,
-    WeeklyRecordingSchedule? recordingSchedule,
+    bool? contextTriggersEnabled,
+    List<String>? contextTriggerKinds,
+    int? contextTriggerCooldownSeconds,
+    RecordingSchedule? recordingSchedule,
   }) {
     return AppConfig(
       deviceId: deviceId ?? this.deviceId,
@@ -677,6 +435,11 @@ class AppConfig {
       captureSampleRate: captureSampleRate ?? this.captureSampleRate,
       quietSampleRate: quietSampleRate ?? this.quietSampleRate,
       adaptiveLoudnessDb: adaptiveLoudnessDb ?? this.adaptiveLoudnessDb,
+      contextTriggersEnabled:
+          contextTriggersEnabled ?? this.contextTriggersEnabled,
+      contextTriggerKinds: contextTriggerKinds ?? this.contextTriggerKinds,
+      contextTriggerCooldownSeconds:
+          contextTriggerCooldownSeconds ?? this.contextTriggerCooldownSeconds,
       recordingSchedule: recordingSchedule ?? this.recordingSchedule,
     );
   }
@@ -733,6 +496,9 @@ class AppConfig {
       'captureSampleRate': captureSampleRate,
       'quietSampleRate': quietSampleRate,
       'adaptiveLoudnessDb': adaptiveLoudnessDb,
+      'contextTriggersEnabled': contextTriggersEnabled,
+      'contextTriggerKinds': contextTriggerKinds,
+      'contextTriggerCooldownSeconds': contextTriggerCooldownSeconds,
       'recordingSchedule': recordingSchedule.toJson(),
     };
   }
@@ -819,8 +585,14 @@ class AppConfig {
         json['adaptiveLoudnessDb'],
         -40.0,
       ).clamp(-90.0, 0.0),
-      recordingSchedule: WeeklyRecordingSchedule.fromJson(
-        json['recordingSchedule'],
+      contextTriggersEnabled: json['contextTriggersEnabled'] as bool? ?? false,
+      contextTriggerKinds: _asStringList(json['contextTriggerKinds']),
+      contextTriggerCooldownSeconds: _asInt(
+        json['contextTriggerCooldownSeconds'],
+        300,
+      ).clamp(10, 3600),
+      recordingSchedule: RecordingSchedule.fromJson(
+        (json['recordingSchedule'] as Map?)?.cast<String, dynamic>(),
       ),
     );
   }
@@ -854,19 +626,4 @@ class AppConfig {
     }
     return double.tryParse(value?.toString() ?? '') ?? fallback;
   }
-}
-
-bool _listEquals<T>(List<T> a, List<T> b) {
-  if (identical(a, b)) {
-    return true;
-  }
-  if (a.length != b.length) {
-    return false;
-  }
-  for (var i = 0; i < a.length; i += 1) {
-    if (a[i] != b[i]) {
-      return false;
-    }
-  }
-  return true;
 }

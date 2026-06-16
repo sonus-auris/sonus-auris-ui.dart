@@ -1,24 +1,13 @@
 import '../models/acoustic_detection.dart';
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
+import '../models/context_trigger.dart';
 import '../models/cloud_provider.dart';
 import '../models/playback_snapshot.dart';
 import '../models/recorder_snapshot.dart';
 import '../models/recording_segment.dart';
 import '../models/storage_estimate.dart';
 import '../models/transfer_gate_status.dart';
-
-class RecordingConsentRequest {
-  const RecordingConsentRequest({
-    required this.id,
-    required this.title,
-    required this.detail,
-  });
-
-  final String id;
-  final String title;
-  final String detail;
-}
 
 class AppViewModel {
   const AppViewModel({
@@ -33,8 +22,8 @@ class AppViewModel {
     this.isStarting = false,
     this.transferStatus = const TransferGateStatus.unknown(),
     this.message,
-    this.recordingConsentRequest,
     this.detections = const [],
+    this.consentRequest,
   });
 
   final AppConfig config;
@@ -58,7 +47,11 @@ class AppViewModel {
   /// true, cloud uploads are deferred (local capture continues).
   final TransferGateStatus transferStatus;
   final String? message;
-  final RecordingConsentRequest? recordingConsentRequest;
+
+  /// A pending request to start recording, raised when a context trigger fired
+  /// inside an active schedule window while idle. The Home view surfaces this as
+  /// an explicit "Start recording? / Not now" consent banner.
+  final ConsentRequest? consentRequest;
 
   /// True when uploads are configured but currently held back by the battery /
   /// network gate (as opposed to simply having nothing to upload).

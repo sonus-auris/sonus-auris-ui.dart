@@ -4,19 +4,31 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission
-        android:name="android.permission.BLUETOOTH"
-        android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- Resume the capture foreground service automatically after a reboot, so
          the rolling window keeps running without the user re-opening the app. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Recording schedule: exact alarms fire start/stop at window barriers even
+         when the app is idle/killed (android_alarm_manager_plus). USE_EXACT_ALARM
+         is auto-granted for an alarm-clock-style app; SCHEDULE_EXACT_ALARM is the
+         pre-Android-14 equivalent the user can revoke under "Alarms & reminders". -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <!-- Optional GPS evidence tagging (off by default). -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Context (wake-on-event) triggers, all off by default:
+         - Bluetooth connect / nearby BLE scan detection. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Legacy Bluetooth perms for pre-Android-12 devices. -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <!-- Read the joined Wi-Fi SSID (home/away detection) + Android-13 nearby-Wi-Fi. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
 
     <application
         android:label="Sonus Auris"
@@ -52,25 +64,24 @@
             android:exported="false"
             android:foregroundServiceType="microphone"
             android:stopWithTask="false" />
-        <receiver
-            android:name=".RecordingScheduleReceiver"
-            android:exported="false" />
-        <receiver
-            android:name=".AmbientTriggerReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
-                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
-                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
-                <action android:name="android.net.wifi.STATE_CHANGE" />
-            </intent-filter>
-        </receiver>
         <!-- The boot receiver that restarts capture after a reboot is declared by
              flutter_foreground_task's own manifest (with the correct
              android:exported="true" for a BOOT_COMPLETED receiver). Re-declaring
              it here caused a manifest-merger conflict on @exported, so we rely on
              the plugin's declaration; we keep the RECEIVE_BOOT_COMPLETED
              permission above. -->
+        <!-- android_alarm_manager_plus reboot receiver: re-arms scheduled
+             recording alarms after a reboot (we register them with
+             rescheduleOnReboot: true). The plugin contributes the AlarmService
+             and AlarmBroadcastReceiver via manifest merge; only this reboot
+             receiver's BOOT_COMPLETED intent-filter must be declared by the app. -->
+        <receiver
+            android:name="dev.fluttercommunity.plus.androidalarmmanager.RebootBroadcastReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
