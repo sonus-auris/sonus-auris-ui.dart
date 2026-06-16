@@ -219,14 +219,19 @@ class RecordingSchedule {
       return null;
     }
     // Every window edge across the horizon is a candidate transition instant.
-    final startOfDay = DateTime(from.year, from.month, from.day);
     final candidates = <DateTime>[];
     for (var dayOffset = 0; dayOffset <= horizonDays; dayOffset++) {
-      final date = startOfDay.add(Duration(days: dayOffset));
+      // Build the day by calendar arithmetic (DateTime normalizes overflow), and
+      // each edge from wall-clock hour/minute rather than adding a Duration — so
+      // a DST transition inside the horizon doesn't drift the window an hour.
+      // endMinute == 1440 → hour 24 normalizes to the next day's midnight.
+      final date = DateTime(from.year, from.month, from.day + dayOffset);
       for (final w in days[dayIndexFor(date)].effectiveWindows()) {
         candidates
-          ..add(date.add(Duration(minutes: w.startMinute)))
-          ..add(date.add(Duration(minutes: w.endMinute)));
+          ..add(DateTime(date.year, date.month, date.day,
+              w.startMinute ~/ 60, w.startMinute % 60))
+          ..add(DateTime(date.year, date.month, date.day,
+              w.endMinute ~/ 60, w.endMinute % 60));
       }
     }
     candidates.sort();

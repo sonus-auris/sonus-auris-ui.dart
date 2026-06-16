@@ -7,7 +7,6 @@ import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/recording_schedule.dart';
-import 'background_capture_service.dart';
 import 'diagnostic_log.dart';
 import 'local_notifications_service.dart';
 import 'recording_scheduler.dart';
@@ -92,11 +91,15 @@ class PluginSchedulePlatform implements SchedulePlatform {
   }
 }
 
-/// Background-isolate callback fired by an exact alarm. Runs without the app's
-/// main isolate, so it can only: record the commanded state for the main isolate
-/// to reconcile, and toggle the foreground service (which keeps the process up
-/// so the rolling-window recorder in the main isolate can run). When the app is
-/// fully killed, actual mic capture resumes once the main isolate is next alive.
+/// Background-isolate callback fired by an exact alarm. It runs in a separate
+/// isolate that can NOT drive the main-isolate recorder, so it deliberately does
+/// not touch capture or the foreground service: doing so could stop a *manual*
+/// recording (bypassing the ownership guard) or show a "recording" notification
+/// while nothing is actually captured. Instead it only records the commanded
+/// state; the main isolate reconciles against the schedule (the authoritative
+/// `isActiveAt`) whenever it is next alive. While the app is alive the precise
+/// in-app timer does the real start/stop; this alarm is the wake/redundancy
+/// path. Reliable capture from a fully-killed app is a known limitation.
 @pragma('vm:entry-point')
 Future<void> scheduleAlarmFired(int id) async {
   final prefs = await SharedPreferences.getInstance();
@@ -111,11 +114,4 @@ Future<void> scheduleAlarmFired(int id) async {
     return;
   }
   await prefs.setBool(kSchedulePendingShouldRecordKey, shouldRecord);
-  final service = BackgroundCaptureService();
-  service.init();
-  if (shouldRecord) {
-    await service.start();
-  } else {
-    await service.stop();
-  }
 }

@@ -167,13 +167,16 @@ class LocalNotificationsService {
   }
 
   /// Immediate "an event happened during your window — tap to record" prompt,
-  /// used when the app isn't foregrounded to surface an in-app banner.
+  /// shown when the app isn't foregrounded. The body uses the generic trigger
+  /// category — never the specific SSID / device name — so nothing sensitive
+  /// lands on the lock screen; the in-app banner shows the detail.
   Future<void> showConsentPrompt(ContextTriggerEvent event) async {
     await ensureInitialized();
     await _plugin.show(
       _consentId,
       'Start recording?',
-      '${event.description} during your recording window. Tap to record.',
+      'A ${event.kind.label.toLowerCase()} happened during your recording '
+          'window. Tap to record.',
       _details,
       payload: consentPayload,
     );

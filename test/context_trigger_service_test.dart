@@ -98,6 +98,35 @@ void main() {
     await service.dispose();
   });
 
+  test('concurrent update() calls converge to the latest desired state',
+      () async {
+    final net = _FakeSource(ContextTriggerKind.networkChange);
+    final service = ContextTriggerService(sources: [net]);
+    // Fire several overlapping updates without awaiting; the serialized drain
+    // must not double-start and must settle on the final state (active:false).
+    final futures = [
+      service.update(
+        enabled: true,
+        kinds: {ContextTriggerKind.networkChange},
+        active: true,
+      ),
+      service.update(
+        enabled: true,
+        kinds: {ContextTriggerKind.networkChange},
+        active: true,
+      ),
+      service.update(
+        enabled: true,
+        kinds: {ContextTriggerKind.networkChange},
+        active: false,
+      ),
+    ];
+    await Future.wait(futures);
+    expect(net.isStarted, isFalse);
+    expect(net.startCount, lessThanOrEqualTo(1));
+    await service.dispose();
+  });
+
   test('drops events that arrive after the window closes', () async {
     final net = _FakeSource(ContextTriggerKind.networkChange);
     final service = ContextTriggerService(sources: [net]);

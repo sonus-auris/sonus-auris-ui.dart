@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
+import 'package:permission_handler/permission_handler.dart';
 import 'package:rxdart/rxdart.dart';
 
 import '../models/acoustic_detection.dart';
@@ -516,6 +517,9 @@ class AppController {
     if (_recorder.isRecording) {
       return; // only ask when not already recording
     }
+    if (_consentRequest.valueOrNull != null) {
+      return; // a consent request is already awaiting the user's answer
+    }
     final now = DateTime.now();
     final last = _lastConsentPromptAt;
     if (last != null &&
@@ -700,11 +704,34 @@ class AppController {
     await _updateContextTriggers();
   }
 
-  /// Request the permissions context triggers depend on (notifications for the
-  /// background consent prompt). Bluetooth/location are prompted by the OS when a
-  /// scan first runs. Call from the UI when the user enables triggers.
-  Future<void> requestContextTriggerPermissions() async {
+  /// Request the permissions the armed context-trigger [kinds] depend on:
+  /// notifications (background consent prompt), Bluetooth (connect/nearby), and
+  /// location (Wi-Fi SSID, and BLE scanning on older Android). Without these the
+  /// affected triggers silently never fire. Best-effort; failures are logged.
+  Future<void> requestContextTriggerPermissions(
+    Set<ContextTriggerKind> kinds,
+  ) async {
     await _localNotifications.requestPermission();
+    final needsBluetooth =
+        kinds.contains(ContextTriggerKind.bluetoothConnect) ||
+            kinds.contains(ContextTriggerKind.nearbyDevice);
+    final needsLocation =
+        needsBluetooth || kinds.contains(ContextTriggerKind.wifiChange);
+    try {
+      if (needsBluetooth) {
+        if (Platform.isAndroid) {
+          await [Permission.bluetoothScan, Permission.bluetoothConnect]
+              .request();
+        } else if (Platform.isIOS) {
+          await Permission.bluetooth.request();
+        }
+      }
+      if (needsLocation && (Platform.isAndroid || Platform.isIOS)) {
+        await Permission.locationWhenInUse.request();
+      }
+    } catch (error) {
+      _diagnostics.add('Context permission request failed: $error');
+    }
   }
 
   Future<void> saveSecrets(CloudSecrets secrets) async {

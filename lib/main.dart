@@ -3782,8 +3782,12 @@ class _ContextTriggersSection extends StatelessWidget {
 
   void _setEnabled(bool value) {
     if (value) {
-      // Make sure the background consent notification can be delivered.
-      unawaited(controller.requestContextTriggerPermissions());
+      // Make sure the permissions the armed triggers need are granted.
+      unawaited(
+        controller.requestContextTriggerPermissions(
+          config.contextTriggerKindSet,
+        ),
+      );
     }
     onChanged(config.copyWith(contextTriggersEnabled: value));
   }
@@ -3793,6 +3797,8 @@ class _ContextTriggersSection extends StatelessWidget {
     final next = {...kinds};
     if (on) {
       next.add(kind);
+      // Request this trigger's permissions as soon as it's armed.
+      unawaited(controller.requestContextTriggerPermissions(next));
     } else {
       next.remove(kind);
     }

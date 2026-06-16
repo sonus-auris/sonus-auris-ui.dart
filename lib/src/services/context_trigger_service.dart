@@ -48,6 +48,13 @@ class ContextTriggerService {
   bool _enabled = false;
   bool _active = false;
 
+  // Serialize reconciliation so concurrent update() calls (init / save / window
+  // transition / record start-stop can overlap) can't double-start a source.
+  // Each call records the latest desired state and chains a drain; the drain
+  // applies whatever the newest desired state is.
+  Future<void> _queue = Future<void>.value();
+  ({bool enabled, Set<ContextTriggerKind> kinds, bool active})? _desired;
+
   /// True while any source is running.
   bool get isRunning => _subscriptions.isNotEmpty;
 
@@ -61,12 +68,25 @@ class ContextTriggerService {
     required bool enabled,
     required Set<ContextTriggerKind> kinds,
     required bool active,
-  }) async {
-    _enabled = enabled;
-    _active = active;
-    final shouldRun = enabled && active;
+  }) {
+    _desired = (enabled: enabled, kinds: Set.of(kinds), active: active);
+    final next = _queue.then((_) => _drain());
+    // Keep the chain alive even if a drain throws.
+    _queue = next.catchError((_) {});
+    return next;
+  }
+
+  Future<void> _drain() async {
+    final desired = _desired;
+    if (desired == null) {
+      return; // a later update() already applied the newest state
+    }
+    _desired = null;
+    _enabled = desired.enabled;
+    _active = desired.active;
+    final shouldRun = desired.enabled && desired.active;
     final wanted = shouldRun
-        ? kinds.where(_sources.containsKey).toSet()
+        ? desired.kinds.where(_sources.containsKey).toSet()
         : <ContextTriggerKind>{};
 
     // Stop sources no longer wanted.

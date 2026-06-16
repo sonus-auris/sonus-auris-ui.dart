@@ -103,6 +103,23 @@ void main() {
       expect(transitions[1].startsRecording, isFalse);
     });
 
+    test('end-of-day window stops at the next midnight (wall-clock)', () {
+      // A 23:00–24:00 window: start at 23:00, stop at the next day's 00:00.
+      final late = RecordingSchedule(
+        enabled: true,
+        days: [
+          DaySchedule(windows: [w(23 * 60, kMinutesPerDay)]),
+          ...List.generate(6, (_) => DaySchedule.empty),
+        ],
+      );
+      final start = late.nextTransitionAfter(DateTime(2026, 6, 15, 22, 0));
+      expect(start!.at, DateTime(2026, 6, 15, 23, 0));
+      expect(start.startsRecording, isTrue);
+      final stop = late.nextTransitionAfter(DateTime(2026, 6, 15, 23, 30));
+      expect(stop!.at, DateTime(2026, 6, 16, 0, 0));
+      expect(stop.startsRecording, isFalse);
+    });
+
     test('back-to-back all-day windows produce no seam transition', () {
       final allWeek = RecordingSchedule(
         enabled: true,

@@ -88,6 +88,10 @@ class RecordingScheduler {
   }
 
   void _armTimer(RecordingSchedule schedule, DateTime from) {
+    // Cancel any timer armed by a concurrent sync() so exactly one is live —
+    // otherwise an orphaned timer would fire a duplicate transition.
+    _timer?.cancel();
+    _timer = null;
     final next = schedule.nextTransitionAfter(from);
     if (next == null) {
       return;
