@@ -331,6 +331,7 @@ class SegmentRecorder {
         androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
       ),
     );
+    await session.setActive(true);
   }
 
   /// Arms the auto-resume safety net for the freshly opened stream: a periodic
