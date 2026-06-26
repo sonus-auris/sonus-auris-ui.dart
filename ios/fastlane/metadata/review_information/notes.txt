@@ -1,0 +1,30 @@
+REVIEWER NOTES — Sonus Auris
+
+What the app does
+- Sonus Auris is a personal audio recorder ("audio dashcam"). It records the
+  user's OWN environment after the user explicitly taps Start, and keeps a
+  rolling local window plus optional encrypted backup.
+
+How to test (no account required to record)
+1. Launch the app and grant the microphone permission when prompted.
+2. Tap Start. A live waveform/level appears and one-minute clips begin saving.
+3. Lock the device — recording continues under the "audio" background mode
+   (this is the core feature). Unlock; the clips list shows captured segments.
+4. Tap Stop. Play a clip back from the list.
+
+Background audio justification (UIBackgroundModes: audio)
+- The app's purpose is continuous capture, including while the screen is locked
+  (e.g. sleep/snore tracking overnight). The active AVAudioSession + audio
+  background mode is required and is started only after the user taps Start.
+
+Permissions
+- Microphone: used only after the user starts capture (NSMicrophoneUsageDescription).
+- Location: OPTIONAL, OFF by default — only used to geotag a clip if enabled.
+- Bluetooth: OPTIONAL — only to notice nearby devices for scheduled-capture prompts.
+
+Cloud / accounts
+- There is no shared media server. Backup goes to storage the user controls.
+- If you need to exercise the optional backend (alerts/links), contact us for a
+  demo configuration; it is not required to evaluate the core recording feature.
+
+Privacy policy: <PASTE HOSTED URL>   Account deletion: <PASTE HOSTED URL>
