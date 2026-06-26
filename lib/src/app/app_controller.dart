@@ -1080,6 +1080,8 @@ class AppController {
       try {
         _diagnostics.add('Starting PCM microphone stream.');
         await _recorder.start(_config.value);
+        // Capture is live: from here a dropped stream should be auto-resumed.
+        _intendRecording = true;
         _diagnostics.add('PCM microphone stream started.');
         unawaited(_feedback.say('Recording started'));
         _message.add(
