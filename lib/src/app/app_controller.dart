@@ -1181,6 +1181,40 @@ class AppController {
     await startRecording(scheduleInitiated: wasScheduleOwned);
   }
 
+  /// Restarts capture after the recorder reports an interruption/stall it could
+  /// not resume itself. Silent (no spoken cue, no schedule-ownership change) and
+  /// rate-limited so a device that genuinely cannot record does not spin.
+  Future<void> _handleAutoResume(String reason) async {
+    if (!_intendRecording || _autoResuming) {
+      return;
+    }
+    final now = DateTime.now();
+    _recentAutoResumes.removeWhere(
+      (t) => now.difference(t) > const Duration(seconds: 60),
+    );
+    if (_recentAutoResumes.length >= _maxAutoResumesPerMinute) {
+      _diagnostics.add(
+        'Auto-resume suppressed after '
+        '${_recentAutoResumes.length} attempts in 60s ($reason).',
+      );
+      _message.add(
+        'Recording was interrupted and could not restart automatically. '
+        'Tap record to resume.',
+      );
+      return;
+    }
+    _recentAutoResumes.add(now);
+    _autoResuming = true;
+    _diagnostics.add('Auto-resuming capture ($reason).');
+    try {
+      await restartRecording(announce: false);
+    } catch (error) {
+      _diagnostics.add('Auto-resume restart failed: $error.');
+    } finally {
+      _autoResuming = false;
+    }
+  }
+
   Future<void> playLocalWindow() async {
     await _playback.playSegments(_segments.value);
   }
