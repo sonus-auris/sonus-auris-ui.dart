@@ -1,0 +1,12 @@
+# Android release signing — TEMPLATE.
+#
+# Copy to `android/key.properties` (gitignored) and fill in, or let
+# scripts/release/android-generate-keystore.sh create both the keystore and this
+# file. Read by android/app/build.gradle.kts. storeFile is relative to android/app/.
+#
+# With Play App Signing enabled (recommended), this is only your *upload* key.
+
+storeFile=upload-keystore.jks
+keyAlias=upload
+storePassword=CHANGE_ME
+keyPassword=CHANGE_ME
