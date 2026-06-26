@@ -3334,8 +3334,8 @@ class _ScheduleSectionState extends State<_ScheduleSection> {
         children: [
           Text(
             'Record automatically during the windows you set for each day. '
-            'Setting these times is your consent to record then — on iOS each '
-            'window asks you to tap to begin.',
+            'Setting these times is your consent to record then; keep the app '
+            'running so iOS can maintain the active audio session.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: SonusColors.inkSoft,
             ),

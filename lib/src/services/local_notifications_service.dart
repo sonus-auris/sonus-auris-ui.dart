@@ -126,8 +126,9 @@ class LocalNotificationsService {
     ),
   );
 
-  /// Schedule iOS reminders for window barriers (the explicit-consent gate on
-  /// iOS, where the app can't silently start the mic in the background).
+  /// Schedule iOS reminders for window barriers. If the app is already alive,
+  /// the in-app scheduler starts/stops capture directly; these reminders help
+  /// the user notice a window and can relaunch the app if it was not live.
   Future<void> scheduleTransitions(List<ScheduleTransition> transitions) async {
     await ensureInitialized();
     await cancelScheduled();
@@ -148,7 +149,7 @@ class LocalNotificationsService {
         await _plugin.zonedSchedule(
           _scheduleStartBase + startIdx++,
           'Scheduled recording is starting',
-          'Tap to begin recording your scheduled window.',
+          'Open Sonus Auris to confirm capture is active.',
           when,
           _details,
           androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
