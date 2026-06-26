@@ -1103,6 +1103,8 @@ class AppController {
 
   Future<void> stopRecording() async {
     _diagnostics.add('Stop recording requested.');
+    // Clear intent first so an in-flight resume request does not re-start us.
+    _intendRecording = false;
     Object? recorderError;
     try {
       await _recorder.stop();
