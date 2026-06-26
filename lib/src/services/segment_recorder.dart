@@ -300,6 +300,7 @@ class SegmentRecorder {
 
   Future<void> dispose() async {
     await stop();
+    await _resume.dispose();
     await _analyzer.dispose();
     await _snapshot.close();
     await _closedSegments.close();
