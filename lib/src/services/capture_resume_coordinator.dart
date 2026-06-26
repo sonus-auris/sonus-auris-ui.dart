@@ -118,7 +118,13 @@ class CaptureResumeCoordinator {
       return;
     }
     final deadline = _resumeDeadline;
-    if (deadline != null && !now.isBefore(deadline)) {
+    if (deadline != null) {
+      if (now.isBefore(deadline)) {
+        // Still inside the grace window: let the plugin resume on its own.
+        // The pre-interruption [_lastChunkAt] is expectedly stale here, so we
+        // must not let the generic stall check below fire on it yet.
+        return;
+      }
       _resumeDeadline = null;
       final lastChunk = _lastChunkAt;
       final resumed =
@@ -127,6 +133,7 @@ class CaptureResumeCoordinator {
         _emit('interruption did not resume');
         return;
       }
+      // Plugin resumed within grace; fall through to the normal stall watch.
     }
     final lastChunk = _lastChunkAt;
     if (lastChunk != null && now.difference(lastChunk) >= stallThreshold) {
