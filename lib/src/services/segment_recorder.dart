@@ -252,6 +252,7 @@ class SegmentRecorder {
               ),
             );
           });
+      await _startResumeGuard();
     } catch (error) {
       _running = false;
       await _analyzer.stop();
