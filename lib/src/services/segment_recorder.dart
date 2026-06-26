@@ -213,6 +213,12 @@ class SegmentRecorder {
           .listen(
             (_) {},
             onError: (Object error) {
+              // A stream error mid-recording (e.g. media services reset) is a
+              // recoverable death, not a deliberate stop: ask to restart while
+              // the coordinator still considers us recording.
+              if (!_stopping) {
+                _resume.onCaptureError(DateTime.now().toUtc());
+              }
               _snapshot.add(
                 _snapshot.value.copyWith(
                   isRecording: false,
