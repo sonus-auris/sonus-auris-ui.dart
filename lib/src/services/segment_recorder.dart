@@ -15,8 +15,14 @@ import '../models/recording_segment.dart';
 import 'acoustic/acoustic_pipeline.dart';
 import 'acoustic/spectral_features.dart';
 import 'acoustic_analyzer.dart';
+import 'capture_resume_coordinator.dart';
 import 'segment_index.dart';
 import 'wav_segment_writer.dart';
+
+/// Build-time gate. Pass `--dart-define=SONUS_DISABLE_INTERRUPTION_RESUME=true`
+/// to make the auto-resume safety net a complete no-op (A/B / fallback).
+const bool _kInterruptionResumeDisabled =
+    bool.fromEnvironment('SONUS_DISABLE_INTERRUPTION_RESUME');
 
 class SegmentRecorder {
   SegmentRecorder({
