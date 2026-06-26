@@ -52,6 +52,14 @@ These require a human with the right accounts; do them once.
 - [ ] **iOS export compliance** decided (`docs/compliance/EXPORT_COMPLIANCE.md`) — the app does its own AES-256-GCM E2E encryption, so this is **not** an automatic "exempt". `ITSAppUsesNonExemptEncryption` is set in `Info.plist` per that doc; confirm the determination.
 - [ ] **Foreground-service / background-audio justification** (Play "Foreground Service" declaration + Apple background `audio` mode review).
 
+## Store-console-only items (no file in repo — done in the dashboards)
+
+- [ ] **Content / age rating** — Play IARC questionnaire + App Store age rating.
+- [ ] **Screenshots & graphics** — iOS (6.7"/6.5"/5.5" + iPad if supported) and Play (≥2 phone shots + 1024×500 feature graphic). The app must be runnable to capture these; see `android/fastlane/metadata/.../images/README.md`.
+- [ ] **App category / contact info / support URL.**
+- [ ] **Pricing & availability** (free, countries).
+- [ ] **Sign in / demo** for reviewers if any gated feature needs it (see iOS review notes).
+
 ## Release flow (once the above is done)
 
 ```bash
