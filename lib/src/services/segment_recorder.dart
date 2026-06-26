@@ -127,6 +127,11 @@ class SegmentRecorder {
 
   Stream<AudioTriggerEvent> get triggerEvents => _triggerEvents.stream;
 
+  /// Fires (with a short reason) when capture should be restarted to recover
+  /// from an interruption or stall it could not resume on its own. The owner
+  /// (app controller) decides whether to act, applying its own back-off.
+  Stream<String> get resumeRequests => _resume.resumeRequests;
+
   /// Acoustic-intelligence detections from the on-device FFT engine.
   Stream<AcousticDetection> get detections => _analyzer.detections;
 
