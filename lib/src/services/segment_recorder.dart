@@ -271,6 +271,9 @@ class SegmentRecorder {
     _running = false;
     await _amplitudeSubscription?.cancel();
     _amplitudeSubscription = null;
+    // Disarm the auto-resume guard before tearing the stream down so the stop
+    // we are about to perform is not mistaken for an interruption to recover.
+    await _stopResumeGuard();
     try {
       if (await _recorder.isRecording() || await _recorder.isPaused()) {
         await _recorder.stop();
