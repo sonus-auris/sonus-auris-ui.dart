@@ -1757,6 +1757,7 @@ class AppController {
     await _triggerSubscription?.cancel();
     await _detectionsSubscription?.cancel();
     await _uploadSubscription?.cancel();
+    await _resumeRequestsSubscription?.cancel();
     await _transferConditionsSubscription?.cancel();
     _scheduler.dispose();
     await _contextTriggers.dispose();
