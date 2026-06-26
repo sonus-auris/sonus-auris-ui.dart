@@ -30,19 +30,39 @@ class SegmentRecorder {
     required SegmentIndex segmentIndex,
     AcousticAnalyzer? analyzer,
     Uuid? uuid,
+    bool? autoResumeAfterInterruption,
+    CaptureResumeCoordinator? resumeCoordinator,
   }) : this._(
           recorder ?? AudioRecorder(),
           segmentIndex,
           analyzer ?? AcousticAnalyzer(),
           uuid ?? const Uuid(),
+          resumeCoordinator ??
+              CaptureResumeCoordinator(
+                enabled: autoResumeAfterInterruption ??
+                    !_kInterruptionResumeDisabled,
+              ),
         );
 
-  SegmentRecorder._(this._recorder, this._segmentIndex, this._analyzer, this._uuid);
+  SegmentRecorder._(
+    this._recorder,
+    this._segmentIndex,
+    this._analyzer,
+    this._uuid,
+    this._resume,
+  );
 
   final AudioRecorder _recorder;
   final SegmentIndex _segmentIndex;
   final AcousticAnalyzer _analyzer;
   final Uuid _uuid;
+
+  // Auto-resume safety net: keeps an unattended (overnight) capture alive across
+  // phone calls, alarms, Siri, and media-services resets. See
+  // [CaptureResumeCoordinator]. A no-op when disabled.
+  final CaptureResumeCoordinator _resume;
+  Timer? _resumeWatchdog;
+  StreamSubscription<AudioInterruptionEvent>? _interruptionSubscription;
   final BehaviorSubject<RecorderSnapshot> _snapshot = BehaviorSubject.seeded(
     const RecorderSnapshot.idle(),
   );
