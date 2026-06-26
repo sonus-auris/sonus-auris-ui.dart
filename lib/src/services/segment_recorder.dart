@@ -322,6 +322,43 @@ class SegmentRecorder {
     );
   }
 
+  /// Arms the auto-resume safety net for the freshly opened stream: a periodic
+  /// liveness watchdog plus an OS interruption listener. Fully skipped (no
+  /// timer, no subscription) when the feature is gated off, so capture behaves
+  /// exactly as before.
+  Future<void> _startResumeGuard() async {
+    if (!_resume.enabled) {
+      return;
+    }
+    _resume.start(DateTime.now().toUtc());
+    await _interruptionSubscription?.cancel();
+    final session = await AudioSession.instance;
+    _interruptionSubscription = session.interruptionEventStream.listen((event) {
+      // Ducking lowers other apps' volume but does not stop our capture.
+      if (event.type == AudioInterruptionType.duck) {
+        return;
+      }
+      if (event.begin) {
+        _resume.onInterruptionBegin();
+      } else {
+        _resume.onInterruptionEnd(DateTime.now().toUtc());
+      }
+    });
+    _resumeWatchdog?.cancel();
+    _resumeWatchdog = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _resume.tick(DateTime.now().toUtc()),
+    );
+  }
+
+  Future<void> _stopResumeGuard() async {
+    _resumeWatchdog?.cancel();
+    _resumeWatchdog = null;
+    await _interruptionSubscription?.cancel();
+    _interruptionSubscription = null;
+    _resume.stop();
+  }
+
   void _resetCaptureState(AppConfig config) {
     _config = config;
     _captureStartedAtUtc = DateTime.now().toUtc();
