@@ -411,6 +411,10 @@ class SegmentRecorder {
     if (!_running || config == null || bytes.isEmpty) {
       return;
     }
+    // Audio is flowing — tell the resume watchdog capture is alive.
+    if (_resume.enabled) {
+      _resume.notifyChunk(DateTime.now().toUtc());
+    }
     final frameSize = config.channels * 2;
     final data = _consumeAlignedFrames(bytes, frameSize);
     var offset = 0;
