@@ -1753,17 +1753,20 @@ class AppController {
   }
 
   Future<void> dispose() async {
-    await _closedSegmentsSubscription?.cancel();
-    await _triggerSubscription?.cancel();
-    await _detectionsSubscription?.cancel();
-    await _uploadSubscription?.cancel();
-    await _resumeRequestsSubscription?.cancel();
-    await _transferConditionsSubscription?.cancel();
+    // 1. Stop listening before tearing down the sources these subscriptions
+    //    read, so a late event can't fire into a half-disposed controller. The
+    //    cancels are mutually independent — run them together.
+    await Future.wait([
+      _closedSegmentsSubscription?.cancel() ?? Future<void>.value(),
+      _triggerSubscription?.cancel() ?? Future<void>.value(),
+      _detectionsSubscription?.cancel() ?? Future<void>.value(),
+      _uploadSubscription?.cancel() ?? Future<void>.value(),
+      _resumeRequestsSubscription?.cancel() ?? Future<void>.value(),
+      _transferConditionsSubscription?.cancel() ?? Future<void>.value(),
+    ]);
+
+    // 2. Synchronous client/scheduler closes — fire them off together.
     _scheduler.dispose();
-    await _contextTriggers.dispose();
-    await _uploadRequests.close();
-    await _recorder.dispose();
-    await _playback.dispose();
     _s3StorageClient.close();
     _icloudSyncService.close();
     _backendClient.close();
@@ -1773,18 +1776,30 @@ class AppController {
     _memoryPublisher.close();
     _dayOfLifeArchiver.close();
     _musicOAuthService.close();
-    await _feedback.dispose();
+
+    // 3. Independent async teardowns + own-stream closes, now that the
+    //    subscriptions feeding/reading them are gone. _diagnostics is held back
+    //    to step 4 because these may still log to it.
+    await Future.wait([
+      _contextTriggers.dispose(),
+      _uploadRequests.close(),
+      _recorder.dispose(),
+      _playback.dispose(),
+      _feedback.dispose(),
+      _config.close(),
+      _secrets.close(),
+      _segments.close(),
+      _isInitializing.close(),
+      _isStarting.close(),
+      _isUploading.close(),
+      _transfer.close(),
+      _message.close(),
+      _detectionsList.close(),
+      _consentRequest.close(),
+    ]);
+
+    // 4. Diagnostics last: the teardowns above may still write to it.
     await _diagnostics.dispose();
-    await _config.close();
-    await _secrets.close();
-    await _segments.close();
-    await _isInitializing.close();
-    await _isStarting.close();
-    await _isUploading.close();
-    await _transfer.close();
-    await _message.close();
-    await _detectionsList.close();
-    await _consentRequest.close();
   }
 
   Future<void> _onSegmentClosed(RecordingSegment segment) async {
