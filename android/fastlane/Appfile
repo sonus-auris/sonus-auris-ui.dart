@@ -1,0 +1,7 @@
+# fastlane Appfile (Android). https://docs.fastlane.tools/actions/supply/
+#
+# Service-account JSON for the Google Play Developer API. Create it in the Play
+# Console (Setup > API access), grant "Release to testing tracks", download the
+# JSON to android/fastlane/play-service-account.json (gitignored).
+json_key_file("fastlane/play-service-account.json")
+package_name("com.ores.audio_dashcam")
