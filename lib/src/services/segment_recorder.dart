@@ -282,6 +282,7 @@ class SegmentRecorder {
         androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
       ),
     );
+    await session.setActive(true);
   }
 
   void _resetCaptureState(AppConfig config) {

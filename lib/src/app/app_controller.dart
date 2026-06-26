@@ -434,8 +434,10 @@ class AppController {
     await _localNotifications.ensureInitialized();
     final launchedFromConsent = await _localNotifications.launchedFromConsent();
     // Register OS alarms/notifications for the recording schedule and reconcile
-    // current capture against the schedule. iOS requires a notification tap to
-    // begin inside an active scheduled window.
+    // current capture against the schedule. On iOS this can continue through
+    // lock/background once a real recording session is active; local
+    // notifications remain reminders/relaunch affordances, not the only start
+    // path.
     await _scheduler.sync(config.recordingSchedule);
     final pendingScheduleCommand = await _scheduler.drainPendingShouldRecord();
     if (pendingScheduleCommand != null) {
@@ -444,16 +446,7 @@ class AppController {
         '${pendingScheduleCommand ? "start" : "stop"}.',
       );
     }
-    if (_shouldWaitForIosScheduleTap(
-      config.recordingSchedule,
-      launchedFromConsent,
-    )) {
-      _diagnostics.add(
-        'Schedule window active on iOS; waiting for notification tap.',
-      );
-    } else {
-      await _reconcileWithSchedule(config.recordingSchedule);
-    }
+    await _reconcileWithSchedule(config.recordingSchedule);
     // Arm context triggers and honor a consent notification the user may have
     // tapped to launch the app.
     await _updateContextTriggers();
@@ -469,24 +462,7 @@ class AppController {
     if (config == null || !config.recordingSchedule.enabled) {
       return;
     }
-    if (shouldRecord &&
-        _shouldWaitForIosScheduleTap(config.recordingSchedule, false)) {
-      _diagnostics.add(
-        'Schedule start reached on iOS; waiting for notification tap.',
-      );
-      return;
-    }
     unawaited(_applyScheduleState(shouldRecord));
-  }
-
-  bool _shouldWaitForIosScheduleTap(
-    RecordingSchedule schedule,
-    bool launchedFromConsent,
-  ) {
-    return Platform.isIOS &&
-        !launchedFromConsent &&
-        schedule.enabled &&
-        schedule.isActiveAt(DateTime.now());
   }
 
   /// Brings capture in line with what the schedule says should be happening
