@@ -407,6 +407,15 @@ class AppController {
         _diagnostics.add('Acoustic detection stream error: $error');
       },
     );
+    // Auto-resume: restart capture when the recorder reports an interruption or
+    // stall it could not recover from on its own (keeps overnight capture alive
+    // across calls, alarms, Siri, media-services resets).
+    _resumeRequestsSubscription = _recorder.resumeRequests.listen(
+      (reason) => unawaited(_handleAutoResume(reason)),
+      onError: (Object error) {
+        _diagnostics.add('Auto-resume stream error: $error');
+      },
+    );
     _uploadSubscription = _uploadRequests
         .debounceTime(const Duration(milliseconds: 250))
         .exhaustMap((_) => Stream.fromFuture(_drainUploads()))
