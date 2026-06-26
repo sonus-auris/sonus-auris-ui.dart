@@ -1,0 +1,9 @@
+# fastlane Appfile (iOS). https://docs.fastlane.tools/app-store-connect-api/
+app_identifier("com.ores.audioDashcam")
+
+# Fill these in. apple_id = the Apple ID email of an App Store Connect user.
+# team_id = Developer Portal Team ID; itc_team_id = App Store Connect team id.
+# Prefer an App Store Connect API key (.p8) over apple_id/password — see Fastfile.
+apple_id("CHANGE_ME@example.com")
+team_id("YOUR_TEAM_ID")
+# itc_team_id("YOUR_ASC_TEAM_ID")
