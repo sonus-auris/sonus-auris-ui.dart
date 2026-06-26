@@ -347,6 +347,16 @@ class AppController {
   StreamSubscription<dynamic>? _triggerSubscription;
   StreamSubscription<dynamic>? _detectionsSubscription;
   StreamSubscription<dynamic>? _uploadSubscription;
+  StreamSubscription<String>? _resumeRequestsSubscription;
+
+  // Auto-resume state. [_intendRecording] is the user/schedule intent (true
+  // between a successful start and the next stop), independent of whether the
+  // mic stream is momentarily down. The rest rate-limit auto-restarts so a
+  // device that genuinely cannot record does not spin.
+  bool _intendRecording = false;
+  bool _autoResuming = false;
+  final List<DateTime> _recentAutoResumes = [];
+  static const int _maxAutoResumesPerMinute = 4;
   BackendUploadSession? _backendSession;
   String? _backendSessionKey;
   final List<AudioTriggerEvent> _pendingAlertEvents = [];
