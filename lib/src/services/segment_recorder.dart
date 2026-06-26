@@ -299,13 +299,20 @@ class SegmentRecorder {
   }
 
   Future<void> dispose() async {
+    // [stop] must finish first: it drains the stream, flushes the final segment
+    // (emitting into _closedSegments), stops the analyzer feed, and disarms the
+    // resume guard. After it the rest are independent resource releases, so run
+    // them concurrently. Future.wait still waits for all to settle before it
+    // surfaces any error, so nothing is left half-disposed.
     await stop();
-    await _resume.dispose();
-    await _analyzer.dispose();
-    await _snapshot.close();
-    await _closedSegments.close();
-    await _triggerEvents.close();
-    await _recorder.dispose();
+    await Future.wait([
+      _resume.dispose(),
+      _analyzer.dispose(),
+      _snapshot.close(),
+      _closedSegments.close(),
+      _triggerEvents.close(),
+      _recorder.dispose(),
+    ]);
   }
 
   Future<void> _configureAudioSession() async {
