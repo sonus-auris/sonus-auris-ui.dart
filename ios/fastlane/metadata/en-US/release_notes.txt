@@ -1,0 +1,6 @@
+First release of Sonus Auris.
+
+- Continuous rolling audio capture you start and stop
+- On-device AES-256-GCM encryption of every clip
+- Optional backup to storage you control (S3 / Drive / OneDrive / iCloud)
+- Optional sleep, snore, and music insights from on-device analysis
