@@ -45,3 +45,19 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 /android/.kotlin/
+
+# Release signing & store secrets — NEVER commit these.
+# (Android key.properties / *.jks / *.keystore are covered by android/.gitignore.)
+**/*.p8
+**/*.p12
+**/*.mobileprovision
+**/*.cer
+# fastlane working files & credentials
+**/fastlane/report.xml
+**/fastlane/Preview.html
+**/fastlane/.env*
+ios/fastlane/*.p8
+# Google Play service-account key for fastlane supply
+android/fastlane/play-service-account.json
+# Obfuscation symbol output from the build scripts
+/build/symbols/
