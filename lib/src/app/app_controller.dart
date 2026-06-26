@@ -347,6 +347,16 @@ class AppController {
   StreamSubscription<dynamic>? _triggerSubscription;
   StreamSubscription<dynamic>? _detectionsSubscription;
   StreamSubscription<dynamic>? _uploadSubscription;
+  StreamSubscription<String>? _resumeRequestsSubscription;
+
+  // Auto-resume state. [_intendRecording] is the user/schedule intent (true
+  // between a successful start and the next stop), independent of whether the
+  // mic stream is momentarily down. The rest rate-limit auto-restarts so a
+  // device that genuinely cannot record does not spin.
+  bool _intendRecording = false;
+  bool _autoResuming = false;
+  final List<DateTime> _recentAutoResumes = [];
+  static const int _maxAutoResumesPerMinute = 4;
   BackendUploadSession? _backendSession;
   String? _backendSessionKey;
   final List<AudioTriggerEvent> _pendingAlertEvents = [];
@@ -395,6 +405,15 @@ class AppController {
       (detection) => unawaited(_onDetection(detection)),
       onError: (Object error) {
         _diagnostics.add('Acoustic detection stream error: $error');
+      },
+    );
+    // Auto-resume: restart capture when the recorder reports an interruption or
+    // stall it could not recover from on its own (keeps overnight capture alive
+    // across calls, alarms, Siri, media-services resets).
+    _resumeRequestsSubscription = _recorder.resumeRequests.listen(
+      (reason) => unawaited(_handleAutoResume(reason)),
+      onError: (Object error) {
+        _diagnostics.add('Auto-resume stream error: $error');
       },
     );
     _uploadSubscription = _uploadRequests
@@ -1061,6 +1080,8 @@ class AppController {
       try {
         _diagnostics.add('Starting PCM microphone stream.');
         await _recorder.start(_config.value);
+        // Capture is live: from here a dropped stream should be auto-resumed.
+        _intendRecording = true;
         _diagnostics.add('PCM microphone stream started.');
         unawaited(_feedback.say('Recording started'));
         _message.add(
@@ -1082,6 +1103,8 @@ class AppController {
 
   Future<void> stopRecording() async {
     _diagnostics.add('Stop recording requested.');
+    // Clear intent first so an in-flight resume request does not re-start us.
+    _intendRecording = false;
     Object? recorderError;
     try {
       await _recorder.stop();
@@ -1156,6 +1179,40 @@ class AppController {
     final wasScheduleOwned = _scheduleStartedRecording;
     await stopRecording();
     await startRecording(scheduleInitiated: wasScheduleOwned);
+  }
+
+  /// Restarts capture after the recorder reports an interruption/stall it could
+  /// not resume itself. Silent (no spoken cue, no schedule-ownership change) and
+  /// rate-limited so a device that genuinely cannot record does not spin.
+  Future<void> _handleAutoResume(String reason) async {
+    if (!_intendRecording || _autoResuming) {
+      return;
+    }
+    final now = DateTime.now();
+    _recentAutoResumes.removeWhere(
+      (t) => now.difference(t) > const Duration(seconds: 60),
+    );
+    if (_recentAutoResumes.length >= _maxAutoResumesPerMinute) {
+      _diagnostics.add(
+        'Auto-resume suppressed after '
+        '${_recentAutoResumes.length} attempts in 60s ($reason).',
+      );
+      _message.add(
+        'Recording was interrupted and could not restart automatically. '
+        'Tap record to resume.',
+      );
+      return;
+    }
+    _recentAutoResumes.add(now);
+    _autoResuming = true;
+    _diagnostics.add('Auto-resuming capture ($reason).');
+    try {
+      await restartRecording(announce: false);
+    } catch (error) {
+      _diagnostics.add('Auto-resume restart failed: $error.');
+    } finally {
+      _autoResuming = false;
+    }
   }
 
   Future<void> playLocalWindow() async {
@@ -1700,6 +1757,7 @@ class AppController {
     await _triggerSubscription?.cancel();
     await _detectionsSubscription?.cancel();
     await _uploadSubscription?.cancel();
+    await _resumeRequestsSubscription?.cancel();
     await _transferConditionsSubscription?.cancel();
     _scheduler.dispose();
     await _contextTriggers.dispose();

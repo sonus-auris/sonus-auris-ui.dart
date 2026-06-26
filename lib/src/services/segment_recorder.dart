@@ -15,8 +15,14 @@ import '../models/recording_segment.dart';
 import 'acoustic/acoustic_pipeline.dart';
 import 'acoustic/spectral_features.dart';
 import 'acoustic_analyzer.dart';
+import 'capture_resume_coordinator.dart';
 import 'segment_index.dart';
 import 'wav_segment_writer.dart';
+
+/// Build-time gate. Pass `--dart-define=SONUS_DISABLE_INTERRUPTION_RESUME=true`
+/// to make the auto-resume safety net a complete no-op (A/B / fallback).
+const bool _kInterruptionResumeDisabled =
+    bool.fromEnvironment('SONUS_DISABLE_INTERRUPTION_RESUME');
 
 class SegmentRecorder {
   SegmentRecorder({
@@ -24,19 +30,39 @@ class SegmentRecorder {
     required SegmentIndex segmentIndex,
     AcousticAnalyzer? analyzer,
     Uuid? uuid,
+    bool? autoResumeAfterInterruption,
+    CaptureResumeCoordinator? resumeCoordinator,
   }) : this._(
           recorder ?? AudioRecorder(),
           segmentIndex,
           analyzer ?? AcousticAnalyzer(),
           uuid ?? const Uuid(),
+          resumeCoordinator ??
+              CaptureResumeCoordinator(
+                enabled: autoResumeAfterInterruption ??
+                    !_kInterruptionResumeDisabled,
+              ),
         );
 
-  SegmentRecorder._(this._recorder, this._segmentIndex, this._analyzer, this._uuid);
+  SegmentRecorder._(
+    this._recorder,
+    this._segmentIndex,
+    this._analyzer,
+    this._uuid,
+    this._resume,
+  );
 
   final AudioRecorder _recorder;
   final SegmentIndex _segmentIndex;
   final AcousticAnalyzer _analyzer;
   final Uuid _uuid;
+
+  // Auto-resume safety net: keeps an unattended (overnight) capture alive across
+  // phone calls, alarms, Siri, and media-services resets. See
+  // [CaptureResumeCoordinator]. A no-op when disabled.
+  final CaptureResumeCoordinator _resume;
+  Timer? _resumeWatchdog;
+  StreamSubscription<AudioInterruptionEvent>? _interruptionSubscription;
   final BehaviorSubject<RecorderSnapshot> _snapshot = BehaviorSubject.seeded(
     const RecorderSnapshot.idle(),
   );
@@ -100,6 +126,11 @@ class SegmentRecorder {
   Stream<RecordingSegment> get closedSegments => _closedSegments.stream;
 
   Stream<AudioTriggerEvent> get triggerEvents => _triggerEvents.stream;
+
+  /// Fires (with a short reason) when capture should be restarted to recover
+  /// from an interruption or stall it could not resume on its own. The owner
+  /// (app controller) decides whether to act, applying its own back-off.
+  Stream<String> get resumeRequests => _resume.resumeRequests;
 
   /// Acoustic-intelligence detections from the on-device FFT engine.
   Stream<AcousticDetection> get detections => _analyzer.detections;
@@ -182,6 +213,12 @@ class SegmentRecorder {
           .listen(
             (_) {},
             onError: (Object error) {
+              // A stream error mid-recording (e.g. media services reset) is a
+              // recoverable death, not a deliberate stop: ask to restart while
+              // the coordinator still considers us recording.
+              if (!_stopping) {
+                _resume.onCaptureError(DateTime.now().toUtc());
+              }
               _snapshot.add(
                 _snapshot.value.copyWith(
                   isRecording: false,
@@ -215,6 +252,7 @@ class SegmentRecorder {
               ),
             );
           });
+      await _startResumeGuard();
     } catch (error) {
       _running = false;
       await _analyzer.stop();
@@ -233,6 +271,9 @@ class SegmentRecorder {
     _running = false;
     await _amplitudeSubscription?.cancel();
     _amplitudeSubscription = null;
+    // Disarm the auto-resume guard before tearing the stream down so the stop
+    // we are about to perform is not mistaken for an interruption to recover.
+    await _stopResumeGuard();
     try {
       if (await _recorder.isRecording() || await _recorder.isPaused()) {
         await _recorder.stop();
@@ -259,6 +300,7 @@ class SegmentRecorder {
 
   Future<void> dispose() async {
     await stop();
+    await _resume.dispose();
     await _analyzer.dispose();
     await _snapshot.close();
     await _closedSegments.close();
@@ -282,6 +324,43 @@ class SegmentRecorder {
         androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
       ),
     );
+  }
+
+  /// Arms the auto-resume safety net for the freshly opened stream: a periodic
+  /// liveness watchdog plus an OS interruption listener. Fully skipped (no
+  /// timer, no subscription) when the feature is gated off, so capture behaves
+  /// exactly as before.
+  Future<void> _startResumeGuard() async {
+    if (!_resume.enabled) {
+      return;
+    }
+    _resume.start(DateTime.now().toUtc());
+    await _interruptionSubscription?.cancel();
+    final session = await AudioSession.instance;
+    _interruptionSubscription = session.interruptionEventStream.listen((event) {
+      // Ducking lowers other apps' volume but does not stop our capture.
+      if (event.type == AudioInterruptionType.duck) {
+        return;
+      }
+      if (event.begin) {
+        _resume.onInterruptionBegin();
+      } else {
+        _resume.onInterruptionEnd(DateTime.now().toUtc());
+      }
+    });
+    _resumeWatchdog?.cancel();
+    _resumeWatchdog = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _resume.tick(DateTime.now().toUtc()),
+    );
+  }
+
+  Future<void> _stopResumeGuard() async {
+    _resumeWatchdog?.cancel();
+    _resumeWatchdog = null;
+    await _interruptionSubscription?.cancel();
+    _interruptionSubscription = null;
+    _resume.stop();
   }
 
   void _resetCaptureState(AppConfig config) {
@@ -335,6 +414,10 @@ class SegmentRecorder {
     final config = _config;
     if (!_running || config == null || bytes.isEmpty) {
       return;
+    }
+    // Audio is flowing — tell the resume watchdog capture is alive.
+    if (_resume.enabled) {
+      _resume.notifyChunk(DateTime.now().toUtc());
     }
     final frameSize = config.channels * 2;
     final data = _consumeAlignedFrames(bytes, frameSize);
