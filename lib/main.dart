@@ -3963,9 +3963,182 @@ class _SleepView extends StatelessWidget {
             onStop: controller.stopSleepSession,
           ),
         ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => _SleepHistoryPage(controller: controller),
+            ),
+          ),
+          icon: const Icon(Icons.history),
+          label: const Text('View past nights'),
+        ),
         const SizedBox(height: 16),
         _SleepSettingsSection(config: config, onChanged: onConfigChanged),
       ],
+    );
+  }
+}
+
+/// Draws a night's sleep-depth envelope as a filled area chart (taller = deeper).
+class _Hypnogram extends StatelessWidget {
+  const _Hypnogram({required this.depthEnvelope, this.height = 72});
+
+  final List<double> depthEnvelope;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    if (depthEnvelope.isEmpty) {
+      return SizedBox(
+        height: height,
+        child: const Center(
+          child: Text(
+            'Depth chart appears as you sleep',
+            style: TextStyle(color: SonusColors.inkSoft),
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      height: height,
+      width: double.infinity,
+      child: CustomPaint(painter: _HypnogramPainter(depthEnvelope)),
+    );
+  }
+}
+
+class _HypnogramPainter extends CustomPainter {
+  _HypnogramPainter(this.depth);
+
+  final List<double> depth;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final n = depth.length;
+
+    // Baseline.
+    final axis = Paint()
+      ..color = SonusColors.hairline
+      ..strokeWidth = 1;
+    canvas.drawLine(Offset(0, h - 1), Offset(w, h - 1), axis);
+
+    if (n < 2) {
+      return;
+    }
+    double x(int i) => n == 1 ? 0 : w * i / (n - 1);
+    double y(double d) => (1 - d.clamp(0.0, 1.0)) * h; // deeper => lower (taller)
+
+    final line = Path()..moveTo(0, y(depth[0]));
+    for (var i = 1; i < n; i++) {
+      line.lineTo(x(i), y(depth[i]));
+    }
+
+    final fill = Path.from(line)
+      ..lineTo(w, h)
+      ..lineTo(0, h)
+      ..close();
+    canvas.drawPath(
+      fill,
+      Paint()..color = SonusColors.orange500.withValues(alpha: 0.18),
+    );
+    canvas.drawPath(
+      line,
+      Paint()
+        ..color = SonusColors.orange500
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..strokeJoin = StrokeJoin.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_HypnogramPainter old) => old.depth != depth;
+}
+
+/// Full-screen list of past sleep nights with per-night hypnograms + stats.
+class _SleepHistoryPage extends StatefulWidget {
+  const _SleepHistoryPage({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_SleepHistoryPage> createState() => _SleepHistoryPageState();
+}
+
+class _SleepHistoryPageState extends State<_SleepHistoryPage> {
+  late Future<List<SleepSession>> _future;
+  static final _dateFmt = DateFormat('EEE, MMM d');
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.controller.loadSleepHistory();
+  }
+
+  String _duration(SleepSession s) {
+    final mins = s.totalMinutes.round();
+    return '${mins ~/ 60}h ${mins % 60}m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Sleep history')),
+      body: FutureBuilder<List<SleepSession>>(
+        future: _future,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final nights = snapshot.data ?? const <SleepSession>[];
+          if (nights.isEmpty) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(32),
+                child: Text(
+                  'No nights recorded yet. Start a sleep session to build your '
+                  '35-day history.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: SonusColors.inkSoft),
+                ),
+              ),
+            );
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+            itemCount: nights.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (context, i) {
+              final s = nights[i];
+              final cyclesText = s.cycles.isEmpty
+                  ? 'no full cycles'
+                  : '${s.cycles.length} cycles';
+              final cycleLen = s.dominantCycleMinutes > 0
+                  ? ' · ~${s.dominantCycleMinutes.round()} min each'
+                  : '';
+              return _Section(
+                title: _dateFmt.format(s.startedAtUtc.toLocal()),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${_duration(s)} · $cyclesText$cycleLen',
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(color: SonusColors.inkSoft),
+                    ),
+                    const SizedBox(height: 10),
+                    _Hypnogram(depthEnvelope: s.depthEnvelope, height: 80),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }
