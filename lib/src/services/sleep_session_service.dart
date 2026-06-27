@@ -205,7 +205,7 @@ class SleepSessionService {
       breathingRegularity: breathingRegularity,
       snoreFraction: snoreFraction,
       sensors: sensorEpoch,
-      context: _contextProvider?.call() ?? const SleepFusionContext(),
+      context: contextProviderOverride?.call() ?? const SleepFusionContext(),
     );
 
     _epochCounter += 1;
