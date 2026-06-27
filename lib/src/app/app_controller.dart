@@ -42,7 +42,6 @@ import '../services/segment_recorder.dart';
 import '../services/settings_store.dart';
 import '../services/sleep_cycle_profile_store.dart';
 import '../services/sleep_probability_model.dart';
-import '../services/sleep_sensor_source.dart';
 import '../services/sleep_session_service.dart';
 import '../services/system_sleep_sensor_source.dart';
 import '../services/shazam_client.dart';
