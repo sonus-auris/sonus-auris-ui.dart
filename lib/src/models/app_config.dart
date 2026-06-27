@@ -212,6 +212,16 @@ class AppConfig {
   /// if a light-sleep arousal is detected (the "wake during light sleep" window).
   final double sleepSmartWindowMinutes;
 
+  /// Express consent to use the accelerometer during a sleep session: stillness,
+  /// tossing/turning, and getting up improve stage/cycle accuracy. Off until the
+  /// user explicitly opts in.
+  final bool sleepMotionConsent;
+
+  /// Express consent to use the ambient-light sensor (darkness duration, lights
+  /// off/on, dawn brightening) as a sleep/wake cue. Off until explicit opt-in.
+  /// Android only — iOS exposes no public ambient-light API.
+  final bool sleepLightConsent;
+
   /// When a music detection fires on iOS, identify the song with ShazamKit.
   /// No-op on Android. Sends a short audio fingerprint to Apple's service.
   final bool shazamEnabled;
