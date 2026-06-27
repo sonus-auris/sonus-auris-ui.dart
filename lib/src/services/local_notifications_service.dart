@@ -33,12 +33,19 @@ class LocalNotificationsService {
   static const String consentPayload = 'context-consent';
   static const String scheduleStartPayload = 'schedule-start';
   static const String scheduleStopPayload = 'schedule-stop';
+  static const String sleepAlarmPayload = 'sleep-alarm';
 
   // Notification id partitions.
   static const int _scheduleStartBase = 780000;
   static const int _scheduleStopBase = 790000;
   static const int _scheduleSpan = 64;
   static const int _consentId = 800000;
+  static const int _sleepAlarmId = 810000;
+  static const int _sleepBackstopId = 810001;
+
+  /// Invoked (main isolate) when the user taps a sleep alarm while the app is
+  /// alive. Set by the controller to stop the sleep session.
+  void Function()? onSleepAlarmTap;
 
   /// iOS allows at most 64 *pending* local notifications per app. Cap the total
   /// scheduled (start + stop) below that, leaving headroom for the consent
