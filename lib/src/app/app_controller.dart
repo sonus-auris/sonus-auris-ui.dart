@@ -2259,6 +2259,17 @@ class AppController {
   /// (ShazamKit song id, cloud STT keyword scan), surfaces it in the UI, and
   /// stores it to Supabase. Errors are logged, never thrown to the stream.
   Future<void> _onDetection(AcousticDetection detection) async {
+    // Sleep epochs/cycles are high-frequency engine telemetry, not user-facing
+    // events: route them to the sleep orchestrator and don't list/store them.
+    if (detection.kind == AcousticDetectionKind.sleepEpoch ||
+        detection.kind == AcousticDetectionKind.sleepCycle) {
+      try {
+        await _sleepSessionService.onAcousticDetection(detection);
+      } catch (error) {
+        _diagnostics.add('Sleep detection handling failed: $error');
+      }
+      return;
+    }
     if (!_config.hasValue) {
       return;
     }
