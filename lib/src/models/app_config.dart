@@ -612,6 +612,17 @@ class AppConfig {
       snoreDetectionEnabled: json['snoreDetectionEnabled'] as bool? ?? true,
       musicDetectionEnabled: json['musicDetectionEnabled'] as bool? ?? true,
       speechDetectionEnabled: json['speechDetectionEnabled'] as bool? ?? true,
+      sleepSmartAlarmEnabled: json['sleepSmartAlarmEnabled'] as bool? ?? true,
+      sleepDefaultCycleMinutes: _asDouble(
+        json['sleepDefaultCycleMinutes'],
+        90.0,
+      ).clamp(60.0, 130.0),
+      sleepTargetCycle: _asInt(json['sleepTargetCycle'], 5).clamp(1, 12),
+      sleepBackstopCycle: _asInt(json['sleepBackstopCycle'], 6).clamp(1, 12),
+      sleepSmartWindowMinutes: _asDouble(
+        json['sleepSmartWindowMinutes'],
+        25.0,
+      ).clamp(0.0, 90.0),
       shazamEnabled: json['shazamEnabled'] as bool? ?? false,
       keywords: _asStringList(json['keywords']),
       sttEnabled: json['sttEnabled'] as bool? ?? false,
