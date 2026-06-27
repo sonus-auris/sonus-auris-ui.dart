@@ -262,7 +262,7 @@ class SleepSessionService {
     _replan(_onsetUtc!);
     _diagnostics?.add(
       'Sleep cycle $index complete (${length.toStringAsFixed(0)} min); '
-      'next target ${_plan?.targetTimeUtc?.toLocal()}.',
+      'next target ${_plan?.targetTimeUtc.toLocal()}.',
     );
   }
 
