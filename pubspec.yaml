@@ -77,6 +77,12 @@ dependencies:
   # Context triggers: Bluetooth adapter / connected-device / nearby-device (BLE
   # scan) detection.
   flutter_blue_plus: ^1.32.0
+  # Sleep analysis (express-consent only): accelerometer for stillness vs.
+  # tossing/turning/getting up.
+  sensors_plus: ^6.1.1
+  # Sleep analysis (express-consent only): ambient-light sensor (Android only)
+  # for darkness duration and dawn brightening.
+  light: ^4.0.1
 
 dev_dependencies:
   flutter_test:
