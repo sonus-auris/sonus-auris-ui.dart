@@ -323,6 +323,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 label: 'Playback',
               ),
               NavigationDestination(
+                icon: Icon(Icons.bedtime_outlined),
+                selectedIcon: Icon(Icons.bedtime),
+                label: 'Sleep',
+              ),
+              NavigationDestination(
                 icon: Icon(Icons.tune),
                 selectedIcon: Icon(Icons.tune),
                 label: 'Configure',
