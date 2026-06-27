@@ -678,6 +678,8 @@ class AppController {
     }
     _lastReportedTransferSignature = signature;
     _lastTransferReportAt = now;
+    // Cache charging state as a sleep cue for the fusion model.
+    _sleepCharging = status.isCharging;
     final error = await _backendClient.reportTransferState(
       config: config,
       secrets: secrets,
