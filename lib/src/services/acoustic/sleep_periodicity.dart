@@ -94,7 +94,12 @@ class SleepPeriodicityEstimator {
     // Parabolic interpolation around the peak for sub-bin precision.
     final refinedK = _parabolicPeak(power, peakK);
     final periodMinutes = padded * stepMinutes / refinedK;
-    final strength = (peakP / bandTotal).clamp(0.0, 1.0);
+    // Strength = peak prominence over the band mean. Robust to zero-padding
+    // (which spreads a single tone across several bins): ~1 for a clean periodic
+    // signal, ~0 for flat/noisy spectra.
+    final bandMean = bandTotal / (kHi - kLo + 1);
+    final strength =
+        bandMean <= 0 ? 0.0 : (1 - bandMean / peakP).clamp(0.0, 1.0);
     return PeriodEstimate(
       periodMinutes: periodMinutes.clamp(minPeriodMinutes, maxPeriodMinutes),
       strength: strength,
