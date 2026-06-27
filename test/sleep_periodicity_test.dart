@@ -66,7 +66,7 @@ void main() {
     final flat = List<double>.filled(96, 0.5);
     final est = estimator.estimate(flat, 5.0);
     // No oscillation → either invalid or near-zero strength.
-    expect(est.strength, lessThan 0.2.toDouble());
+    expect(est.strength, lessThan(0.2));
   });
 
   test('white noise has lower strength than a clean cycle', () {
