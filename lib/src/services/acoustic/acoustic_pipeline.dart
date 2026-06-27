@@ -51,12 +51,21 @@ class AcousticPipeline {
     AcousticDetectorFlags flags = const AcousticDetectorFlags(),
     String captureSessionId = '',
   })  : _analyzer = SpectralAnalyzer(fftSize: fftSize, sampleRate: sampleRate),
-        _snore = flags.snore
+        // The sleep detector needs snore events, so enable snore whenever sleep
+        // is on even if the snore flag itself is off.
+        _snore = (flags.snore || flags.sleep)
             ? SnoreDetector(
                 frameSeconds: (fftSize ~/ 2) / sampleRate,
                 captureSessionId: captureSessionId,
               )
             : null,
+        _sleep = flags.sleep
+            ? SleepCycleDetector(
+                frameSeconds: (fftSize ~/ 2) / sampleRate,
+                captureSessionId: captureSessionId,
+              )
+            : null,
+        _emitSnore = flags.snore,
         _music = flags.music
             ? MusicDetector(
                 frameSeconds: (fftSize ~/ 2) / sampleRate,
