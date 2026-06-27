@@ -75,7 +75,8 @@ void main() {
         SleepAlarmDecision.backstopWake);
   });
 
-  test('smart alarm disabled: only the backstop ever fires', () {
+  test('smart alarm disabled: no alarm ever fires (one toggle = whole feature)',
+      () {
     final plan = buildPlan();
     SleepAlarmDecision eval(Duration d, SleepStage s, int c) =>
         planner.evaluate(
@@ -89,8 +90,11 @@ void main() {
         );
     expect(eval(const Duration(minutes: 440), SleepStage.light, 4),
         SleepAlarmDecision.hold);
+    // Even past the backstop deadline / cycle count, disabled means silent.
     expect(eval(const Duration(minutes: 540), SleepStage.deep, 5),
-        SleepAlarmDecision.backstopWake);
+        SleepAlarmDecision.hold);
+    expect(eval(const Duration(minutes: 600), SleepStage.deep, 7),
+        SleepAlarmDecision.hold);
   });
 
   test('measured short cycles pull the target earlier than the default', () {
