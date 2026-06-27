@@ -1153,11 +1153,26 @@ class AppController {
     await _localNotifications.requestPermission();
     _recorder.sleepModeActive = true;
     // Capture must be live for the analyzer to run continuously through the night.
-    if (_recorder.isRecording) {
-      await restartRecording(announce: false);
-    } else {
-      _sleepStartedRecording = true;
-      await startRecording();
+    try {
+      if (_recorder.isRecording) {
+        await restartRecording(announce: false);
+      } else {
+        _sleepStartedRecording = true;
+        await startRecording();
+      }
+    } catch (error) {
+      _diagnostics.add('Sleep capture start failed: $error');
+    }
+    // startRecording swallows its own errors, so confirm capture actually came up
+    // before arming a session that would otherwise never receive epochs.
+    if (!_recorder.isRecording) {
+      _recorder.sleepModeActive = false;
+      _sleepStartedRecording = false;
+      _message.add(
+        'Could not start sleep tracking — microphone capture did not start. '
+        'Check microphone permission and try again.',
+      );
+      return;
     }
     await _sleepSessionService.start(_config.value);
     _message.add('Sleep tracking started. Sleep well.');
