@@ -479,6 +479,8 @@ class AppConfig {
       sleepBackstopCycle: sleepBackstopCycle ?? this.sleepBackstopCycle,
       sleepSmartWindowMinutes:
           sleepSmartWindowMinutes ?? this.sleepSmartWindowMinutes,
+      sleepMotionConsent: sleepMotionConsent ?? this.sleepMotionConsent,
+      sleepLightConsent: sleepLightConsent ?? this.sleepLightConsent,
       shazamEnabled: shazamEnabled ?? this.shazamEnabled,
       keywords: keywords ?? this.keywords,
       sttEnabled: sttEnabled ?? this.sttEnabled,
