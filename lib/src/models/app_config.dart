@@ -189,6 +189,27 @@ class AppConfig {
   final bool musicDetectionEnabled;
   final bool speechDetectionEnabled;
 
+  /// Arm cycle-aware "smart" alarms during a sleep session. When on, the app
+  /// wakes the sleeper at a light-sleep arousal near the end of [sleepTargetCycle]
+  /// (defaults to the 5th cycle ≈ 7.5 h), but never while in deep sleep — it
+  /// holds off and waits for the next light arousal, with a hard backstop at the
+  /// end of [sleepBackstopCycle] (defaults to the 6th cycle ≈ 9 h).
+  final bool sleepSmartAlarmEnabled;
+
+  /// Cold-start cycle length (minutes) used before any per-user history exists.
+  /// 90 min × 5 cycles = 7.5 h; × 6 = 9 h.
+  final double sleepDefaultCycleMinutes;
+
+  /// 1-based cycle whose end the smart alarm primarily targets (default 5).
+  final int sleepTargetCycle;
+
+  /// 1-based cycle whose end is the hard backstop wake (default 6).
+  final int sleepBackstopCycle;
+
+  /// How many minutes before the target-cycle end the smart alarm may fire early
+  /// if a light-sleep arousal is detected (the "wake during light sleep" window).
+  final double sleepSmartWindowMinutes;
+
   /// When a music detection fires on iOS, identify the song with ShazamKit.
   /// No-op on Android. Sends a short audio fingerprint to Apple's service.
   final bool shazamEnabled;
