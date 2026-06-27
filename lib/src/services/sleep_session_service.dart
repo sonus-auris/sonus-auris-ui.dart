@@ -324,6 +324,14 @@ class SleepSessionService {
     );
   }
 
+  void _addSensorSample(SleepSensorSample sample) {
+    _sensorBuffer.add(sample);
+    if (_sensorBuffer.length > _maxSensorBuffer) {
+      // Drop the oldest overflow in one shot (cheap, keeps the recent window).
+      _sensorBuffer.removeRange(0, _sensorBuffer.length - _maxSensorBuffer);
+    }
+  }
+
   SleepSensorEpoch _drainSensorBuffer() {
     if (_sensorBuffer.isEmpty) {
       return const SleepSensorEpoch.empty();
