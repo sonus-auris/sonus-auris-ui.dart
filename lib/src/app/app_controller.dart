@@ -40,6 +40,7 @@ import '../services/s3_storage_client.dart';
 import '../services/segment_index.dart';
 import '../services/segment_recorder.dart';
 import '../services/settings_store.dart';
+import '../models/sleep_session.dart';
 import '../services/sleep_cycle_profile_store.dart';
 import '../services/sleep_probability_model.dart';
 import '../services/sleep_session_service.dart';
