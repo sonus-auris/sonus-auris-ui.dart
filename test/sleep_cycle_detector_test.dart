@@ -62,21 +62,21 @@ void main() {
     }
   }
 
-  List<AcousticDetection> get cycles =>
+  List<AcousticDetection> cycles() =>
       events.where((e) => e.kind == AcousticDetectionKind.sleepCycle).toList();
-  List<AcousticDetection> get epochsOut =>
+  List<AcousticDetection> epochsOut() =>
       events.where((e) => e.kind == AcousticDetectionKind.sleepEpoch).toList();
 
   test('descent into deep then arousal closes a cycle', () {
     feed(_deep(), 6); // descend + stay deep
     feed(_arousal(), 2); // arousal => boundary
-    expect(cycles, hasLength(1));
-    expect(cycles.first.details['cycleIndex'], 1);
-    expect(cycles.first.details['lengthMinutes'] as double, greaterThan(3));
+    expect(cycles(), hasLength(1));
+    expect(cycles().first.details['cycleIndex'], 1);
+    expect(cycles().first.details['lengthMinutes'] as double, greaterThan(3));
     // Epoch telemetry was emitted continuously, including deep stages.
-    expect(epochsOut.length, greaterThan(4));
+    expect(epochsOut().length, greaterThan(4));
     expect(
-      epochsOut.any((e) => e.details['stage'] == 'deep'),
+      epochsOut().any((e) => e.details['stage'] == 'deep'),
       isTrue,
     );
   });
@@ -86,9 +86,9 @@ void main() {
       feed(_deep(), 6);
       feed(_arousal(), 2);
     }
-    expect(cycles.length, greaterThanOrEqualTo(2));
+    expect(cycles().length, greaterThanOrEqualTo(2));
     final indices =
-        cycles.map((e) => e.details['cycleIndex'] as int).toList();
+        cycles().map((e) => e.details['cycleIndex'] as int).toList();
     for (var i = 1; i < indices.length; i++) {
       expect(indices[i], indices[i - 1] + 1);
     }
@@ -96,12 +96,12 @@ void main() {
 
   test('staying awake/noisy never closes a cycle (no descent)', () {
     feed(_arousal(), 10);
-    expect(cycles, isEmpty);
+    expect(cycles(), isEmpty);
   });
 
   test('a micro-arousal shorter than minCycle is not a boundary', () {
     feed(_deep(), 2); // ~brief
     feed(_arousal(), 1); // only ~1-2 min in -> below minCycle 3
-    expect(cycles, isEmpty);
+    expect(cycles(), isEmpty);
   });
 }
