@@ -196,24 +196,31 @@ void main() {
   });
 
   test('stop persists the night and it appears in history + learning', () async {
-    await service.start(const AppConfig(deviceId: 't'), now: t0);
-    await feedFourCycles();
-    final saved = await service.stop(now: t0.add(const Duration(hours: 8)));
+    // Use a recent base so the store's 35-day retention prune (which keys off the
+    // real wall clock) keeps the night.
+    final base = DateTime.now().toUtc().subtract(const Duration(hours: 9));
+    await service.start(const AppConfig(deviceId: 't'), now: base);
+    for (var i = 1; i <= 4; i++) {
+      await service.onAcousticDetection(
+        _cycle(i, base.add(Duration(minutes: 90 * (i - 1)))),
+      );
+    }
+    final saved = await service.stop(now: base.add(const Duration(hours: 8)));
     expect(saved, isNotNull);
     expect(saved!.cycles, hasLength(4));
     // Onset anchored at the first cycle's start.
-    expect(saved.startedAtUtc, t0);
+    expect(saved.startedAtUtc, base);
 
     final history = await service.loadHistory();
     expect(history, hasLength(1));
     expect(history.first.cycles, hasLength(4));
 
-    // A fresh session now loads a profile learned from that 90-min night.
+    // A fresh session now loads a profile learned from that 90-min night and
+    // still arms the alarm.
     final service2 = build();
-    await service2.start(const AppConfig(deviceId: 't'), now: t0);
-    // Backstop was still scheduled (profile learned, alarm armed).
+    await service2.start(const AppConfig(deviceId: 't'), now: base);
     expect(notifications.backstopScheduled, greaterThan(0));
-    await service2.stop(now: t0.add(const Duration(hours: 1)));
+    await service2.stop(now: base.add(const Duration(hours: 1)));
   });
 
   test('stop is a no-op when inactive', () async {
