@@ -211,4 +211,68 @@ class LocalNotificationsService {
     await ensureInitialized();
     await _plugin.cancel(_consentId);
   }
+
+  /// Alarm-grade notification details: loud, high-priority, time-sensitive so it
+  /// can rouse a sleeper. Uses a dedicated channel/sound from the schedule one.
+  static const NotificationDetails _sleepDetails = NotificationDetails(
+    android: AndroidNotificationDetails(
+      'sonus_auris_sleep_alarm',
+      'Sleep alarm',
+      channelDescription: 'Cycle-aware wake-up alarms during a sleep session.',
+      importance: Importance.max,
+      priority: Priority.max,
+      category: AndroidNotificationCategory.alarm,
+      fullScreenIntent: true,
+      audioAttributesUsage: AudioAttributesUsage.alarm,
+    ),
+    iOS: DarwinNotificationDetails(
+      presentAlert: true,
+      presentSound: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+    ),
+  );
+
+  /// Fire the cycle-aware wake alarm **now** (the dynamic smart wake — the engine
+  /// decided this is a light-sleep moment, or the backstop deadline was hit).
+  Future<void> fireSleepAlarm({required bool backstop}) async {
+    await ensureInitialized();
+    await _plugin.show(
+      backstop ? _sleepBackstopId : _sleepAlarmId,
+      backstop ? 'Time to wake up' : 'Good morning',
+      backstop
+          ? 'You reached your latest wake time. Tap to stop the alarm.'
+          : 'You\'re in light sleep near your wake window. Tap to stop the alarm.',
+      _sleepDetails,
+      payload: sleepAlarmPayload,
+    );
+  }
+
+  /// Schedule the hard backstop wake at [whenUtc] as an OS-level alarm, so the
+  /// sleeper is still woken by the backstop cycle even if the app was killed
+  /// overnight. The dynamic smart wake is handled in-app via [fireSleepAlarm].
+  Future<void> scheduleSleepBackstop(DateTime whenUtc) async {
+    await ensureInitialized();
+    final when = tz.TZDateTime.from(whenUtc.toLocal(), tz.local);
+    if (when.isBefore(tz.TZDateTime.now(tz.local))) {
+      return;
+    }
+    await _plugin.zonedSchedule(
+      _sleepBackstopId,
+      'Time to wake up',
+      'You reached your latest wake time. Tap to stop the alarm.',
+      when,
+      _sleepDetails,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+      payload: sleepAlarmPayload,
+    );
+    _diagnostics?.add('Scheduled sleep backstop alarm for $when.');
+  }
+
+  Future<void> cancelSleepAlarms() async {
+    await ensureInitialized();
+    await _plugin.cancel(_sleepAlarmId);
+    await _plugin.cancel(_sleepBackstopId);
+  }
 }
