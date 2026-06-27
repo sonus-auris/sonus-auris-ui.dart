@@ -188,7 +188,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _restoreSelectedTab() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getInt(_kLastTabKey);
-    if (saved != null && saved >= 0 && saved <= 2 && mounted) {
+    if (saved != null && saved >= 0 && saved <= 3 && mounted) {
       setState(() => _selectedIndex = saved);
     }
   }
