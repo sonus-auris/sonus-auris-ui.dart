@@ -75,7 +75,7 @@ class SleepSessionService {
         _sensors = sensorSource,
         _fusion = fusionModel,
         _planner = planner,
-        _contextProvider = contextProvider,
+        contextProviderOverride = contextProvider,
         _diagnostics = diagnostics,
         _uuid = uuid ?? const Uuid();
 
