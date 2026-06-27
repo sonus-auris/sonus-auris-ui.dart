@@ -129,6 +129,10 @@ enum AcousticDetectionKind {
         return 'Speech';
       case AcousticDetectionKind.keyword:
         return 'Keyword';
+      case AcousticDetectionKind.sleepEpoch:
+        return 'Sleep epoch';
+      case AcousticDetectionKind.sleepCycle:
+        return 'Sleep cycle';
     }
   }
 }
