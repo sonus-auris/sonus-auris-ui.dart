@@ -31,6 +31,7 @@ class SleepSessionStatus {
     this.targetTimeUtc,
     this.backstopTimeUtc,
     this.alarmFired = false,
+    this.depthEnvelope = const [],
   });
 
   final bool active;
@@ -46,6 +47,9 @@ class SleepSessionStatus {
   final DateTime? targetTimeUtc;
   final DateTime? backstopTimeUtc;
   final bool alarmFired;
+
+  /// Coarse depth samples so far tonight (one per ~5 min), for a live hypnogram.
+  final List<double> depthEnvelope;
 }
 
 /// Orchestrates a sleep session on the main isolate.
