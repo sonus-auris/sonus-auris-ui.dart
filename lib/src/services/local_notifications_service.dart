@@ -275,4 +275,11 @@ class LocalNotificationsService {
     await _plugin.cancel(_sleepAlarmId);
     await _plugin.cancel(_sleepBackstopId);
   }
+
+  /// Cancel only the scheduled OS backstop (used once the smart wake has fired,
+  /// so the 9 h backstop doesn't also go off later).
+  Future<void> cancelSleepBackstop() async {
+    await ensureInitialized();
+    await _plugin.cancel(_sleepBackstopId);
+  }
 }
