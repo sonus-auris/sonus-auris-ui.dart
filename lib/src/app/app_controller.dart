@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
+import 'package:flutter/widgets.dart'
+    show WidgetsBinding, AppLifecycleState, ValueListenable;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:rxdart/rxdart.dart';
 
