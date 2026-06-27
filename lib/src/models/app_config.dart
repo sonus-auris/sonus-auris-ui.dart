@@ -54,6 +54,8 @@ class AppConfig {
     this.sleepTargetCycle = 5,
     this.sleepBackstopCycle = 6,
     this.sleepSmartWindowMinutes = 25.0,
+    this.sleepMotionConsent = false,
+    this.sleepLightConsent = false,
     this.shazamEnabled = false,
     this.keywords = const [],
     this.sttEnabled = false,
