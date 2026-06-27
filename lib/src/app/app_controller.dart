@@ -86,6 +86,7 @@ class AppController {
     RecordingScheduler? recordingScheduler,
     LocalNotificationsService? localNotifications,
     ContextTriggerService? contextTriggerService,
+    SleepSessionService? sleepSessionService,
   }) {
     final effectiveSegmentIndex = segmentIndex ?? SegmentIndex();
     final effectiveDiagnostics = diagnosticLog ?? DiagnosticLog();
