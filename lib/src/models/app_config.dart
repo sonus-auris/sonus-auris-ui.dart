@@ -401,6 +401,8 @@ class AppConfig {
     int? sleepTargetCycle,
     int? sleepBackstopCycle,
     double? sleepSmartWindowMinutes,
+    bool? sleepMotionConsent,
+    bool? sleepLightConsent,
     bool? shazamEnabled,
     List<String>? keywords,
     bool? sttEnabled,
