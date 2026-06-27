@@ -1133,6 +1133,63 @@ class AppController {
     await _updateContextTriggers();
   }
 
+  /// True when the live recording session was started solely to run a sleep
+  /// session, so ending sleep also stops capture (unless the user was already
+  /// recording).
+  bool _sleepStartedRecording = false;
+
+  /// Begin a sleep session: turns on continuous sleep analysis, (re)starts
+  /// capture so the engine runs, loads the learned cycle profile, and arms the
+  /// cycle-aware alarms. The microphone listens for snoring/breathing; with
+  /// express consent the accelerometer and ambient-light sensor refine the
+  /// estimate (see [AppConfig.sleepMotionConsent] / [AppConfig.sleepLightConsent]).
+  Future<void> startSleepSession() async {
+    if (!_config.hasValue || _sleepSessionService.isActive) {
+      return;
+    }
+    _diagnostics.add('Start sleep session requested.');
+    await _localNotifications.requestPermission();
+    _recorder.sleepModeActive = true;
+    // Capture must be live for the analyzer to run continuously through the night.
+    if (_recorder.isRecording) {
+      await restartRecording(announce: false);
+    } else {
+      _sleepStartedRecording = true;
+      await startRecording();
+    }
+    await _sleepSessionService.start(_config.value);
+    _message.add('Sleep tracking started. Sleep well.');
+  }
+
+  /// End the sleep session: persists the night (feeding the 35-day cycle-length
+  /// learning), cancels alarms, stops the sensors, and stops capture if it was
+  /// started only for sleep.
+  Future<void> stopSleepSession() async {
+    if (!_sleepSessionService.isActive) {
+      return;
+    }
+    _diagnostics.add('Stop sleep session requested.');
+    await _sleepSessionService.stop();
+    _recorder.sleepModeActive = false;
+    if (_sleepStartedRecording) {
+      _sleepStartedRecording = false;
+      await stopRecording();
+    } else if (_recorder.isRecording) {
+      // Was recording before sleep — restart to drop continuous sleep analysis.
+      await restartRecording(announce: false);
+    }
+    _message.add('Sleep tracking stopped.');
+  }
+
+  void _onSleepAlarmTap() {
+    // Tapping the wake alarm ends the session (and stops the alarm).
+    unawaited(stopSleepSession());
+  }
+
+  SleepFusionContext _sleepFusionContext() {
+    return SleepFusionContext(charging: _sleepCharging);
+  }
+
   /// Battery-friendly voice profile (16 kHz) vs. the music-grade high-fidelity
   /// profile (48 kHz). The capture rate is what the mic stream opens at.
   static const int mediumQualitySampleRate = 16000;
