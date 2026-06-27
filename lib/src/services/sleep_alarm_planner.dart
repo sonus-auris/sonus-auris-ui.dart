@@ -93,15 +93,17 @@ class SleepAlarmPlanner {
     required int targetCycle,
     required int backstopCycle,
   }) {
+    // The single feature toggle: when off, no sleep alarm fires at all (the
+    // caller also skips scheduling the OS backstop, so this stays consistent).
+    if (!smartAlarmEnabled) {
+      return SleepAlarmDecision.hold;
+    }
+
     // Hard backstop: reached the 6th-cycle deadline (by time or by count).
     final hitBackstopTime = !nowUtc.isBefore(plan.backstopTimeUtc);
     final hitBackstopCount = cyclesCompleted >= backstopCycle;
     if (hitBackstopTime || hitBackstopCount) {
       return SleepAlarmDecision.backstopWake;
-    }
-
-    if (!smartAlarmEnabled) {
-      return SleepAlarmDecision.hold;
     }
 
     // Inside the smart window?
