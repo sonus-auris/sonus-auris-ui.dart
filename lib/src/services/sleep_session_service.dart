@@ -217,12 +217,24 @@ class SleepSessionService {
     // light-vs-deep call that gates the smart wake).
     await _evaluateAlarm(nowUtc, estimate.fusedStage);
 
-    status.value = SleepSessionStatus(
-      active: true,
-      startedAtUtc: _sessionStartUtc,
+    _emitStatus(
       stage: estimate.fusedStage,
       depth: estimate.fusedDepth,
       sleepProbability: estimate.sleepProbability,
+    );
+  }
+
+  void _emitStatus({
+    SleepStage stage = SleepStage.unknown,
+    double depth = 0,
+    double sleepProbability = 0,
+  }) {
+    status.value = SleepSessionStatus(
+      active: true,
+      startedAtUtc: _sessionStartUtc,
+      stage: stage,
+      depth: depth,
+      sleepProbability: sleepProbability,
       cyclesCompleted: _cycles.length,
       dominantCycleMinutes: _dominantCycleMinutes,
       targetTimeUtc: _plan?.targetTimeUtc,
