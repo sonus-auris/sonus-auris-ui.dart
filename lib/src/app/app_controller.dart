@@ -144,6 +144,14 @@ class AppController {
             sources: defaultContextTriggerSources(),
             diagnostics: effectiveDiagnostics,
           ),
+      sleepSessionService:
+          sleepSessionService ??
+          SleepSessionService(
+            notifications: notifications,
+            profileStore: SleepCycleProfileStore(),
+            sensorSource: SystemSleepSensorSource(),
+            diagnostics: effectiveDiagnostics,
+          ),
     );
   }
 
