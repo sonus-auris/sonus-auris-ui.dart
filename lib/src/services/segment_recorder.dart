@@ -195,8 +195,11 @@ class SegmentRecorder {
           fftSize: config.analyzerFftSize,
           flags: AcousticDetectorFlags(
             snore: config.snoreDetectionEnabled,
-            music: config.musicDetectionEnabled,
-            speech: config.speechDetectionEnabled,
+            // During a sleep session only the sleep (+snore) detectors run:
+            // music/speech are off to save battery overnight and avoid attempting
+            // any speech transcription while the user sleeps.
+            music: sleepModeActive ? false : config.musicDetectionEnabled,
+            speech: sleepModeActive ? false : config.speechDetectionEnabled,
             sleep: sleepModeActive,
           ),
           captureSessionId: _captureSessionId ?? '',
