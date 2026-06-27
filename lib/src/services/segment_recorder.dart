@@ -197,6 +197,7 @@ class SegmentRecorder {
             snore: config.snoreDetectionEnabled,
             music: config.musicDetectionEnabled,
             speech: config.speechDetectionEnabled,
+            sleep: sleepModeActive,
           ),
           captureSessionId: _captureSessionId ?? '',
         );
