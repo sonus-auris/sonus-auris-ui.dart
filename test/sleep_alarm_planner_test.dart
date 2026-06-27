@@ -92,4 +92,44 @@ void main() {
     expect(eval(const Duration(minutes: 540), SleepStage.deep, 5),
         SleepAlarmDecision.backstopWake);
   });
+
+  test('measured short cycles pull the target earlier than the default', () {
+    final shortPlan = planner.plan(
+      onsetUtc: onset,
+      measuredCycleMinutes: const [72, 73, 71, 74], // ~72 min cycles tonight
+      profile: profile,
+      targetCycle: 5,
+      backstopCycle: 6,
+      smartWindowMinutes: 25,
+    );
+    // 72*4 measured + ~72 (predicted #5 clamps to 60 min min though profile=90)
+    // is well under the 450-min default target.
+    expect(
+      shortPlan.targetTimeUtc.difference(onset).inMinutes,
+      lessThan(450),
+    );
+    expect(shortPlan.backstopTimeUtc.isAfter(shortPlan.targetTimeUtc), isTrue);
+  });
+
+  test('predictedCumulativeMinutes blends measured + profile', () {
+    final cum = SleepAlarmPlanner.predictedCumulativeMinutes(
+      5,
+      const [80, 80],
+      profile, // default 90
+    );
+    // 80 + 80 (measured) + 90 + 90 + 90 (profile) = 430.
+    expect(cum, closeTo(430, 1));
+  });
+
+  test('smart window start never precedes onset', () {
+    final p = planner.plan(
+      onsetUtc: onset,
+      measuredCycleMinutes: const [],
+      profile: profile,
+      targetCycle: 1, // target end ~90 min
+      backstopCycle: 2,
+      smartWindowMinutes: 600, // absurdly large window
+    );
+    expect(p.smartWindowStartUtc.isBefore(onset), isFalse);
+  });
 }
