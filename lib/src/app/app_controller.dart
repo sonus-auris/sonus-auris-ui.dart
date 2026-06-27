@@ -315,6 +315,17 @@ class AppController {
   final RecordingScheduler _scheduler;
   final LocalNotificationsService _localNotifications;
   final ContextTriggerService _contextTriggers;
+  final SleepSessionService _sleepSessionService;
+
+  /// Latest known charging state, fed to the sleep fusion model as a sleep cue.
+  bool? _sleepCharging;
+
+  /// Live, observable status of the current sleep session (for the UI).
+  ValueListenable<SleepSessionStatus> get sleepStatus =>
+      _sleepSessionService.status;
+
+  /// Whether a sleep session is currently running.
+  bool get isSleepSessionActive => _sleepSessionService.isActive;
 
   /// True when the *current* recording session was started by the schedule (not
   /// by the user). A schedule-driven stop only stops a schedule-started session,
