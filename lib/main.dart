@@ -361,6 +361,12 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
         );
       case 2:
+        return _SleepView(
+          controller: widget.controller,
+          config: viewModel.config,
+          onConfigChanged: widget.controller.saveConfig,
+        );
+      case 3:
         return Form(
           key: _formKey,
           child: _ConfigureView(
