@@ -244,7 +244,15 @@ class SleepSessionService {
       targetTimeUtc: _plan?.targetTimeUtc,
       backstopTimeUtc: _plan?.backstopTimeUtc,
       alarmFired: _alarmFired,
+      depthEnvelope: List.of(_depthEnvelope),
     );
+  }
+
+  /// Past nights, newest first, for the history view.
+  Future<List<SleepSession>> loadHistory() async {
+    final sessions = await _profileStore.loadSessions();
+    sessions.sort((a, b) => b.startedAtUtc.compareTo(a.startedAtUtc));
+    return sessions;
   }
 
   void _onCycle(AcousticDetection d) {
