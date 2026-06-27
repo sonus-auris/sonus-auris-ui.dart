@@ -4188,6 +4188,8 @@ class _SleepStatusCard extends StatelessWidget {
             const SizedBox(height: 12),
             _DepthMeter(depth: status.depth),
             const SizedBox(height: 16),
+            _Hypnogram(depthEnvelope: status.depthEnvelope),
+            const SizedBox(height: 16),
             _CycleDots(
               completed: status.cyclesCompleted,
               total: 6,
