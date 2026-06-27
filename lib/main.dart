@@ -615,6 +615,10 @@ class _DetectionsSection extends StatelessWidget {
         return Icons.record_voice_over;
       case AcousticDetectionKind.keyword:
         return Icons.flag;
+      case AcousticDetectionKind.sleepEpoch:
+      case AcousticDetectionKind.sleepCycle:
+        // Sleep telemetry is consumed by the sleep engine, not listed here.
+        return Icons.nightlight_round;
     }
   }
 
