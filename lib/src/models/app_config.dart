@@ -548,6 +548,8 @@ class AppConfig {
       'sleepTargetCycle': sleepTargetCycle,
       'sleepBackstopCycle': sleepBackstopCycle,
       'sleepSmartWindowMinutes': sleepSmartWindowMinutes,
+      'sleepMotionConsent': sleepMotionConsent,
+      'sleepLightConsent': sleepLightConsent,
       'shazamEnabled': shazamEnabled,
       'keywords': keywords,
       'sttEnabled': sttEnabled,
