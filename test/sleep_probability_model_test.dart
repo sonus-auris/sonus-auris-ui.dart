@@ -83,4 +83,68 @@ void main() {
     );
     expect(est.fusedStage, SleepStage.awake);
   });
+
+  test('charging raises sleep probability vs not charging', () {
+    double prob(bool? charging) => model
+        .fuse(
+          acousticDepth: 0.55,
+          acousticStage: SleepStage.light,
+          breathingRegularity: 0.5,
+          snoreFraction: 0.0,
+          context: SleepFusionContext(charging: charging),
+        )
+        .sleepProbability;
+    expect(prob(true), greaterThan(prob(false)));
+  });
+
+  test('within usual bedtime raises sleep probability', () {
+    double prob(bool? usual) => model
+        .fuse(
+          acousticDepth: 0.5,
+          acousticStage: SleepStage.light,
+          breathingRegularity: 0.5,
+          snoreFraction: 0.0,
+          context: SleepFusionContext(withinUsualSleepWindow: usual),
+        )
+        .sleepProbability;
+    expect(prob(true), greaterThan(prob(false)));
+  });
+
+  test('sleep probability is monotonic decreasing in movement', () {
+    double prob(double movement) => model
+        .fuse(
+          acousticDepth: 0.6,
+          acousticStage: SleepStage.light,
+          breathingRegularity: 0.6,
+          snoreFraction: 0.0,
+          sensors: SleepSensorEpoch(
+            movement: movement,
+            meanLux: 1,
+            hasMotion: true,
+            hasLight: true,
+            sampleCount: 30,
+          ),
+        )
+        .sleepProbability;
+    expect(prob(0.05), greaterThan(prob(0.25)));
+    expect(prob(0.25), greaterThan(prob(0.6)));
+  });
+
+  test('probability stays within 0..1', () {
+    for (final d in [0.0, 0.5, 1.0]) {
+      final est = model.fuse(
+        acousticDepth: d,
+        acousticStage: SleepStage.deep,
+        breathingRegularity: 1.0,
+        snoreFraction: 1.0,
+        context: const SleepFusionContext(
+          charging: true,
+          withinUsualSleepWindow: true,
+          minutesSincePhoneInteraction: 60,
+        ),
+      );
+      expect(est.sleepProbability, inInclusiveRange(0.0, 1.0));
+      expect(est.fusedDepth, inInclusiveRange(0.0, 1.0));
+    }
+  });
 }
