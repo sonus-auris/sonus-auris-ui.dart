@@ -1846,6 +1846,7 @@ class AppController {
     //    to step 4 because these may still log to it.
     await Future.wait([
       _contextTriggers.dispose(),
+      _sleepSessionService.dispose(),
       _uploadRequests.close(),
       _recorder.dispose(),
       _playback.dispose(),
