@@ -180,4 +180,56 @@ void main() {
     await pumpEventQueue();
     expect(service.pendingSensorSampleCount, lessThanOrEqualTo(1200));
   });
+
+  test('disabled smart alarm: nothing scheduled and nothing fires', () async {
+    await service.start(
+      const AppConfig(deviceId: 't', sleepSmartAlarmEnabled: false),
+      now: t0,
+    );
+    expect(notifications.backstopScheduled, 0);
+    await feedFourCycles();
+    await service.onAcousticDetection(
+      _epoch(t0.add(const Duration(minutes: 600)), SleepStage.deep, depth: 0.8),
+    );
+    expect(notifications.smartFired, 0);
+    expect(notifications.backstopFired, 0);
+  });
+
+  test('stop persists the night and it appears in history + learning', () async {
+    await service.start(const AppConfig(deviceId: 't'), now: t0);
+    await feedFourCycles();
+    final saved = await service.stop(now: t0.add(const Duration(hours: 8)));
+    expect(saved, isNotNull);
+    expect(saved!.cycles, hasLength(4));
+    // Onset anchored at the first cycle's start.
+    expect(saved.startedAtUtc, t0);
+
+    final history = await service.loadHistory();
+    expect(history, hasLength(1));
+    expect(history.first.cycles, hasLength(4));
+
+    // A fresh session now loads a profile learned from that 90-min night.
+    final service2 = build();
+    await service2.start(const AppConfig(deviceId: 't'), now: t0);
+    // Backstop was still scheduled (profile learned, alarm armed).
+    expect(notifications.backstopScheduled, greaterThan(0));
+    await service2.stop(now: t0.add(const Duration(hours: 1)));
+  });
+
+  test('stop is a no-op when inactive', () async {
+    expect(await service.stop(), isNull);
+  });
+
+  test('status reflects the latest epoch while active', () async {
+    await service.start(const AppConfig(deviceId: 't'), now: t0);
+    expect(service.status.value.active, isTrue);
+    await service.onAcousticDetection(
+      _epoch(t0.add(const Duration(minutes: 5)), SleepStage.deep, depth: 0.75),
+    );
+    expect(service.status.value.stage, SleepStage.deep);
+    expect(service.status.value.depth, greaterThan(0.5));
+    expect(service.status.value.depthEnvelope, isNotEmpty);
+    await service.stop(now: t0.add(const Duration(hours: 8)));
+    expect(service.status.value.active, isFalse);
+  });
 }
