@@ -180,10 +180,13 @@ class AppController {
     required this._scheduler,
     required this._localNotifications,
     required this._contextTriggers,
+    required this._sleepSessionService,
   }) {
     _scheduler.onTransition = _onScheduleTransition;
     _contextTriggers.onTrigger = _onContextTrigger;
     _localNotifications.onConsentTap = acceptContextConsent;
+    _localNotifications.onSleepAlarmTap = _onSleepAlarmTap;
+    _sleepSessionService.contextProviderOverride = _sleepFusionContext;
     // Pre-combine the upload flag and transfer-gate status into one record so
     // both ride a single slot of the (max-arity-9) combineLatest below.
     final uploadStatus =
