@@ -97,8 +97,15 @@ class SegmentRecorder {
   int _samplesPerSegment = 16000 * 60;
   int _overlapSamples = 0;
 
+  /// When true, a sleep session is active: the acoustic engine runs the
+  /// sleep-cycle detector and analysis is *continuous* (the loudness gate is held
+  /// open), because sleep is mostly quiet and depth must be tracked through quiet
+  /// stretches. Set by the controller before (re)starting capture.
+  bool sleepModeActive = false;
+
   // Acoustic-analysis loudness gate ("kick in once decibels are sustained").
   bool _analysisActive = false;
+  bool _sleepContinuous = false;
   bool _gateOpen = false;
   int _gateLoudSamples = 0;
   int _gateQuietSamples = 0;
