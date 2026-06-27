@@ -162,7 +162,7 @@ class SleepSessionService {
     if (consent.any) {
       try {
         await _sensors.start(consent);
-        _sensorSub = _sensors.samples.listen(_sensorBuffer.add);
+        _sensorSub = _sensors.samples.listen(_addSensorSample);
       } catch (e) {
         _diagnostics?.add('Sleep sensors unavailable: $e');
       }
