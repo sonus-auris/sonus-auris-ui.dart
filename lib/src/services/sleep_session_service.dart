@@ -301,6 +301,11 @@ class SleepSessionService {
     }
     final backstop = decision == SleepAlarmDecision.backstopWake;
     _alarmFired = true;
+    // The smart wake fired before the backstop deadline: cancel the scheduled OS
+    // backstop so a second alarm doesn't also go off later at ~9 h.
+    if (!backstop) {
+      await _notifications.cancelSleepBackstop();
+    }
     await _notifications.fireSleepAlarm(backstop: backstop);
     _diagnostics?.add(
       backstop
