@@ -162,7 +162,7 @@ class SleepSessionService {
     }
 
     _emitStatus();
-    _diagnostics?.add( // ignore: unnecessary_statements
+    _diagnostics?.add(
       'Sleep session started (profile: '
       '${_profile.overallMeanMinutes.toStringAsFixed(0)} min/cycle, '
       '${_profile.sampleNights} nights).',
