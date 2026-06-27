@@ -1187,6 +1187,10 @@ class AppController {
     unawaited(stopSleepSession());
   }
 
+  /// Past sleep nights (newest first, last 35 days) for the history view.
+  Future<List<SleepSession>> loadSleepHistory() =>
+      _sleepSessionService.loadHistory();
+
   SleepFusionContext _sleepFusionContext() {
     return SleepFusionContext(charging: _sleepCharging);
   }
