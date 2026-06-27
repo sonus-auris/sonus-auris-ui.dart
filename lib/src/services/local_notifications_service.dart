@@ -82,6 +82,8 @@ class LocalNotificationsService {
     if (response.payload == consentPayload ||
         response.payload == scheduleStartPayload) {
       onConsentTap?.call();
+    } else if (response.payload == sleepAlarmPayload) {
+      onSleepAlarmTap?.call();
     }
   }
 
