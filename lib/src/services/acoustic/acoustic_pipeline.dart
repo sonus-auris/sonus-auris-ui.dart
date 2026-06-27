@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../../models/acoustic_detection.dart';
 import 'music_detector.dart';
+import 'sleep_cycle_detector.dart';
 import 'snore_detector.dart';
 import 'speech_detector.dart';
 import 'spectral_features.dart';
@@ -12,21 +13,29 @@ class AcousticDetectorFlags {
     this.snore = true,
     this.music = true,
     this.speech = true,
+    this.sleep = false,
   });
 
   final bool snore;
   final bool music;
   final bool speech;
 
-  bool get any => snore || music || speech;
+  /// Sleep-cycle analysis. Off by default; turned on for a sleep session. The
+  /// sleep detector consumes the snore detector's output, so [snore] is forced
+  /// on internally whenever [sleep] is set.
+  final bool sleep;
 
-  Map<String, dynamic> toMap() => {'snore': snore, 'music': music, 'speech': speech};
+  bool get any => snore || music || speech || sleep;
+
+  Map<String, dynamic> toMap() =>
+      {'snore': snore, 'music': music, 'speech': speech, 'sleep': sleep};
 
   factory AcousticDetectorFlags.fromMap(Map<dynamic, dynamic> map) {
     return AcousticDetectorFlags(
       snore: map['snore'] as bool? ?? true,
       music: map['music'] as bool? ?? true,
       speech: map['speech'] as bool? ?? true,
+      sleep: map['sleep'] as bool? ?? false,
     );
   }
 }
