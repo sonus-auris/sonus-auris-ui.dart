@@ -99,9 +99,34 @@ void main() {
     expect(cycles(), isEmpty);
   });
 
-  test('a micro-arousal shorter than minCycle is not a boundary', () {
-    feed(_deep(), 2); // ~brief
-    feed(_arousal(), 1); // only ~1-2 min in -> below minCycle 3
-    expect(cycles(), isEmpty);
+  test('a descent + arousal shorter than minCycle is not a boundary', () {
+    // Dedicated detector with a long min-cycle so a full descent that re-arouses
+    // too soon is treated as a micro-arousal, not a counted cycle.
+    final d = SleepCycleDetector(
+      frameSeconds: _frameSeconds,
+      config: const SleepConfig(
+        epochSeconds: 2.0,
+        depthSmoothingMinutes: 0.05,
+        minCycleMinutes: 40.0,
+        periodicityEveryEpochs: 1000,
+      ),
+    );
+    final out = <AcousticDetection>[];
+    var t = DateTime.utc(2026, 1, 1, 23, 0, 0);
+    void feedTo(SpectralFrame frame, int epochs) {
+      for (var e = 0; e < epochs; e++) {
+        for (var f = 0; f < 4; f++) {
+          out.addAll(d.add(frame, t, const []));
+          t = t.add(const Duration(minutes: 1));
+        }
+      }
+    }
+
+    feedTo(_deep(), 6); // descends to deep (~24 min span)
+    feedTo(_arousal(), 2); // arouse well before the 40-min floor
+    expect(
+      out.where((e) => e.kind == AcousticDetectionKind.sleepCycle),
+      isEmpty,
+    );
   });
 }
