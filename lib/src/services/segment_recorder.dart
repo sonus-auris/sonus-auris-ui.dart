@@ -405,8 +405,9 @@ class SegmentRecorder {
     _storeFactor = 1;
     _storeDownsampler = null;
 
-    // Acoustic gate setup.
-    _analysisActive = config.hasAcousticAnalysis;
+    // Acoustic gate setup. A sleep session forces analysis on and continuous.
+    _sleepContinuous = sleepModeActive;
+    _analysisActive = config.hasAcousticAnalysis || sleepModeActive;
     _gateOpen = false;
     _gateLoudSamples = 0;
     _gateQuietSamples = 0;
