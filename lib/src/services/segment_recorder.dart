@@ -694,6 +694,16 @@ class SegmentRecorder {
     if (!_analysisActive) {
       return;
     }
+    // Sleep session: keep the gate permanently open so depth is tracked through
+    // quiet sleep (the loudness gate would otherwise idle the engine).
+    if (_sleepContinuous) {
+      if (!_gateOpen) {
+        _gateOpen = true;
+        _analyzer.resyncFeed();
+      }
+      _feedAnalyzer(slice, config);
+      return;
+    }
     final db = _dbForRms(power.averagePower);
     final loud = db >= _gateActivationDb;
     if (!_gateOpen) {
