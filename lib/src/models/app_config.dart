@@ -457,6 +457,14 @@ class AppConfig {
           musicDetectionEnabled ?? this.musicDetectionEnabled,
       speechDetectionEnabled:
           speechDetectionEnabled ?? this.speechDetectionEnabled,
+      sleepSmartAlarmEnabled:
+          sleepSmartAlarmEnabled ?? this.sleepSmartAlarmEnabled,
+      sleepDefaultCycleMinutes:
+          sleepDefaultCycleMinutes ?? this.sleepDefaultCycleMinutes,
+      sleepTargetCycle: sleepTargetCycle ?? this.sleepTargetCycle,
+      sleepBackstopCycle: sleepBackstopCycle ?? this.sleepBackstopCycle,
+      sleepSmartWindowMinutes:
+          sleepSmartWindowMinutes ?? this.sleepSmartWindowMinutes,
       shazamEnabled: shazamEnabled ?? this.shazamEnabled,
       keywords: keywords ?? this.keywords,
       sttEnabled: sttEnabled ?? this.sttEnabled,
