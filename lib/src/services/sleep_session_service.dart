@@ -84,7 +84,10 @@ class SleepSessionService {
   final SleepSensorSource _sensors;
   final SleepProbabilityModel _fusion;
   final SleepAlarmPlanner _planner;
-  final SleepFusionContext Function()? _contextProvider;
+
+  /// Supplies non-acoustic context (charging, usual-bedtime, phone use) each
+  /// epoch. Settable so the owning controller can wire it after construction.
+  SleepFusionContext Function()? contextProviderOverride;
   final DiagnosticLog? _diagnostics;
   final Uuid _uuid;
 
