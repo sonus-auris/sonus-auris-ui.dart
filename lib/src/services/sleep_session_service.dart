@@ -113,8 +113,11 @@ class SleepSessionService {
   double _dominantCycleMinutes = 0;
   static const int _envelopeEveryEpochs = 10; // ~5 min at 30 s epochs
 
-  // Rolling sensor buffer since the last acoustic epoch.
+  // Rolling sensor buffer since the last acoustic epoch. Bounded so a stall in
+  // the acoustic epoch stream (which drains it) can't grow memory unbounded over
+  // a whole night — we keep only the most recent samples.
   final List<SleepSensorSample> _sensorBuffer = [];
+  static const int _maxSensorBuffer = 1200; // ~20 min at ~1 Hz
   StreamSubscription<SleepSensorSample>? _sensorSub;
 
   bool get isActive => _sessionId != null;
