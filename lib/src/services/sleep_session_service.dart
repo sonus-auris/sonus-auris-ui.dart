@@ -326,9 +326,8 @@ class SleepSessionService {
   }
 
   /// End the session: persist the night's summary (35-day retention → learning),
-  /// stop sensors and cancel pending alarms. [keepAlarm] leaves a just-fired
-  /// alarm on screen for the user to dismiss.
-  Future<SleepSession?> stop({bool keepAlarm = false, DateTime? now}) async {
+  /// stop sensors and cancel pending alarms.
+  Future<SleepSession?> stop({DateTime? now}) async {
     if (!isActive) {
       return null;
     }
@@ -345,18 +344,9 @@ class SleepSessionService {
     await _sensorSub?.cancel();
     _sensorSub = null;
     await _sensors.stop();
-    if (!keepAlarm) {
-      await _notifications.cancelSleepAlarms();
-    } else {
-      // Smart wake already on screen; just clear the scheduled backstop.
-      await _notifications.cancelSleepAlarms();
-      if (_alarmFired) {
-        await _notifications.fireSleepAlarm(
-          backstop: status.value.backstopTimeUtc != null &&
-              !endedAt.isBefore(status.value.backstopTimeUtc!),
-        );
-      }
-    }
+    // Cancel the scheduled backstop and clear any alarm notification. If the user
+    // reached here by tapping a firing alarm, the tap already dismissed it.
+    await _notifications.cancelSleepAlarms();
 
     try {
       if (session.cycles.isNotEmpty) {
