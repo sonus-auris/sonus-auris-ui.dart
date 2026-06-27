@@ -641,6 +641,8 @@ class AppConfig {
         json['sleepSmartWindowMinutes'],
         25.0,
       ).clamp(0.0, 90.0),
+      sleepMotionConsent: json['sleepMotionConsent'] as bool? ?? false,
+      sleepLightConsent: json['sleepLightConsent'] as bool? ?? false,
       shazamEnabled: json['shazamEnabled'] as bool? ?? false,
       keywords: _asStringList(json['keywords']),
       sttEnabled: json['sttEnabled'] as bool? ?? false,
