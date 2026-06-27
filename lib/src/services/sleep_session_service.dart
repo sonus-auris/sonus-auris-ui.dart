@@ -122,6 +122,11 @@ class SleepSessionService {
 
   bool get isActive => _sessionId != null;
 
+  /// Number of sensor samples buffered but not yet folded into an epoch. Exposed
+  /// for tests to assert the buffer stays bounded.
+  @visibleForTesting
+  int get pendingSensorSampleCount => _sensorBuffer.length;
+
   /// Begin a session. Loads the learned profile, schedules the backstop alarm,
   /// and starts the consented sensors. [config] supplies alarm prefs + consent.
   Future<void> start(AppConfig config, {DateTime? now}) async {
