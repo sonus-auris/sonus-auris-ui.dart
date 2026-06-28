@@ -16,6 +16,7 @@ import 'src/models/acoustic_detection.dart';
 import 'src/models/app_config.dart';
 import 'src/models/cloud_connection.dart';
 import 'src/models/cloud_provider.dart';
+import 'src/models/consent.dart';
 import 'src/models/context_trigger.dart';
 import 'src/models/recording_schedule.dart';
 import 'src/models/storage_estimate.dart';
