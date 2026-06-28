@@ -99,6 +99,7 @@ class SleepCycleDetector {
   final String captureSessionId;
 
   DateTime? _bucketStartedAt;
+  DateTime? _lastFrameAtUtc;
   _Bucket _bucket = _Bucket();
   DateTime? _sleepStartedAt;
   DateTime? _lastCycleBoundaryAt;
