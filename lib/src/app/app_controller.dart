@@ -57,8 +57,19 @@ import '../services/supabase_rest_client.dart';
 import 'app_view_model.dart';
 
 /// Consent string recorded against the device on registration. Bump when the
-/// recording/privacy disclosure shown to the user materially changes.
+/// recording/privacy disclosure shown to the user materially changes. Bumping
+/// this also re-triggers the onboarding consent flow.
 const String kConsentVersion = 'audio-dashcam-consent-v1';
+
+/// App-level Supabase project, injected at build time so the onboarding
+/// login/sign-up works out of the box:
+/// `--dart-define=SUPABASE_URL=… --dart-define=SUPABASE_ANON_KEY=…`.
+/// Both are public client values (the anon key is safe to embed); the
+/// service_role key must never reach the device. When unset, the user can still
+/// configure their own Supabase project in the Configure tab.
+const String kDefaultSupabaseUrl = String.fromEnvironment('SUPABASE_URL');
+const String kDefaultSupabaseAnonKey =
+    String.fromEnvironment('SUPABASE_ANON_KEY');
 
 class AppController {
   factory AppController({
