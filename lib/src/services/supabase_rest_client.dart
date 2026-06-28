@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../models/acoustic_detection.dart';
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
+import '../models/consent.dart';
 
 /// Thin PostgREST client for writing user data into Supabase. Only the signed-in
 /// user's access token is used (never a service key), so row-level-security
