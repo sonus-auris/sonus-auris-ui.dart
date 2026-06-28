@@ -151,6 +151,20 @@ class SleepCycleDetector {
     return out;
   }
 
+  /// Drops in-progress sleep-session state (onset, cycle progress, recent
+  /// buckets, per-cycle depth) after a capture gap. Learned per-cycle minute
+  /// seeds are kept — they are a valid prior for the resumed sleep.
+  void _resetSleepSession() {
+    _bucketStartedAt = null;
+    _bucket = _Bucket();
+    _sleepStartedAt = null;
+    _lastCycleBoundaryAt = null;
+    _nextCycleIndex = 1;
+    _recent.clear();
+    _deepCycleIndexes.clear();
+    _resetCycleDepth();
+  }
+
   DateTime _bucketStartFor(DateTime atUtc) {
     final micros = atUtc.microsecondsSinceEpoch;
     final bucketMicros = _bucketDuration.inMicroseconds;
