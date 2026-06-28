@@ -35,6 +35,8 @@
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Sonus Auris records a rolling audio window only after you start capture.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>During a sleep session Sonus Auris reads motion to detect stillness, tossing, and getting up, improving sleep-cycle accuracy. This is optional and off by default.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Sonus Auris can tag recordings with their location so a clip can prove where it was captured. Location tagging is optional and off by default.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
