@@ -25,8 +25,7 @@ case "${1:-}" in
 esac
 
 new_version="${new_name}+${new_build}"
-# Portable in-place edit (BSD/macOS + GNU sed).
-sed -i.bak -E "s/^version: .*/version: ${new_version}/" "$pubspec" && rm -f "$pubspec.bak"
+NEW_VERSION="$new_version" perl -0pi -e 's/^version: .*/version: $ENV{NEW_VERSION}/m' "$pubspec"
 
 echo "Version: ${current}  ->  ${new_version}"
 echo "  Android versionName=${new_name} versionCode=${new_build}"

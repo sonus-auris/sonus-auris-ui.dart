@@ -854,6 +854,67 @@ class AppController {
     );
   }
 
+  Future<void> sendSupabasePasswordReset({required String email}) async {
+    if (!_config.hasValue) {
+      return;
+    }
+    if (!_config.value.hasSupabaseAuthConfig) {
+      _message.add('Set the Supabase URL and anon key before resetting.');
+      return;
+    }
+    if (email.trim().isEmpty) {
+      _message.add('Enter your account email first.');
+      return;
+    }
+    try {
+      await _authClient.sendPasswordResetEmail(
+        config: _config.value,
+        email: email,
+      );
+      _message.add('Password reset email sent.');
+    } catch (error) {
+      _message.add(_describeError(error));
+    }
+  }
+
+  Future<void> deleteAccount() async {
+    if (!_config.hasValue || !_secrets.hasValue) {
+      return;
+    }
+    await _ensureFreshSupabaseToken();
+    final config = _config.value;
+    final secrets = _secrets.value;
+    if (config.backendBaseUrl.trim().isEmpty) {
+      _message.add('Backend URL is required before deleting your account.');
+      return;
+    }
+    if (!secrets.hasSupabaseToken) {
+      _message.add('Sign in before deleting your account.');
+      return;
+    }
+    try {
+      if (_recorder.isRecording) {
+        await stopRecording();
+      }
+      await _playback.stop();
+      await _backendClient.deleteAccount(config: config, secrets: secrets);
+      await _segmentIndex.clearAll();
+      _segments.add(const []);
+      _pendingAlertEvents.clear();
+      await _persistPendingAlerts();
+      _sleepCycleProfile = const SleepCycleProfile();
+      await _settingsStore.saveSleepCycleProfile(_sleepCycleProfile);
+      _detectionsList.add(const []);
+      _consentRequest.add(null);
+      _backendSession = null;
+      _backendSessionKey = null;
+      await _persistSecrets(const CloudSecrets());
+      _message.add('Account deleted and local data cleared.');
+    } catch (error) {
+      _message.add(_describeError(error));
+    }
+  }
+
   /// Revokes the Supabase session (best-effort server-side) and clears the
   /// stored identity and device token so the next sign-in re-registers cleanly.
   Future<void> signOutSupabase() async {

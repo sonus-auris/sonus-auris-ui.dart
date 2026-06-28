@@ -23,12 +23,18 @@ flutter pub get
 # team configured in the Xcode project / ExportOptions.plist.
 team_args=()
 [[ -n "${DEVELOPMENT_TEAM:-}" ]] && team_args=(--dart-define=TEAM="$DEVELOPMENT_TEAM")
+dart_define_args=()
+for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
+  value="${!name:-}"
+  [[ -n "$value" ]] && dart_define_args+=(--dart-define="$name=$value")
+done
 
 flutter build ipa \
   --release \
   --obfuscate \
   --split-debug-info=build/symbols \
   --export-options-plist="$export_opts" \
+  "${dart_define_args[@]}" \
   "${team_args[@]}"
 
 echo
