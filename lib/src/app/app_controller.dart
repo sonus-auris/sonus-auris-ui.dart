@@ -304,6 +304,16 @@ class AppController {
   final LocationService _locationService;
   final PowerNetworkGate _powerNetworkGate;
   final SupabaseRestClient _supabaseRestClient;
+
+  /// The onboarding consent the user accepted (null until first onboarding).
+  ConsentRecord? _consentRecord;
+  ConsentRecord? get consentRecord => _consentRecord;
+
+  final ValueNotifier<bool> _onboardingComplete = ValueNotifier<bool>(false);
+
+  /// Whether onboarding (consent for the current [kConsentVersion]) is done.
+  /// The app root watches this to gate the onboarding flow vs. the main UI.
+  ValueListenable<bool> get onboardingComplete => _onboardingComplete;
   final ShazamClient _shazamClient;
   final MemoryPublisher _memoryPublisher;
   final DayOfLifeArchiver _dayOfLifeArchiver;
