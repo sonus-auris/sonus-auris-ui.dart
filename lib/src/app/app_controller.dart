@@ -1921,6 +1921,7 @@ class AppController {
     _backendClient.close();
     _authClient.close();
     _supabaseRestClient.close();
+    _onboardingComplete.dispose();
     _speechToTextClient.close();
     _memoryPublisher.close();
     _dayOfLifeArchiver.close();
