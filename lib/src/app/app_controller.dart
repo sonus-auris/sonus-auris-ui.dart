@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:rxdart/rxdart.dart';
@@ -39,6 +40,11 @@ import '../services/s3_storage_client.dart';
 import '../services/segment_index.dart';
 import '../services/segment_recorder.dart';
 import '../services/settings_store.dart';
+import '../models/sleep_session.dart';
+import '../services/sleep_cycle_profile_store.dart';
+import '../services/sleep_probability_model.dart';
+import '../services/sleep_session_service.dart';
+import '../services/system_sleep_sensor_source.dart';
 import '../services/shazam_client.dart';
 import '../services/memory_publisher.dart';
 import '../services/day_of_life_archiver.dart';
@@ -81,6 +87,7 @@ class AppController {
     RecordingScheduler? recordingScheduler,
     LocalNotificationsService? localNotifications,
     ContextTriggerService? contextTriggerService,
+    SleepSessionService? sleepSessionService,
   }) {
     final effectiveSegmentIndex = segmentIndex ?? SegmentIndex();
     final effectiveDiagnostics = diagnosticLog ?? DiagnosticLog();
@@ -138,6 +145,14 @@ class AppController {
             sources: defaultContextTriggerSources(),
             diagnostics: effectiveDiagnostics,
           ),
+      sleepSessionService:
+          sleepSessionService ??
+          SleepSessionService(
+            notifications: notifications,
+            profileStore: SleepCycleProfileStore(),
+            sensorSource: SystemSleepSensorSource(),
+            diagnostics: effectiveDiagnostics,
+          ),
     );
   }
 
@@ -166,10 +181,13 @@ class AppController {
     required this._scheduler,
     required this._localNotifications,
     required this._contextTriggers,
+    required this._sleepSessionService,
   }) {
     _scheduler.onTransition = _onScheduleTransition;
     _contextTriggers.onTrigger = _onContextTrigger;
     _localNotifications.onConsentTap = acceptContextConsent;
+    _localNotifications.onSleepAlarmTap = _onSleepAlarmTap;
+    _sleepSessionService.contextProviderOverride = _sleepFusionContext;
     // Pre-combine the upload flag and transfer-gate status into one record so
     // both ride a single slot of the (max-arity-9) combineLatest below.
     final uploadStatus =
@@ -298,6 +316,17 @@ class AppController {
   final RecordingScheduler _scheduler;
   final LocalNotificationsService _localNotifications;
   final ContextTriggerService _contextTriggers;
+  final SleepSessionService _sleepSessionService;
+
+  /// Latest known charging state, fed to the sleep fusion model as a sleep cue.
+  bool? _sleepCharging;
+
+  /// Live, observable status of the current sleep session (for the UI).
+  ValueListenable<SleepSessionStatus> get sleepStatus =>
+      _sleepSessionService.status;
+
+  /// Whether a sleep session is currently running.
+  bool get isSleepSessionActive => _sleepSessionService.isActive;
 
   /// True when the *current* recording session was started by the schedule (not
   /// by the user). A schedule-driven stop only stops a schedule-started session,
@@ -649,6 +678,8 @@ class AppController {
     }
     _lastReportedTransferSignature = signature;
     _lastTransferReportAt = now;
+    // Cache charging state as a sleep cue for the fusion model.
+    _sleepCharging = status.isCharging;
     final error = await _backendClient.reportTransferState(
       config: config,
       secrets: secrets,
@@ -1102,6 +1133,82 @@ class AppController {
     // Idle again — if we're still inside a window, re-arm context sources so a
     // later event can offer to resume.
     await _updateContextTriggers();
+  }
+
+  /// True when the live recording session was started solely to run a sleep
+  /// session, so ending sleep also stops capture (unless the user was already
+  /// recording).
+  bool _sleepStartedRecording = false;
+
+  /// Begin a sleep session: turns on continuous sleep analysis, (re)starts
+  /// capture so the engine runs, loads the learned cycle profile, and arms the
+  /// cycle-aware alarms. The microphone listens for snoring/breathing; with
+  /// express consent the accelerometer and ambient-light sensor refine the
+  /// estimate (see [AppConfig.sleepMotionConsent] / [AppConfig.sleepLightConsent]).
+  Future<void> startSleepSession() async {
+    if (!_config.hasValue || _sleepSessionService.isActive) {
+      return;
+    }
+    _diagnostics.add('Start sleep session requested.');
+    await _localNotifications.requestPermission();
+    _recorder.sleepModeActive = true;
+    // Capture must be live for the analyzer to run continuously through the night.
+    try {
+      if (_recorder.isRecording) {
+        await restartRecording(announce: false);
+      } else {
+        _sleepStartedRecording = true;
+        await startRecording();
+      }
+    } catch (error) {
+      _diagnostics.add('Sleep capture start failed: $error');
+    }
+    // startRecording swallows its own errors, so confirm capture actually came up
+    // before arming a session that would otherwise never receive epochs.
+    if (!_recorder.isRecording) {
+      _recorder.sleepModeActive = false;
+      _sleepStartedRecording = false;
+      _message.add(
+        'Could not start sleep tracking — microphone capture did not start. '
+        'Check microphone permission and try again.',
+      );
+      return;
+    }
+    await _sleepSessionService.start(_config.value);
+    _message.add('Sleep tracking started. Sleep well.');
+  }
+
+  /// End the sleep session: persists the night (feeding the 35-day cycle-length
+  /// learning), cancels alarms, stops the sensors, and stops capture if it was
+  /// started only for sleep.
+  Future<void> stopSleepSession() async {
+    if (!_sleepSessionService.isActive) {
+      return;
+    }
+    _diagnostics.add('Stop sleep session requested.');
+    await _sleepSessionService.stop();
+    _recorder.sleepModeActive = false;
+    if (_sleepStartedRecording) {
+      _sleepStartedRecording = false;
+      await stopRecording();
+    } else if (_recorder.isRecording) {
+      // Was recording before sleep — restart to drop continuous sleep analysis.
+      await restartRecording(announce: false);
+    }
+    _message.add('Sleep tracking stopped.');
+  }
+
+  void _onSleepAlarmTap() {
+    // Tapping the wake alarm ends the session (and stops the alarm).
+    unawaited(stopSleepSession());
+  }
+
+  /// Past sleep nights (newest first, last 35 days) for the history view.
+  Future<List<SleepSession>> loadSleepHistory() =>
+      _sleepSessionService.loadHistory();
+
+  SleepFusionContext _sleepFusionContext() {
+    return SleepFusionContext(charging: _sleepCharging);
   }
 
   /// Battery-friendly voice profile (16 kHz) vs. the music-grade high-fidelity
@@ -1758,6 +1865,7 @@ class AppController {
     //    to step 4 because these may still log to it.
     await Future.wait([
       _contextTriggers.dispose(),
+      _sleepSessionService.dispose(),
       _uploadRequests.close(),
       _recorder.dispose(),
       _playback.dispose(),
@@ -2230,6 +2338,17 @@ class AppController {
   /// (ShazamKit song id, cloud STT keyword scan), surfaces it in the UI, and
   /// stores it to Supabase. Errors are logged, never thrown to the stream.
   Future<void> _onDetection(AcousticDetection detection) async {
+    // Sleep epochs/cycles are high-frequency engine telemetry, not user-facing
+    // events: route them to the sleep orchestrator and don't list/store them.
+    if (detection.kind == AcousticDetectionKind.sleepEpoch ||
+        detection.kind == AcousticDetectionKind.sleepCycle) {
+      try {
+        await _sleepSessionService.onAcousticDetection(detection);
+      } catch (error) {
+        _diagnostics.add('Sleep detection handling failed: $error');
+      }
+      return;
+    }
     if (!_config.hasValue) {
       return;
     }

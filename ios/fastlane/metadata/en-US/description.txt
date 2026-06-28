@@ -1,0 +1,28 @@
+Sonus Auris is a personal "audio dashcam." It keeps a continuous, rolling
+recording of your own surroundings so the moments that matter aren't lost — an
+idea you mumble while driving, a song you want to identify, or the sounds of your
+sleep. You start and stop capture, and you decide what is kept.
+
+YOUR AUDIO, ENCRYPTED ON YOUR DEVICE
+- Every recording is encrypted on the device with AES-256-GCM before it is stored
+  or uploaded. Keys stay on your device.
+- Optional backup to storage you control — your own S3-compatible bucket, Google
+  Drive, OneDrive, or iCloud. There is no shared Sonus Auris media server.
+- Keep only a rolling window on the phone; older clips age out automatically.
+
+USEFUL THINGS IT HEARS (ALL OPTIONAL, OFF BY DEFAULT)
+- Sleep and snore insights from on-device audio analysis.
+- Music recognition to label songs that play around you.
+- Sound alerts for sudden loud events while you record.
+
+BUILT FOR PRIVACY
+- The microphone is used only after you start capture.
+- Location tagging is optional, off by default, and only stamps where a clip was
+  recorded if you turn it on.
+- Delete any clip, or your entire account and its data, at any time.
+
+PLEASE RECORD RESPONSIBLY
+Audio recording and consent laws vary by country, state, and situation. You are
+responsible for complying with the laws that apply to you and for obtaining
+consent where required. Sonus Auris is for recording your own environment, not
+for covertly recording other people.

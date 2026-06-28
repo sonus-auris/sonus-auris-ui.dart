@@ -1,0 +1,38 @@
+# fastlane lanes for Google Play (Android). Nothing here publishes to production.
+# Run from the android/ directory: `fastlane <lane>`.
+default_platform(:android)
+
+REPO_AAB = "../build/app/outputs/bundle/release/app-release.aab"
+
+platform :android do
+  desc "Build a signed release App Bundle (delegates to the repo build script)"
+  lane :build do
+    sh("../scripts/release/android-build-aab.sh")
+  end
+
+  desc "Dry run: validate the .aab + listing metadata against Play WITHOUT uploading"
+  lane :validate do
+    upload_to_play_store(
+      aab: REPO_AAB,
+      track: "internal",
+      validate_only: true,
+      skip_upload_apk: true,
+    )
+  end
+
+  desc "Upload to the Internal testing track as a DRAFT (you still press 'send' in the console)"
+  lane :internal do
+    upload_to_play_store(
+      aab: REPO_AAB,
+      track: "internal",
+      release_status: "draft",   # never auto-promotes; review in the console
+      skip_upload_apk: true,
+      mapping_paths: Dir["../build/symbols/*"].first ? Dir["../build/symbols/*"] : [],
+    )
+  end
+
+  desc "Push only the store listing text/graphics (no binary)"
+  lane :metadata do
+    upload_to_play_store(skip_upload_aab: true, skip_upload_apk: true)
+  end
+end

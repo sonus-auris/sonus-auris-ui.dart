@@ -41,6 +41,13 @@
 	<string>Sonus Auris can notice Bluetooth and nearby devices to offer to start a scheduled recording. This is optional and off by default.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>Sonus Auris can notice Bluetooth and nearby devices to offer to start a scheduled recording. This is optional and off by default.</string>
+	<!-- Export compliance: only standard, published crypto (TLS; AES-256-GCM with
+	     HKDF/Argon2id for on-device data protection), no proprietary/non-standard
+	     encryption, so the app qualifies for the encryption exemption and uploads
+	     skip the per-build export prompt. See docs/compliance/EXPORT_COMPLIANCE.md;
+	     change to <true/> if you add non-exempt cryptography. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

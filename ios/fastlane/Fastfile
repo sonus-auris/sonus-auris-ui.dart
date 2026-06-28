@@ -1,0 +1,48 @@
+# fastlane lanes for the App Store (iOS). Nothing here releases publicly:
+# `beta` goes to TestFlight; `metadata` only previews/uploads listing text.
+# Run from the ios/ directory: `fastlane <lane>`.
+#
+# Auth: drop an App Store Connect API key at ios/fastlane/AuthKey_XXXX.p8 (gitignored)
+# and set ASC_KEY_ID / ASC_ISSUER_ID, or use Apple ID + an app-specific password.
+default_platform(:ios)
+
+def asc_api_key
+  return nil unless ENV["ASC_KEY_ID"] && ENV["ASC_ISSUER_ID"]
+  app_store_connect_api_key(
+    key_id: ENV["ASC_KEY_ID"],
+    issuer_id: ENV["ASC_ISSUER_ID"],
+    key_filepath: Dir["fastlane/AuthKey_*.p8"].first,
+    in_house: false,
+  )
+end
+
+platform :ios do
+  desc "Build a signed App Store IPA (delegates to the repo build script)"
+  lane :build do
+    sh("../scripts/release/ios-build-ipa.sh")
+  end
+
+  desc "Upload the built IPA to TestFlight (internal testers only; no public release)"
+  lane :beta do
+    ipa = Dir["../build/ios/ipa/*.ipa"].first
+    UI.user_error!("No IPA found — run `fastlane build` first.") unless ipa
+    upload_to_testflight(
+      api_key: asc_api_key,
+      ipa: ipa,
+      skip_submission: true,                 # do NOT submit for beta review/distribution
+      skip_waiting_for_build_processing: true,
+    )
+  end
+
+  desc "Preview/upload App Store listing metadata only — never submits for review"
+  lane :metadata do
+    deliver(
+      api_key: asc_api_key,
+      skip_binary_upload: true,
+      skip_screenshots: false,
+      submit_for_review: false,
+      force: true,                           # skip the local HTML confirmation
+      precheck_include_in_app_purchases: false,
+    )
+  end
+end

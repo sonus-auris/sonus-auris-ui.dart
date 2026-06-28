@@ -14,6 +14,9 @@
          pre-Android-14 equivalent the user can revoke under "Alarms & reminders". -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- Cycle-aware sleep alarm: full-screen alarm UI so the wake-up can rouse a
+         sleeper even over the lock screen (Android 14+ gates this permission). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- Optional GPS evidence tagging (off by default). -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />

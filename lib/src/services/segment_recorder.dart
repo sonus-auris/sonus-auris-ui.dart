@@ -97,8 +97,15 @@ class SegmentRecorder {
   int _samplesPerSegment = 16000 * 60;
   int _overlapSamples = 0;
 
+  /// When true, a sleep session is active: the acoustic engine runs the
+  /// sleep-cycle detector and analysis is *continuous* (the loudness gate is held
+  /// open), because sleep is mostly quiet and depth must be tracked through quiet
+  /// stretches. Set by the controller before (re)starting capture.
+  bool sleepModeActive = false;
+
   // Acoustic-analysis loudness gate ("kick in once decibels are sustained").
   bool _analysisActive = false;
+  bool _sleepContinuous = false;
   bool _gateOpen = false;
   int _gateLoudSamples = 0;
   int _gateQuietSamples = 0;
@@ -188,8 +195,12 @@ class SegmentRecorder {
           fftSize: config.analyzerFftSize,
           flags: AcousticDetectorFlags(
             snore: config.snoreDetectionEnabled,
-            music: config.musicDetectionEnabled,
-            speech: config.speechDetectionEnabled,
+            // During a sleep session only the sleep (+snore) detectors run:
+            // music/speech are off to save battery overnight and avoid attempting
+            // any speech transcription while the user sleeps.
+            music: sleepModeActive ? false : config.musicDetectionEnabled,
+            speech: sleepModeActive ? false : config.speechDetectionEnabled,
+            sleep: sleepModeActive,
           ),
           captureSessionId: _captureSessionId ?? '',
         );
@@ -398,8 +409,9 @@ class SegmentRecorder {
     _storeFactor = 1;
     _storeDownsampler = null;
 
-    // Acoustic gate setup.
-    _analysisActive = config.hasAcousticAnalysis;
+    // Acoustic gate setup. A sleep session forces analysis on and continuous.
+    _sleepContinuous = sleepModeActive;
+    _analysisActive = config.hasAcousticAnalysis || sleepModeActive;
     _gateOpen = false;
     _gateLoudSamples = 0;
     _gateQuietSamples = 0;
@@ -684,6 +696,16 @@ class SegmentRecorder {
     _PcmPower power,
   ) {
     if (!_analysisActive) {
+      return;
+    }
+    // Sleep session: keep the gate permanently open so depth is tracked through
+    // quiet sleep (the loudness gate would otherwise idle the engine).
+    if (_sleepContinuous) {
+      if (!_gateOpen) {
+        _gateOpen = true;
+        _analyzer.resyncFeed();
+      }
+      _feedAnalyzer(slice, config);
       return;
     }
     final db = _dbForRms(power.averagePower);

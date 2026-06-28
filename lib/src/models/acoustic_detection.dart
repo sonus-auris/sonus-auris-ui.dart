@@ -98,7 +98,16 @@ enum AcousticDetectionKind {
   apneaPattern,
   music,
   speech,
-  keyword;
+  keyword,
+
+  /// One aggregated sleep epoch (~30 s): carries the epoch's depth/stage/features
+  /// in [details]. Emitted continuously while a sleep session is active.
+  sleepEpoch,
+
+  /// A completed sleep cycle boundary: [details] carries `cycleIndex`,
+  /// `lengthMinutes`, and the detected `dominantCycleMinutes`. Drives the
+  /// cycle-aware alarm.
+  sleepCycle;
 
   static AcousticDetectionKind fromName(String? name) {
     return AcousticDetectionKind.values.firstWhere(
@@ -120,6 +129,10 @@ enum AcousticDetectionKind {
         return 'Speech';
       case AcousticDetectionKind.keyword:
         return 'Keyword';
+      case AcousticDetectionKind.sleepEpoch:
+        return 'Sleep epoch';
+      case AcousticDetectionKind.sleepCycle:
+        return 'Sleep cycle';
     }
   }
 }

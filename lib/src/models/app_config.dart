@@ -49,6 +49,13 @@ class AppConfig {
     this.snoreDetectionEnabled = true,
     this.musicDetectionEnabled = true,
     this.speechDetectionEnabled = true,
+    this.sleepSmartAlarmEnabled = true,
+    this.sleepDefaultCycleMinutes = 90.0,
+    this.sleepTargetCycle = 5,
+    this.sleepBackstopCycle = 6,
+    this.sleepSmartWindowMinutes = 25.0,
+    this.sleepMotionConsent = false,
+    this.sleepLightConsent = false,
     this.shazamEnabled = false,
     this.keywords = const [],
     this.sttEnabled = false,
@@ -183,6 +190,37 @@ class AppConfig {
   final bool snoreDetectionEnabled;
   final bool musicDetectionEnabled;
   final bool speechDetectionEnabled;
+
+  /// Arm cycle-aware "smart" alarms during a sleep session. When on, the app
+  /// wakes the sleeper at a light-sleep arousal near the end of [sleepTargetCycle]
+  /// (defaults to the 5th cycle ≈ 7.5 h), but never while in deep sleep — it
+  /// holds off and waits for the next light arousal, with a hard backstop at the
+  /// end of [sleepBackstopCycle] (defaults to the 6th cycle ≈ 9 h).
+  final bool sleepSmartAlarmEnabled;
+
+  /// Cold-start cycle length (minutes) used before any per-user history exists.
+  /// 90 min × 5 cycles = 7.5 h; × 6 = 9 h.
+  final double sleepDefaultCycleMinutes;
+
+  /// 1-based cycle whose end the smart alarm primarily targets (default 5).
+  final int sleepTargetCycle;
+
+  /// 1-based cycle whose end is the hard backstop wake (default 6).
+  final int sleepBackstopCycle;
+
+  /// How many minutes before the target-cycle end the smart alarm may fire early
+  /// if a light-sleep arousal is detected (the "wake during light sleep" window).
+  final double sleepSmartWindowMinutes;
+
+  /// Express consent to use the accelerometer during a sleep session: stillness,
+  /// tossing/turning, and getting up improve stage/cycle accuracy. Off until the
+  /// user explicitly opts in.
+  final bool sleepMotionConsent;
+
+  /// Express consent to use the ambient-light sensor (darkness duration, lights
+  /// off/on, dawn brightening) as a sleep/wake cue. Off until explicit opt-in.
+  /// Android only — iOS exposes no public ambient-light API.
+  final bool sleepLightConsent;
 
   /// When a music detection fires on iOS, identify the song with ShazamKit.
   /// No-op on Android. Sends a short audio fingerprint to Apple's service.
@@ -358,6 +396,13 @@ class AppConfig {
     bool? snoreDetectionEnabled,
     bool? musicDetectionEnabled,
     bool? speechDetectionEnabled,
+    bool? sleepSmartAlarmEnabled,
+    double? sleepDefaultCycleMinutes,
+    int? sleepTargetCycle,
+    int? sleepBackstopCycle,
+    double? sleepSmartWindowMinutes,
+    bool? sleepMotionConsent,
+    bool? sleepLightConsent,
     bool? shazamEnabled,
     List<String>? keywords,
     bool? sttEnabled,
@@ -426,6 +471,16 @@ class AppConfig {
           musicDetectionEnabled ?? this.musicDetectionEnabled,
       speechDetectionEnabled:
           speechDetectionEnabled ?? this.speechDetectionEnabled,
+      sleepSmartAlarmEnabled:
+          sleepSmartAlarmEnabled ?? this.sleepSmartAlarmEnabled,
+      sleepDefaultCycleMinutes:
+          sleepDefaultCycleMinutes ?? this.sleepDefaultCycleMinutes,
+      sleepTargetCycle: sleepTargetCycle ?? this.sleepTargetCycle,
+      sleepBackstopCycle: sleepBackstopCycle ?? this.sleepBackstopCycle,
+      sleepSmartWindowMinutes:
+          sleepSmartWindowMinutes ?? this.sleepSmartWindowMinutes,
+      sleepMotionConsent: sleepMotionConsent ?? this.sleepMotionConsent,
+      sleepLightConsent: sleepLightConsent ?? this.sleepLightConsent,
       shazamEnabled: shazamEnabled ?? this.shazamEnabled,
       keywords: keywords ?? this.keywords,
       sttEnabled: sttEnabled ?? this.sttEnabled,
@@ -488,6 +543,13 @@ class AppConfig {
       'snoreDetectionEnabled': snoreDetectionEnabled,
       'musicDetectionEnabled': musicDetectionEnabled,
       'speechDetectionEnabled': speechDetectionEnabled,
+      'sleepSmartAlarmEnabled': sleepSmartAlarmEnabled,
+      'sleepDefaultCycleMinutes': sleepDefaultCycleMinutes,
+      'sleepTargetCycle': sleepTargetCycle,
+      'sleepBackstopCycle': sleepBackstopCycle,
+      'sleepSmartWindowMinutes': sleepSmartWindowMinutes,
+      'sleepMotionConsent': sleepMotionConsent,
+      'sleepLightConsent': sleepLightConsent,
       'shazamEnabled': shazamEnabled,
       'keywords': keywords,
       'sttEnabled': sttEnabled,
@@ -568,6 +630,19 @@ class AppConfig {
       snoreDetectionEnabled: json['snoreDetectionEnabled'] as bool? ?? true,
       musicDetectionEnabled: json['musicDetectionEnabled'] as bool? ?? true,
       speechDetectionEnabled: json['speechDetectionEnabled'] as bool? ?? true,
+      sleepSmartAlarmEnabled: json['sleepSmartAlarmEnabled'] as bool? ?? true,
+      sleepDefaultCycleMinutes: _asDouble(
+        json['sleepDefaultCycleMinutes'],
+        90.0,
+      ).clamp(60.0, 130.0),
+      sleepTargetCycle: _asInt(json['sleepTargetCycle'], 5).clamp(1, 12),
+      sleepBackstopCycle: _asInt(json['sleepBackstopCycle'], 6).clamp(1, 12),
+      sleepSmartWindowMinutes: _asDouble(
+        json['sleepSmartWindowMinutes'],
+        25.0,
+      ).clamp(0.0, 90.0),
+      sleepMotionConsent: json['sleepMotionConsent'] as bool? ?? false,
+      sleepLightConsent: json['sleepLightConsent'] as bool? ?? false,
       shazamEnabled: json['shazamEnabled'] as bool? ?? false,
       keywords: _asStringList(json['keywords']),
       sttEnabled: json['sttEnabled'] as bool? ?? false,

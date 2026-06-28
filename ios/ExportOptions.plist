@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Export options for `flutter build ipa` / `xcodebuild -exportArchive`.
+     Fill in teamID with your Apple Developer Team ID (Membership page).
+     Xcode 16 renamed the App Store method to "app-store-connect"; if your build
+     errors on the method value, change "app-store" to "app-store-connect". -->
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>app-store</string>
+
+    <key>destination</key>
+    <string>export</string>
+
+    <key>teamID</key>
+    <string>YOUR_TEAM_ID</string>
+
+    <key>signingStyle</key>
+    <string>automatic</string>
+
+    <!-- Upload dSYMs so App Store Connect can symbolicate crashes. -->
+    <key>uploadSymbols</key>
+    <true/>
+    <key>stripSwiftSymbols</key>
+    <true/>
+
+    <!-- We manage App Store metadata via fastlane deliver, not the export. -->
+    <key>generateAppStoreInformation</key>
+    <false/>
+</dict>
+</plist>

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../../models/acoustic_detection.dart';
 import 'music_detector.dart';
+import 'sleep_cycle_detector.dart';
 import 'snore_detector.dart';
 import 'speech_detector.dart';
 import 'spectral_features.dart';
@@ -12,21 +13,29 @@ class AcousticDetectorFlags {
     this.snore = true,
     this.music = true,
     this.speech = true,
+    this.sleep = false,
   });
 
   final bool snore;
   final bool music;
   final bool speech;
 
-  bool get any => snore || music || speech;
+  /// Sleep-cycle analysis. Off by default; turned on for a sleep session. The
+  /// sleep detector consumes the snore detector's output, so [snore] is forced
+  /// on internally whenever [sleep] is set.
+  final bool sleep;
 
-  Map<String, dynamic> toMap() => {'snore': snore, 'music': music, 'speech': speech};
+  bool get any => snore || music || speech || sleep;
+
+  Map<String, dynamic> toMap() =>
+      {'snore': snore, 'music': music, 'speech': speech, 'sleep': sleep};
 
   factory AcousticDetectorFlags.fromMap(Map<dynamic, dynamic> map) {
     return AcousticDetectorFlags(
       snore: map['snore'] as bool? ?? true,
       music: map['music'] as bool? ?? true,
       speech: map['speech'] as bool? ?? true,
+      sleep: map['sleep'] as bool? ?? false,
     );
   }
 }
@@ -42,12 +51,21 @@ class AcousticPipeline {
     AcousticDetectorFlags flags = const AcousticDetectorFlags(),
     String captureSessionId = '',
   })  : _analyzer = SpectralAnalyzer(fftSize: fftSize, sampleRate: sampleRate),
-        _snore = flags.snore
+        // The sleep detector needs snore events, so enable snore whenever sleep
+        // is on even if the snore flag itself is off.
+        _snore = (flags.snore || flags.sleep)
             ? SnoreDetector(
                 frameSeconds: (fftSize ~/ 2) / sampleRate,
                 captureSessionId: captureSessionId,
               )
             : null,
+        _sleep = flags.sleep
+            ? SleepCycleDetector(
+                frameSeconds: (fftSize ~/ 2) / sampleRate,
+                captureSessionId: captureSessionId,
+              )
+            : null,
+        _emitSnore = flags.snore,
         _music = flags.music
             ? MusicDetector(
                 frameSeconds: (fftSize ~/ 2) / sampleRate,
@@ -65,6 +83,11 @@ class AcousticPipeline {
   final int sampleRate;
   final SpectralAnalyzer _analyzer;
   final SnoreDetector? _snore;
+  final SleepCycleDetector? _sleep;
+
+  /// Whether snore detections should be surfaced. False when snore is only
+  /// running internally to feed the sleep detector.
+  final bool _emitSnore;
   final MusicDetector? _music;
   final SpeechDetector? _speech;
 
@@ -74,10 +97,17 @@ class AcousticPipeline {
     final features = _analyzer.analyze(frame);
     final out = <AcousticDetection>[];
     final snore = _snore;
+    final sleep = _sleep;
     final music = _music;
     final speech = _speech;
-    if (snore != null) {
-      out.addAll(snore.add(features, atUtc));
+    // Run snore first; the sleep detector consumes its episodes for this frame.
+    final snoreEvents =
+        snore != null ? snore.add(features, atUtc) : const <AcousticDetection>[];
+    if (_emitSnore) {
+      out.addAll(snoreEvents);
+    }
+    if (sleep != null) {
+      out.addAll(sleep.add(features, atUtc, snoreEvents));
     }
     if (music != null) {
       out.addAll(music.add(features, atUtc));
@@ -88,9 +118,20 @@ class AcousticPipeline {
     return out;
   }
 
-  /// Closes any open snore episode. Call when the analysis gate closes.
+  /// Closes any open snore episode and flushes the in-progress sleep epoch. Call
+  /// when the analysis gate closes.
   List<AcousticDetection> flush() {
-    return _snore?.flush() ?? const [];
+    final out = <AcousticDetection>[];
+    final snoreFlush = _snore?.flush() ?? const <AcousticDetection>[];
+    if (_emitSnore) {
+      out.addAll(snoreFlush);
+    }
+    final sleep = _sleep;
+    if (sleep != null) {
+      // Feed the snore detector's flushed episodes into the sleep epoch too.
+      out.addAll(sleep.flush());
+    }
+    return out;
   }
 }
 
