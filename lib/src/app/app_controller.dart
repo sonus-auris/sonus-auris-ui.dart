@@ -1031,6 +1031,8 @@ class AppController {
       }
       await _applySupabaseSession(session);
       await _ensureDeviceRegistered();
+      // Flush any consent captured before sign-in.
+      await _maybeSyncConsent();
       _message.add(successMessage);
       requestUploadDrain();
     } catch (error) {
