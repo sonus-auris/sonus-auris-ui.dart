@@ -3,130 +3,147 @@ import 'package:audio_dashcam/src/services/acoustic/sleep_cycle_detector.dart';
 import 'package:audio_dashcam/src/services/acoustic/spectral_features.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-// Compressed timescale for tests: 0.5 s frames, 4 per 2 s epoch, but we advance
-// the clock 1 minute per frame so cycle-length math (which uses timestamps)
-// accrues quickly without feeding tens of thousands of real frames.
-const double _frameSeconds = 0.5;
-const _config = SleepConfig(
-  epochSeconds: 2.0,
-  depthSmoothingMinutes: 0.05,
-  minCycleMinutes: 3.0,
-  periodicityEveryEpochs: 1000,
+const _lightSleepFrame = SpectralFrame(
+  rms: 0.006,
+  db: -48,
+  centroidHz: 820,
+  flatness: 0.62,
+  crest: 4,
+  rolloffHz: 1500,
+  dominantHz: 220,
+  lowBandRatio: 0.12,
+  speechBandRatio: 0.22,
+  totalPower: 1,
 );
 
-SpectralFrame _deep() => const SpectralFrame(
-      rms: 0.001,
-      db: -60,
-      centroidHz: 200,
-      flatness: 0.2,
-      crest: 50,
-      rolloffHz: 350,
-      dominantHz: 180,
-      lowBandRatio: 0.6,
-      speechBandRatio: 0.1,
-      totalPower: 1,
-    );
+const _deepSleepFrame = SpectralFrame(
+  rms: 0.01,
+  db: -44,
+  centroidHz: 520,
+  flatness: 0.35,
+  crest: 8,
+  rolloffHz: 900,
+  dominantHz: 160,
+  lowBandRatio: 0.34,
+  speechBandRatio: 0.16,
+  totalPower: 1,
+);
 
-SpectralFrame _arousal() => const SpectralFrame(
-      rms: 0.2,
-      db: -25,
-      centroidHz: 1500,
-      flatness: 0.6,
-      crest: 8,
-      rolloffHz: 3000,
-      dominantHz: 1200,
-      lowBandRatio: 0.1,
-      speechBandRatio: 0.4,
-      totalPower: 5,
-    );
+const _arousalFrame = SpectralFrame(
+  rms: 0.04,
+  db: -28,
+  centroidHz: 2400,
+  flatness: 0.78,
+  crest: 2,
+  rolloffHz: 4300,
+  dominantHz: 1300,
+  lowBandRatio: 0.05,
+  speechBandRatio: 0.58,
+  totalPower: 1,
+);
 
-void main() {
-  late DateTime clock;
-  late SleepCycleDetector detector;
-  late List<AcousticDetection> events;
-
-  setUp(() {
-    clock = DateTime.utc(2026, 1, 1, 23, 0, 0);
-    detector = SleepCycleDetector(frameSeconds: _frameSeconds, config: _config);
-    events = [];
-  });
-
-  // Feed [epochs] epochs of [frame], advancing the clock 1 min per frame.
-  void feed(SpectralFrame frame, int epochs) {
-    final framesPerEpoch = (_config.epochSeconds / _frameSeconds).round();
-    for (var e = 0; e < epochs; e++) {
-      for (var f = 0; f < framesPerEpoch; f++) {
-        events.addAll(detector.add(frame, clock, const []));
-        clock = clock.add(const Duration(minutes: 1));
-      }
-    }
+List<AcousticDetection> _driveCycles(
+  List<int> cycleMinutes, {
+  List<double> seeds = const [],
+  bool alarmsEnabled = true,
+  Set<int> deepCycles = const {},
+}) {
+  final detector = SleepCycleDetector(
+    frameSeconds: 60,
+    config: SleepCycleConfig(
+      cycleMinutesByIndex: seeds,
+      alarmsEnabled: alarmsEnabled,
+      sleepOnsetMinutes: 3,
+      bucketSeconds: 60,
+    ),
+  );
+  final base = DateTime.utc(2026, 1, 1, 22);
+  final boundaries = <int>{};
+  var elapsed = 0;
+  for (final minutes in cycleMinutes) {
+    elapsed += minutes;
+    boundaries.add(elapsed);
   }
 
-  List<AcousticDetection> cycles() =>
-      events.where((e) => e.kind == AcousticDetectionKind.sleepCycle).toList();
-  List<AcousticDetection> epochsOut() =>
-      events.where((e) => e.kind == AcousticDetectionKind.sleepEpoch).toList();
+  final events = <AcousticDetection>[];
+  var currentCycle = 1;
+  for (var minute = 0; minute <= elapsed + 2; minute++) {
+    final isBoundary = boundaries.contains(minute);
+    final frame = isBoundary
+        ? _arousalFrame
+        : deepCycles.contains(currentCycle)
+        ? _deepSleepFrame
+        : _lightSleepFrame;
+    events.addAll(detector.add(frame, base.add(Duration(minutes: minute))));
+    if (isBoundary) {
+      currentCycle += 1;
+    }
+  }
+  events.addAll(detector.flush());
+  return events;
+}
 
-  test('descent into deep then arousal closes a cycle', () {
-    feed(_deep(), 6); // descend + stay deep
-    feed(_arousal(), 2); // arousal => boundary
-    expect(cycles(), hasLength(1));
-    expect(cycles().first.details['cycleIndex'], 1);
-    expect(cycles().first.details['lengthMinutes'] as double, greaterThan(3));
-    // Epoch telemetry was emitted continuously, including deep stages.
-    expect(epochsOut().length, greaterThan(4));
+void main() {
+  test('learns short 75 minute cycles and emits cycle 5 and 6 alarms', () {
+    final events = _driveCycles(List<int>.filled(6, 75));
+    final alarms = events
+        .where((event) => event.kind == AcousticDetectionKind.sleepCycleAlarm)
+        .toList();
+
+    expect(alarms.map((event) => event.details['cycleIndex']), [5, 6]);
+    expect(alarms.first.details['observedCycleMinutes'], closeTo(75, 2));
     expect(
-      epochsOut().any((e) => e.details['stage'] == 'deep'),
-      isTrue,
+      alarms.first.details['estimatedCycleMinutes'] as double,
+      lessThan(88),
     );
   });
 
-  test('multiple cycles are counted in order', () {
-    for (var i = 0; i < 3; i++) {
-      feed(_deep(), 6);
-      feed(_arousal(), 2);
-    }
-    expect(cycles().length, greaterThanOrEqualTo(2));
-    final indices =
-        cycles().map((e) => e.details['cycleIndex'] as int).toList();
-    for (var i = 1; i < indices.length; i++) {
-      expect(indices[i], indices[i - 1] + 1);
-    }
-  });
-
-  test('staying awake/noisy never closes a cycle (no descent)', () {
-    feed(_arousal(), 10);
-    expect(cycles(), isEmpty);
-  });
-
-  test('a descent + arousal shorter than minCycle is not a boundary', () {
-    // Dedicated detector with a long min-cycle so a full descent that re-arouses
-    // too soon is treated as a micro-arousal, not a counted cycle.
-    final d = SleepCycleDetector(
-      frameSeconds: _frameSeconds,
-      config: const SleepConfig(
-        epochSeconds: 2.0,
-        depthSmoothingMinutes: 0.05,
-        minCycleMinutes: 40.0,
-        periodicityEveryEpochs: 1000,
-      ),
+  test('does not preempt 120 minute cycles with the 90 minute baseline', () {
+    final events = _driveCycles(List<int>.filled(6, 120));
+    final cycleOne = events.firstWhere(
+      (event) => event.details['cycleIndex'] == 1,
     );
-    final out = <AcousticDetection>[];
-    var t = DateTime.utc(2026, 1, 1, 23, 0, 0);
-    void feedTo(SpectralFrame frame, int epochs) {
-      for (var e = 0; e < epochs; e++) {
-        for (var f = 0; f < 4; f++) {
-          out.addAll(d.add(frame, t, const []));
-          t = t.add(const Duration(minutes: 1));
-        }
-      }
-    }
+    final alarms = events
+        .where((event) => event.kind == AcousticDetectionKind.sleepCycleAlarm)
+        .toList();
 
-    feedTo(_deep(), 6); // descends to deep (~24 min span)
-    feedTo(_arousal(), 2); // arouse well before the 40-min floor
+    expect(cycleOne.details['observedCycleMinutes'], closeTo(120, 2));
+    expect(alarms.map((event) => event.details['cycleIndex']), [5, 6]);
     expect(
-      out.where((e) => e.kind == AcousticDetectionKind.sleepCycle),
-      isEmpty,
+      alarms.first.details['estimatedCycleMinutes'] as double,
+      greaterThan(95),
     );
+  });
+
+  test('tracks different cycle lengths as the night progresses', () {
+    final events = _driveCycles([80, 85, 95, 105, 110, 115]);
+    final fifthAlarm = events.firstWhere(
+      (event) =>
+          event.kind == AcousticDetectionKind.sleepCycleAlarm &&
+          event.details['cycleIndex'] == 5,
+    );
+    final vector = fifthAlarm.details['cycleMinutesByIndex'] as List;
+
+    expect(fifthAlarm.details['observedCycleMinutes'], closeTo(110, 2));
+    expect(vector[0] as double, lessThan(vector[4] as double));
+  });
+
+  test('defers cycle 5 alarm when cycles 4 and 5 are deep sleep', () {
+    final events = _driveCycles(
+      List<int>.filled(6, 90),
+      seeds: const [90, 90, 90, 90, 90, 90],
+      deepCycles: const {4, 5},
+    );
+    final alarms = events
+        .where((event) => event.kind == AcousticDetectionKind.sleepCycleAlarm)
+        .toList();
+    final fifthCycle = events.firstWhere(
+      (event) => event.details['cycleIndex'] == 5,
+    );
+
+    expect(alarms.map((event) => event.details['cycleIndex']), [6]);
+    expect(fifthCycle.details['alarmDeferred'], isTrue);
+    expect(fifthCycle.details['deferredToCycle'], 6);
+    expect(fifthCycle.details['deepSleepCycle'], isTrue);
   });
 }

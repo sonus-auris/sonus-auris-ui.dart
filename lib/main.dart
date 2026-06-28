@@ -19,11 +19,8 @@ import 'src/models/cloud_provider.dart';
 import 'src/models/context_trigger.dart';
 import 'src/models/recording_schedule.dart';
 import 'src/models/storage_estimate.dart';
-import 'src/models/sleep_session.dart';
-import 'src/models/sleep_stage.dart';
 import 'src/models/transfer_gate_status.dart';
 import 'src/models/upload_network_policy.dart';
-import 'src/services/sleep_session_service.dart';
 import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
 
@@ -189,7 +186,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _restoreSelectedTab() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getInt(_kLastTabKey);
-    if (saved != null && saved >= 0 && saved <= 3 && mounted) {
+    if (saved != null && saved >= 0 && saved <= 2 && mounted) {
       setState(() => _selectedIndex = saved);
     }
   }
@@ -324,11 +321,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 label: 'Playback',
               ),
               NavigationDestination(
-                icon: Icon(Icons.bedtime_outlined),
-                selectedIcon: Icon(Icons.bedtime),
-                label: 'Sleep',
-              ),
-              NavigationDestination(
                 icon: Icon(Icons.tune),
                 selectedIcon: Icon(Icons.tune),
                 label: 'Configure',
@@ -362,12 +354,6 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
         );
       case 2:
-        return _SleepView(
-          controller: widget.controller,
-          config: viewModel.config,
-          onConfigChanged: widget.controller.saveConfig,
-        );
-      case 3:
         return Form(
           key: _formKey,
           child: _ConfigureView(
@@ -623,16 +609,16 @@ class _DetectionsSection extends StatelessWidget {
         return Icons.bedtime;
       case AcousticDetectionKind.apneaPattern:
         return Icons.warning_amber;
+      case AcousticDetectionKind.sleepCycle:
+        return Icons.nights_stay;
+      case AcousticDetectionKind.sleepCycleAlarm:
+        return Icons.alarm;
       case AcousticDetectionKind.music:
         return Icons.music_note;
       case AcousticDetectionKind.speech:
         return Icons.record_voice_over;
       case AcousticDetectionKind.keyword:
         return Icons.flag;
-      case AcousticDetectionKind.sleepEpoch:
-      case AcousticDetectionKind.sleepCycle:
-        // Sleep telemetry is consumed by the sleep engine, not listed here.
-        return Icons.nightlight_round;
     }
   }
 
@@ -650,6 +636,10 @@ class _DetectionsSection extends StatelessWidget {
         return '$time · "${d.details['keyword'] ?? ''}"';
       case AcousticDetectionKind.apneaPattern:
         return '$time · gap ${d.details['gapSeconds'] ?? '?'}s (not a diagnosis)';
+      case AcousticDetectionKind.sleepCycle:
+        return '$time · cycle ${d.details['cycleIndex'] ?? '?'} · ${d.details['estimatedCycleMinutes'] ?? '?'} min';
+      case AcousticDetectionKind.sleepCycleAlarm:
+        return '$time · wake after cycle ${d.details['cycleIndex'] ?? '?'}';
       default:
         return time;
     }
@@ -2052,6 +2042,12 @@ class _AcousticSectionState extends State<_AcousticSection> {
   String? _syncedDeviceId;
   late bool _enabled;
   late bool _snore;
+  late bool _sleep;
+  late bool _sleepAlarms;
+  late bool _sleepMotionConsent;
+  late bool _sleepAmbientLightConsent;
+  late bool _sleepPhoneContextConsent;
+  late double _sleepCycleMinutes;
   late bool _music;
   late bool _speech;
   late bool _shazam;
@@ -2067,6 +2063,14 @@ class _AcousticSectionState extends State<_AcousticSection> {
   void _seed(AppConfig config) {
     _enabled = config.acousticAnalysisEnabled;
     _snore = config.snoreDetectionEnabled;
+    _sleep = config.sleepAnalysisEnabled;
+    _sleepAlarms = config.sleepCycleAlarmsEnabled;
+    _sleepMotionConsent = config.sleepMotionSensorConsent;
+    _sleepAmbientLightConsent = config.sleepAmbientLightConsent;
+    _sleepPhoneContextConsent = config.sleepPhoneContextConsent;
+    _sleepCycleMinutes = config.sleepCycleMinutesByIndex.isEmpty
+        ? 90.0
+        : config.sleepCycleMinutesByIndex.first;
     _music = config.musicDetectionEnabled;
     _speech = config.speechDetectionEnabled;
     _shazam = config.shazamEnabled;
@@ -2098,6 +2102,12 @@ class _AcousticSectionState extends State<_AcousticSection> {
       widget.config.copyWith(
         acousticAnalysisEnabled: _enabled,
         snoreDetectionEnabled: _snore,
+        sleepAnalysisEnabled: _sleep,
+        sleepCycleAlarmsEnabled: _sleepAlarms,
+        sleepCycleMinutesByIndex: _sleepCycleVector(),
+        sleepMotionSensorConsent: _sleepMotionConsent,
+        sleepAmbientLightConsent: _sleepAmbientLightConsent,
+        sleepPhoneContextConsent: _sleepPhoneContextConsent,
         musicDetectionEnabled: _music,
         speechDetectionEnabled: _speech,
         shazamEnabled: _shazam,
@@ -2146,6 +2156,78 @@ class _AcousticSectionState extends State<_AcousticSection> {
                 _apply();
               },
             ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Sleep analysis'),
+              subtitle: const Text('Breathing cadence and snoring cycles'),
+              value: _sleep,
+              onChanged: (v) {
+                setState(() {
+                  _sleep = v;
+                  if (!v) {
+                    _sleepAlarms = false;
+                    _sleepMotionConsent = false;
+                    _sleepAmbientLightConsent = false;
+                    _sleepPhoneContextConsent = false;
+                  }
+                });
+                _apply();
+              },
+            ),
+            if (_sleep) ...[
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Alarm after cycles 5 and 6'),
+                subtitle: const Text('7.5h and 9h baseline; learned per user'),
+                value: _sleepAlarms,
+                onChanged: (v) {
+                  setState(() => _sleepAlarms = v);
+                  _apply();
+                },
+              ),
+              _slider(
+                label: 'Cycle seed',
+                value: _sleepCycleMinutes,
+                min: 75,
+                max: 120,
+                divisions: 45,
+                display: '${_sleepCycleMinutes.toStringAsFixed(0)} min',
+                onChanged: (v) {
+                  setState(() => _sleepCycleMinutes = v);
+                  _apply();
+                },
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Allow motion signal'),
+                subtitle: const Text('Stillness, tossing, getting up'),
+                value: _sleepMotionConsent,
+                onChanged: (v) {
+                  setState(() => _sleepMotionConsent = v);
+                  _apply();
+                },
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Allow ambient light signal'),
+                subtitle: const Text('Dark room and morning light changes'),
+                value: _sleepAmbientLightConsent,
+                onChanged: (v) {
+                  setState(() => _sleepAmbientLightConsent = v);
+                  _apply();
+                },
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Allow phone context signal'),
+                subtitle: const Text('Charging, idle time, usual bedtime'),
+                value: _sleepPhoneContextConsent,
+                onChanged: (v) {
+                  setState(() => _sleepPhoneContextConsent = v);
+                  _apply();
+                },
+              ),
+            ],
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Music detection'),
@@ -2322,6 +2404,20 @@ class _AcousticSectionState extends State<_AcousticSection> {
         ],
       ),
     );
+  }
+
+  List<double> _sleepCycleVector() {
+    final existing = widget.config.sleepCycleMinutesByIndex;
+    final vector = existing.isEmpty
+        ? List<double>.filled(6, _sleepCycleMinutes)
+        : existing.toList();
+    while (vector.length < 6) {
+      vector.add(vector.isEmpty ? _sleepCycleMinutes : vector.last);
+    }
+    vector[0] = _sleepCycleMinutes;
+    return vector
+        .map((minutes) => minutes.clamp(75.0, 120.0).toDouble())
+        .toList(growable: false);
   }
 }
 
@@ -3933,566 +4029,6 @@ class _ContextTriggersSection extends StatelessWidget {
           ],
         ],
       ),
-    );
-  }
-}
-
-/// The Sleep tab: start/stop a sleep session, watch the live stage/cycle
-/// estimate, and configure the cycle-aware alarm + consent-gated sensors.
-class _SleepView extends StatelessWidget {
-  const _SleepView({
-    required this.controller,
-    required this.config,
-    required this.onConfigChanged,
-  });
-
-  final AppController controller;
-  final AppConfig config;
-  final ValueChanged<AppConfig> onConfigChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-      children: [
-        ValueListenableBuilder<SleepSessionStatus>(
-          valueListenable: controller.sleepStatus,
-          builder: (context, status, _) => _SleepStatusCard(
-            status: status,
-            onStart: controller.startSleepSession,
-            onStop: controller.stopSleepSession,
-          ),
-        ),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => _SleepHistoryPage(controller: controller),
-            ),
-          ),
-          icon: const Icon(Icons.history),
-          label: const Text('View past nights'),
-        ),
-        const SizedBox(height: 16),
-        _SleepSettingsSection(config: config, onChanged: onConfigChanged),
-      ],
-    );
-  }
-}
-
-/// Draws a night's sleep-depth envelope as a filled area chart (taller = deeper).
-class _Hypnogram extends StatelessWidget {
-  const _Hypnogram({required this.depthEnvelope, this.height = 72});
-
-  final List<double> depthEnvelope;
-  final double height;
-
-  @override
-  Widget build(BuildContext context) {
-    if (depthEnvelope.isEmpty) {
-      return SizedBox(
-        height: height,
-        child: const Center(
-          child: Text(
-            'Depth chart appears as you sleep',
-            style: TextStyle(color: SonusColors.inkSoft),
-          ),
-        ),
-      );
-    }
-    return SizedBox(
-      height: height,
-      width: double.infinity,
-      child: CustomPaint(painter: _HypnogramPainter(depthEnvelope)),
-    );
-  }
-}
-
-class _HypnogramPainter extends CustomPainter {
-  _HypnogramPainter(this.depth);
-
-  final List<double> depth;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-    final n = depth.length;
-
-    // Baseline.
-    final axis = Paint()
-      ..color = SonusColors.hairline
-      ..strokeWidth = 1;
-    canvas.drawLine(Offset(0, h - 1), Offset(w, h - 1), axis);
-
-    if (n < 2) {
-      return;
-    }
-    double x(int i) => n == 1 ? 0 : w * i / (n - 1);
-    double y(double d) => (1 - d.clamp(0.0, 1.0)) * h; // deeper => lower (taller)
-
-    final line = Path()..moveTo(0, y(depth[0]));
-    for (var i = 1; i < n; i++) {
-      line.lineTo(x(i), y(depth[i]));
-    }
-
-    final fill = Path.from(line)
-      ..lineTo(w, h)
-      ..lineTo(0, h)
-      ..close();
-    canvas.drawPath(
-      fill,
-      Paint()..color = SonusColors.orange500.withValues(alpha: 0.18),
-    );
-    canvas.drawPath(
-      line,
-      Paint()
-        ..color = SonusColors.orange500
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..strokeJoin = StrokeJoin.round,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_HypnogramPainter old) => old.depth != depth;
-}
-
-/// Full-screen list of past sleep nights with per-night hypnograms + stats.
-class _SleepHistoryPage extends StatefulWidget {
-  const _SleepHistoryPage({required this.controller});
-
-  final AppController controller;
-
-  @override
-  State<_SleepHistoryPage> createState() => _SleepHistoryPageState();
-}
-
-class _SleepHistoryPageState extends State<_SleepHistoryPage> {
-  late Future<List<SleepSession>> _future;
-  static final _dateFmt = DateFormat('EEE, MMM d');
-
-  @override
-  void initState() {
-    super.initState();
-    _future = widget.controller.loadSleepHistory();
-  }
-
-  String _duration(SleepSession s) {
-    final mins = s.totalMinutes.round();
-    return '${mins ~/ 60}h ${mins % 60}m';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: const Text('Sleep history')),
-      body: FutureBuilder<List<SleepSession>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final nights = snapshot.data ?? const <SleepSession>[];
-          if (nights.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text(
-                  'No nights recorded yet. Start a sleep session to build your '
-                  '35-day history.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: SonusColors.inkSoft),
-                ),
-              ),
-            );
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-            itemCount: nights.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 12),
-            itemBuilder: (context, i) {
-              final s = nights[i];
-              final cyclesText = s.cycles.isEmpty
-                  ? 'no full cycles'
-                  : '${s.cycles.length} cycles';
-              final cycleLen = s.dominantCycleMinutes > 0
-                  ? ' · ~${s.dominantCycleMinutes.round()} min each'
-                  : '';
-              return _Section(
-                title: _dateFmt.format(s.startedAtUtc.toLocal()),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${_duration(s)} · $cyclesText$cycleLen',
-                      style: theme.textTheme.bodyMedium
-                          ?.copyWith(color: SonusColors.inkSoft),
-                    ),
-                    const SizedBox(height: 10),
-                    _Hypnogram(depthEnvelope: s.depthEnvelope, height: 80),
-                  ],
-                ),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _SleepStatusCard extends StatelessWidget {
-  const _SleepStatusCard({
-    required this.status,
-    required this.onStart,
-    required this.onStop,
-  });
-
-  final SleepSessionStatus status;
-  final VoidCallback onStart;
-  final VoidCallback onStop;
-
-  static final _timeFmt = DateFormat('h:mm a');
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return _Section(
-      title: status.active ? 'Tracking your sleep' : 'Sleep tracking',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (!status.active)
-            const Text(
-              'Place your phone on the nightstand and tap Start. Sonus listens '
-              'for breathing and snoring to estimate your sleep cycles, then '
-              'wakes you during light sleep near your target — never in deep '
-              'sleep.',
-              style: TextStyle(color: SonusColors.inkSoft),
-            )
-          else ...[
-            Row(
-              children: [
-                Icon(_stageIcon(status.stage), color: SonusColors.orange500),
-                const SizedBox(width: 8),
-                Text(status.stage.label, style: theme.textTheme.headlineSmall),
-                const Spacer(),
-                Text(
-                  '${(status.sleepProbability * 100).round()}% asleep',
-                  style: const TextStyle(color: SonusColors.inkSoft),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _DepthMeter(depth: status.depth),
-            const SizedBox(height: 16),
-            _Hypnogram(depthEnvelope: status.depthEnvelope),
-            const SizedBox(height: 16),
-            _CycleDots(
-              completed: status.cyclesCompleted,
-              total: 6,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              status.dominantCycleMinutes > 0
-                  ? '${status.cyclesCompleted} cycles · '
-                      '~${status.dominantCycleMinutes.round()} min each'
-                  : '${status.cyclesCompleted} cycles so far',
-              style: const TextStyle(color: SonusColors.inkSoft),
-            ),
-            const SizedBox(height: 12),
-            if (status.targetTimeUtc != null)
-              _wakeRow(
-                Icons.wb_twilight,
-                'Smart wake target',
-                _timeFmt.format(status.targetTimeUtc!.toLocal()),
-              ),
-            if (status.backstopTimeUtc != null)
-              _wakeRow(
-                Icons.alarm,
-                'Latest wake (backstop)',
-                _timeFmt.format(status.backstopTimeUtc!.toLocal()),
-              ),
-            if (status.alarmFired)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text(
-                  'Alarm fired — good morning!',
-                  style: TextStyle(
-                    color: SonusColors.orange600,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-          ],
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: status.active
-                ? OutlinedButton.icon(
-                    onPressed: onStop,
-                    icon: const Icon(Icons.stop_circle_outlined),
-                    label: const Text('End sleep session'),
-                  )
-                : FilledButton.icon(
-                    onPressed: onStart,
-                    icon: const Icon(Icons.bedtime),
-                    label: const Text('Start sleep'),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _wakeRow(IconData icon, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: SonusColors.inkSoft),
-          const SizedBox(width: 8),
-          Text(label, style: const TextStyle(color: SonusColors.inkSoft)),
-          const Spacer(),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
-        ],
-      ),
-    );
-  }
-
-  static IconData _stageIcon(SleepStage stage) {
-    switch (stage) {
-      case SleepStage.awake:
-        return Icons.visibility;
-      case SleepStage.light:
-        return Icons.nights_stay_outlined;
-      case SleepStage.deep:
-        return Icons.dark_mode;
-      case SleepStage.rem:
-        return Icons.remove_red_eye_outlined;
-      case SleepStage.unknown:
-        return Icons.hourglass_empty;
-    }
-  }
-}
-
-/// Horizontal "how deep" meter, 0 (awake) → 1 (deepest).
-class _DepthMeter extends StatelessWidget {
-  const _DepthMeter({required this.depth});
-
-  final double depth;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Sleep depth', style: TextStyle(color: SonusColors.inkSoft)),
-        const SizedBox(height: 6),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(999),
-          child: LinearProgressIndicator(
-            value: depth.clamp(0.0, 1.0),
-            minHeight: 10,
-            backgroundColor: SonusColors.green50,
-            valueColor:
-                const AlwaysStoppedAnimation<Color>(SonusColors.orange500),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// One dot per cycle up to [total]; filled for completed cycles.
-class _CycleDots extends StatelessWidget {
-  const _CycleDots({required this.completed, required this.total});
-
-  final int completed;
-  final int total;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        for (var i = 0; i < total; i++)
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Container(
-              width: 18,
-              height: 18,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: i < completed
-                    ? SonusColors.orange500
-                    : Colors.transparent,
-                border: Border.all(
-                  color: i < completed
-                      ? SonusColors.orange500
-                      : SonusColors.hairline,
-                  width: 2,
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-/// Alarm preferences + express-consent sensor toggles for sleep analysis.
-class _SleepSettingsSection extends StatefulWidget {
-  const _SleepSettingsSection({required this.config, required this.onChanged});
-
-  final AppConfig config;
-  final ValueChanged<AppConfig> onChanged;
-
-  @override
-  State<_SleepSettingsSection> createState() => _SleepSettingsSectionState();
-}
-
-class _SleepSettingsSectionState extends State<_SleepSettingsSection> {
-  String? _syncedDeviceId;
-  late bool _smartAlarm;
-  late bool _motion;
-  late bool _light;
-  late double _defaultCycle;
-  late double _smartWindow;
-
-  void _seed(AppConfig c) {
-    _smartAlarm = c.sleepSmartAlarmEnabled;
-    _motion = c.sleepMotionConsent;
-    _light = c.sleepLightConsent;
-    _defaultCycle = c.sleepDefaultCycleMinutes;
-    _smartWindow = c.sleepSmartWindowMinutes;
-    _syncedDeviceId = c.deviceId;
-  }
-
-  void _apply() {
-    widget.onChanged(
-      widget.config.copyWith(
-        sleepSmartAlarmEnabled: _smartAlarm,
-        sleepMotionConsent: _motion,
-        sleepLightConsent: _light,
-        sleepDefaultCycleMinutes: _defaultCycle,
-        sleepSmartWindowMinutes: _smartWindow,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_syncedDeviceId != widget.config.deviceId) {
-      _seed(widget.config);
-    }
-    final theme = Theme.of(context);
-    return _Section(
-      title: 'Sleep alarm & sensors',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Smart cycle-aware alarm'),
-            subtitle: const Text(
-              'Wake during light sleep near cycle 5 (~7.5 h); hold off in deep '
-              'sleep until a light window, backstop at cycle 6 (~9 h).',
-            ),
-            value: _smartAlarm,
-            onChanged: (v) {
-              setState(() => _smartAlarm = v);
-              _apply();
-            },
-          ),
-          _slider(
-            label: 'Typical cycle length (until learned)',
-            value: _defaultCycle,
-            min: 60,
-            max: 130,
-            divisions: 70,
-            display: '${_defaultCycle.round()} min',
-            onChanged: (v) => setState(() => _defaultCycle = v),
-          ),
-          _slider(
-            label: 'Smart wake window before target',
-            value: _smartWindow,
-            min: 0,
-            max: 60,
-            divisions: 60,
-            display: '${_smartWindow.round()} min',
-            onChanged: (v) => setState(() => _smartWindow = v),
-          ),
-          const Divider(height: 24),
-          Text(
-            'Extra sensors (express consent)',
-            style: theme.textTheme.titleSmall,
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Off by default. These improve stage accuracy and are used only '
-            'during a sleep session, on-device.',
-            style: TextStyle(color: SonusColors.inkSoft),
-          ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Use motion (accelerometer)'),
-            subtitle: const Text(
-              'Detects stillness, tossing/turning and getting up.',
-            ),
-            value: _motion,
-            onChanged: (v) {
-              setState(() => _motion = v);
-              _apply();
-            },
-          ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Use ambient light (Android)'),
-            subtitle: const Text(
-              'Darkness duration and morning brightening as sleep/wake cues.',
-            ),
-            value: _light,
-            onChanged: (v) {
-              setState(() => _light = v);
-              _apply();
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _slider({
-    required String label,
-    required double value,
-    required double min,
-    required double max,
-    required int divisions,
-    required String display,
-    required ValueChanged<double> onChanged,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(child: Text(label)),
-            Text(display, style: const TextStyle(fontWeight: FontWeight.w700)),
-          ],
-        ),
-        Slider(
-          value: value.clamp(min, max),
-          min: min,
-          max: max,
-          divisions: divisions,
-          label: display,
-          onChanged: onChanged,
-          onChangeEnd: (_) => _apply(),
-        ),
-      ],
     );
   }
 }

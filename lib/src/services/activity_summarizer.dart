@@ -46,10 +46,16 @@ class ActivitySummarizer {
     final kinds = <AcousticDetectionKind>{sorted.first.kind};
 
     void flush() {
-      notes.add(DayNote(
-        atLocal: sessionStart.toLocal(),
-        label: _labelForSession(kinds, sessionStart.toLocal(), sessionEnd.difference(sessionStart)),
-      ));
+      notes.add(
+        DayNote(
+          atLocal: sessionStart.toLocal(),
+          label: _labelForSession(
+            kinds,
+            sessionStart.toLocal(),
+            sessionEnd.difference(sessionStart),
+          ),
+        ),
+      );
     }
 
     for (final d in sorted.skip(1)) {
@@ -78,10 +84,14 @@ class ActivitySummarizer {
   ) {
     final hour = startLocal.hour;
     final hasMusic = kinds.contains(AcousticDetectionKind.music);
-    final hasSpeech = kinds.contains(AcousticDetectionKind.speech) ||
+    final hasSpeech =
+        kinds.contains(AcousticDetectionKind.speech) ||
         kinds.contains(AcousticDetectionKind.keyword);
-    final hasSleep = kinds.contains(AcousticDetectionKind.snore) ||
-        kinds.contains(AcousticDetectionKind.apneaPattern);
+    final hasSleep =
+        kinds.contains(AcousticDetectionKind.snore) ||
+        kinds.contains(AcousticDetectionKind.apneaPattern) ||
+        kinds.contains(AcousticDetectionKind.sleepCycle) ||
+        kinds.contains(AcousticDetectionKind.sleepCycleAlarm);
 
     final atNight = hour >= 22 || hour <= 6;
     if (hasSleep && atNight) {
@@ -109,10 +119,11 @@ class ActivitySummarizer {
     if (geo.isEmpty) {
       return const [];
     }
-    final fast = geo
-        .where((g) => (g.speedMetersPerSecond ?? 0) >= drivingSpeedMps)
-        .toList()
-      ..sort((a, b) => a.capturedAtUtc.compareTo(b.capturedAtUtc));
+    final fast =
+        geo
+            .where((g) => (g.speedMetersPerSecond ?? 0) >= drivingSpeedMps)
+            .toList()
+          ..sort((a, b) => a.capturedAtUtc.compareTo(b.capturedAtUtc));
     if (fast.isEmpty) {
       return const [];
     }

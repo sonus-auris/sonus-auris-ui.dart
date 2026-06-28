@@ -22,6 +22,9 @@ import UserNotifications
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "IcloudBridge") {
       IcloudBridge.register(messenger: registrar.messenger())
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "SleepSensorsBridge") {
+      SleepSensorsBridge.register(messenger: registrar.messenger())
+    }
     if #available(iOS 15.0, *),
        let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ShazamBridge") {
       ShazamBridge.register(messenger: registrar.messenger())

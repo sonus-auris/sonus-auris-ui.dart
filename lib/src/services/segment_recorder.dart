@@ -21,8 +21,9 @@ import 'wav_segment_writer.dart';
 
 /// Build-time gate. Pass `--dart-define=SONUS_DISABLE_INTERRUPTION_RESUME=true`
 /// to make the auto-resume safety net a complete no-op (A/B / fallback).
-const bool _kInterruptionResumeDisabled =
-    bool.fromEnvironment('SONUS_DISABLE_INTERRUPTION_RESUME');
+const bool _kInterruptionResumeDisabled = bool.fromEnvironment(
+  'SONUS_DISABLE_INTERRUPTION_RESUME',
+);
 
 class SegmentRecorder {
   SegmentRecorder({
@@ -33,16 +34,16 @@ class SegmentRecorder {
     bool? autoResumeAfterInterruption,
     CaptureResumeCoordinator? resumeCoordinator,
   }) : this._(
-          recorder ?? AudioRecorder(),
-          segmentIndex,
-          analyzer ?? AcousticAnalyzer(),
-          uuid ?? const Uuid(),
-          resumeCoordinator ??
-              CaptureResumeCoordinator(
-                enabled: autoResumeAfterInterruption ??
-                    !_kInterruptionResumeDisabled,
-              ),
-        );
+         recorder ?? AudioRecorder(),
+         segmentIndex,
+         analyzer ?? AcousticAnalyzer(),
+         uuid ?? const Uuid(),
+         resumeCoordinator ??
+             CaptureResumeCoordinator(
+               enabled:
+                   autoResumeAfterInterruption ?? !_kInterruptionResumeDisabled,
+             ),
+       );
 
   SegmentRecorder._(
     this._recorder,
@@ -97,15 +98,8 @@ class SegmentRecorder {
   int _samplesPerSegment = 16000 * 60;
   int _overlapSamples = 0;
 
-  /// When true, a sleep session is active: the acoustic engine runs the
-  /// sleep-cycle detector and analysis is *continuous* (the loudness gate is held
-  /// open), because sleep is mostly quiet and depth must be tracked through quiet
-  /// stretches. Set by the controller before (re)starting capture.
-  bool sleepModeActive = false;
-
   // Acoustic-analysis loudness gate ("kick in once decibels are sustained").
   bool _analysisActive = false;
-  bool _sleepContinuous = false;
   bool _gateOpen = false;
   int _gateLoudSamples = 0;
   int _gateQuietSamples = 0;
@@ -195,12 +189,14 @@ class SegmentRecorder {
           fftSize: config.analyzerFftSize,
           flags: AcousticDetectorFlags(
             snore: config.snoreDetectionEnabled,
-            // During a sleep session only the sleep (+snore) detectors run:
-            // music/speech are off to save battery overnight and avoid attempting
-            // any speech transcription while the user sleeps.
-            music: sleepModeActive ? false : config.musicDetectionEnabled,
-            speech: sleepModeActive ? false : config.speechDetectionEnabled,
-            sleep: sleepModeActive,
+            sleep: config.sleepAnalysisEnabled,
+            sleepCycleAlarms: config.sleepCycleAlarmsEnabled,
+            sleepCycleMinutesByIndex: config.sleepCycleMinutesByIndex,
+            sleepMotionSignal: config.sleepMotionSensorConsent,
+            sleepAmbientLightSignal: config.sleepAmbientLightConsent,
+            sleepPhoneContextSignal: config.sleepPhoneContextConsent,
+            music: config.musicDetectionEnabled,
+            speech: config.speechDetectionEnabled,
           ),
           captureSessionId: _captureSessionId ?? '',
         );
@@ -409,14 +405,14 @@ class SegmentRecorder {
     _storeFactor = 1;
     _storeDownsampler = null;
 
-    // Acoustic gate setup. A sleep session forces analysis on and continuous.
-    _sleepContinuous = sleepModeActive;
-    _analysisActive = config.hasAcousticAnalysis || sleepModeActive;
+    // Acoustic gate setup.
+    _analysisActive = config.hasAcousticAnalysis;
     _gateOpen = false;
     _gateLoudSamples = 0;
     _gateQuietSamples = 0;
     _gateActivationDb = config.analysisActivationDb;
-    _gateSustainSamples = (config.analysisSustainSeconds * _captureRate).round();
+    _gateSustainSamples = (config.analysisSustainSeconds * _captureRate)
+        .round();
     _gateHoldSamples = (config.analysisHoldSeconds * _captureRate).round();
     _analyzerDecimFactor = config.analyzerDecimationFactor;
     _analyzerDownsampler = _analysisActive && _analyzerDecimFactor > 1
@@ -545,7 +541,9 @@ class SegmentRecorder {
     );
     final store = _storeDownsampler;
     if (_currentOverlapSamples > 0) {
-      final overlap = store == null ? _overlapBytes : store.process(_overlapBytes);
+      final overlap = store == null
+          ? _overlapBytes
+          : store.process(_overlapBytes);
       await writer.write(overlap);
     }
     _storedOverlapSamples = writer.sampleCount;
@@ -576,8 +574,8 @@ class SegmentRecorder {
     }
     // Until we have a trailing-loudness reading, keep full quality (treat the
     // first segment as loud) rather than needlessly downsampling startup audio.
-    final loud = (_recentDb ?? config.adaptiveLoudnessDb) >=
-        config.adaptiveLoudnessDb;
+    final loud =
+        (_recentDb ?? config.adaptiveLoudnessDb) >= config.adaptiveLoudnessDb;
     if (loud) {
       _storeRate = _captureRate;
       _storeFactor = 1;
@@ -672,8 +670,8 @@ class SegmentRecorder {
     if (config == null) {
       return;
     }
-    final maxBytes =
-        (_captureRate * config.channels * 2 * _recentWindowSeconds).round();
+    final maxBytes = (_captureRate * config.channels * 2 * _recentWindowSeconds)
+        .round();
     _recentChunks.add(Uint8List.fromList(slice));
     _recentBytes += slice.length;
     while (_recentBytes > maxBytes && _recentChunks.length > 1) {
@@ -698,13 +696,7 @@ class SegmentRecorder {
     if (!_analysisActive) {
       return;
     }
-    // Sleep session: keep the gate permanently open so depth is tracked through
-    // quiet sleep (the loudness gate would otherwise idle the engine).
-    if (_sleepContinuous) {
-      if (!_gateOpen) {
-        _gateOpen = true;
-        _analyzer.resyncFeed();
-      }
+    if (config.sleepAnalysisEnabled) {
       _feedAnalyzer(slice, config);
       return;
     }
@@ -750,7 +742,8 @@ class SegmentRecorder {
     }
     // The first sample of this slice corresponds to the current live position
     // minus the samples we just added.
-    final sliceStart = _totalLiveSamples - (slice.length ~/ (config.channels * 2));
+    final sliceStart =
+        _totalLiveSamples - (slice.length ~/ (config.channels * 2));
     _analyzer.addMonoSamples(decimated, _timeForSample(sliceStart));
   }
 
@@ -879,7 +872,11 @@ class _AudioDsp {
     if (config.trebleGainDb != 0.0) {
       stages.add(_Biquad.highShelf(fs, 6000, config.trebleGainDb));
     }
-    return _AudioDsp._(config.micSensitivity, stages, config.channels.clamp(1, 2));
+    return _AudioDsp._(
+      config.micSensitivity,
+      stages,
+      config.channels.clamp(1, 2),
+    );
   }
 
   Uint8List process(Uint8List frameBytes, int channels) {
@@ -909,8 +906,8 @@ class _AudioDsp {
 /// the FFT analyzer at ~16 kHz regardless of the capture rate.
 class _MonoDownsampler {
   _MonoDownsampler(this.factor, double fs)
-      : _lp = _Biquad.lowPass(fs, 0.45 * fs / factor, 0.707),
-        _state = _BiquadState();
+    : _lp = _Biquad.lowPass(fs, 0.45 * fs / factor, 0.707),
+      _state = _BiquadState();
 
   final int factor;
   final _Biquad _lp;
@@ -938,8 +935,11 @@ class _MonoDownsampler {
 /// phase persist across calls so a segment's stream stays continuous.
 class _Pcm16Downsampler {
   _Pcm16Downsampler(this.factor, this.channels, double fs)
-      : _lp = _Biquad.lowPass(fs, 0.45 * fs / factor, 0.707),
-        _states = List.generate(channels < 1 ? 1 : channels, (_) => _BiquadState());
+    : _lp = _Biquad.lowPass(fs, 0.45 * fs / factor, 0.707),
+      _states = List.generate(
+        channels < 1 ? 1 : channels,
+        (_) => _BiquadState(),
+      );
 
   final int factor;
   final int channels;
@@ -1060,8 +1060,7 @@ class _BiquadState {
   double _y2 = 0;
 
   double process(_Biquad c, double x) {
-    final y =
-        c.b0 * x + c.b1 * _x1 + c.b2 * _x2 - c.a1 * _y1 - c.a2 * _y2;
+    final y = c.b0 * x + c.b1 * _x1 + c.b2 * _x2 - c.a1 * _y1 - c.a2 * _y2;
     _x2 = _x1;
     _x1 = x;
     _y2 = _y1;

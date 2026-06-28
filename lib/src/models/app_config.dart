@@ -47,15 +47,14 @@ class AppConfig {
     this.analysisSustainSeconds = 2.0,
     this.analysisHoldSeconds = 45.0,
     this.snoreDetectionEnabled = true,
+    this.sleepAnalysisEnabled = false,
+    this.sleepCycleAlarmsEnabled = false,
+    this.sleepCycleMinutesByIndex = const [],
+    this.sleepMotionSensorConsent = false,
+    this.sleepAmbientLightConsent = false,
+    this.sleepPhoneContextConsent = false,
     this.musicDetectionEnabled = true,
     this.speechDetectionEnabled = true,
-    this.sleepSmartAlarmEnabled = true,
-    this.sleepDefaultCycleMinutes = 90.0,
-    this.sleepTargetCycle = 5,
-    this.sleepBackstopCycle = 6,
-    this.sleepSmartWindowMinutes = 25.0,
-    this.sleepMotionConsent = false,
-    this.sleepLightConsent = false,
     this.shazamEnabled = false,
     this.keywords = const [],
     this.sttEnabled = false,
@@ -188,39 +187,14 @@ class AppConfig {
 
   /// Per-detector toggles for the analysis engine.
   final bool snoreDetectionEnabled;
+  final bool sleepAnalysisEnabled;
+  final bool sleepCycleAlarmsEnabled;
+  final List<double> sleepCycleMinutesByIndex;
+  final bool sleepMotionSensorConsent;
+  final bool sleepAmbientLightConsent;
+  final bool sleepPhoneContextConsent;
   final bool musicDetectionEnabled;
   final bool speechDetectionEnabled;
-
-  /// Arm cycle-aware "smart" alarms during a sleep session. When on, the app
-  /// wakes the sleeper at a light-sleep arousal near the end of [sleepTargetCycle]
-  /// (defaults to the 5th cycle ≈ 7.5 h), but never while in deep sleep — it
-  /// holds off and waits for the next light arousal, with a hard backstop at the
-  /// end of [sleepBackstopCycle] (defaults to the 6th cycle ≈ 9 h).
-  final bool sleepSmartAlarmEnabled;
-
-  /// Cold-start cycle length (minutes) used before any per-user history exists.
-  /// 90 min × 5 cycles = 7.5 h; × 6 = 9 h.
-  final double sleepDefaultCycleMinutes;
-
-  /// 1-based cycle whose end the smart alarm primarily targets (default 5).
-  final int sleepTargetCycle;
-
-  /// 1-based cycle whose end is the hard backstop wake (default 6).
-  final int sleepBackstopCycle;
-
-  /// How many minutes before the target-cycle end the smart alarm may fire early
-  /// if a light-sleep arousal is detected (the "wake during light sleep" window).
-  final double sleepSmartWindowMinutes;
-
-  /// Express consent to use the accelerometer during a sleep session: stillness,
-  /// tossing/turning, and getting up improve stage/cycle accuracy. Off until the
-  /// user explicitly opts in.
-  final bool sleepMotionConsent;
-
-  /// Express consent to use the ambient-light sensor (darkness duration, lights
-  /// off/on, dawn brightening) as a sleep/wake cue. Off until explicit opt-in.
-  /// Android only — iOS exposes no public ambient-light API.
-  final bool sleepLightConsent;
 
   /// When a music detection fires on iOS, identify the song with ShazamKit.
   /// No-op on Android. Sends a short audio fingerprint to Apple's service.
@@ -298,6 +272,7 @@ class AppConfig {
   bool get hasAcousticAnalysis =>
       acousticAnalysisEnabled &&
       (snoreDetectionEnabled ||
+          sleepAnalysisEnabled ||
           musicDetectionEnabled ||
           speechDetectionEnabled);
 
@@ -394,15 +369,14 @@ class AppConfig {
     double? analysisSustainSeconds,
     double? analysisHoldSeconds,
     bool? snoreDetectionEnabled,
+    bool? sleepAnalysisEnabled,
+    bool? sleepCycleAlarmsEnabled,
+    List<double>? sleepCycleMinutesByIndex,
+    bool? sleepMotionSensorConsent,
+    bool? sleepAmbientLightConsent,
+    bool? sleepPhoneContextConsent,
     bool? musicDetectionEnabled,
     bool? speechDetectionEnabled,
-    bool? sleepSmartAlarmEnabled,
-    double? sleepDefaultCycleMinutes,
-    int? sleepTargetCycle,
-    int? sleepBackstopCycle,
-    double? sleepSmartWindowMinutes,
-    bool? sleepMotionConsent,
-    bool? sleepLightConsent,
     bool? shazamEnabled,
     List<String>? keywords,
     bool? sttEnabled,
@@ -467,20 +441,21 @@ class AppConfig {
       analysisHoldSeconds: analysisHoldSeconds ?? this.analysisHoldSeconds,
       snoreDetectionEnabled:
           snoreDetectionEnabled ?? this.snoreDetectionEnabled,
+      sleepAnalysisEnabled: sleepAnalysisEnabled ?? this.sleepAnalysisEnabled,
+      sleepCycleAlarmsEnabled:
+          sleepCycleAlarmsEnabled ?? this.sleepCycleAlarmsEnabled,
+      sleepCycleMinutesByIndex:
+          sleepCycleMinutesByIndex ?? this.sleepCycleMinutesByIndex,
+      sleepMotionSensorConsent:
+          sleepMotionSensorConsent ?? this.sleepMotionSensorConsent,
+      sleepAmbientLightConsent:
+          sleepAmbientLightConsent ?? this.sleepAmbientLightConsent,
+      sleepPhoneContextConsent:
+          sleepPhoneContextConsent ?? this.sleepPhoneContextConsent,
       musicDetectionEnabled:
           musicDetectionEnabled ?? this.musicDetectionEnabled,
       speechDetectionEnabled:
           speechDetectionEnabled ?? this.speechDetectionEnabled,
-      sleepSmartAlarmEnabled:
-          sleepSmartAlarmEnabled ?? this.sleepSmartAlarmEnabled,
-      sleepDefaultCycleMinutes:
-          sleepDefaultCycleMinutes ?? this.sleepDefaultCycleMinutes,
-      sleepTargetCycle: sleepTargetCycle ?? this.sleepTargetCycle,
-      sleepBackstopCycle: sleepBackstopCycle ?? this.sleepBackstopCycle,
-      sleepSmartWindowMinutes:
-          sleepSmartWindowMinutes ?? this.sleepSmartWindowMinutes,
-      sleepMotionConsent: sleepMotionConsent ?? this.sleepMotionConsent,
-      sleepLightConsent: sleepLightConsent ?? this.sleepLightConsent,
       shazamEnabled: shazamEnabled ?? this.shazamEnabled,
       keywords: keywords ?? this.keywords,
       sttEnabled: sttEnabled ?? this.sttEnabled,
@@ -541,15 +516,14 @@ class AppConfig {
       'analysisSustainSeconds': analysisSustainSeconds,
       'analysisHoldSeconds': analysisHoldSeconds,
       'snoreDetectionEnabled': snoreDetectionEnabled,
+      'sleepAnalysisEnabled': sleepAnalysisEnabled,
+      'sleepCycleAlarmsEnabled': sleepCycleAlarmsEnabled,
+      'sleepCycleMinutesByIndex': sleepCycleMinutesByIndex,
+      'sleepMotionSensorConsent': sleepMotionSensorConsent,
+      'sleepAmbientLightConsent': sleepAmbientLightConsent,
+      'sleepPhoneContextConsent': sleepPhoneContextConsent,
       'musicDetectionEnabled': musicDetectionEnabled,
       'speechDetectionEnabled': speechDetectionEnabled,
-      'sleepSmartAlarmEnabled': sleepSmartAlarmEnabled,
-      'sleepDefaultCycleMinutes': sleepDefaultCycleMinutes,
-      'sleepTargetCycle': sleepTargetCycle,
-      'sleepBackstopCycle': sleepBackstopCycle,
-      'sleepSmartWindowMinutes': sleepSmartWindowMinutes,
-      'sleepMotionConsent': sleepMotionConsent,
-      'sleepLightConsent': sleepLightConsent,
       'shazamEnabled': shazamEnabled,
       'keywords': keywords,
       'sttEnabled': sttEnabled,
@@ -628,21 +602,23 @@ class AppConfig {
         45.0,
       ).clamp(0.0, 600.0),
       snoreDetectionEnabled: json['snoreDetectionEnabled'] as bool? ?? true,
+      sleepAnalysisEnabled: json['sleepAnalysisEnabled'] as bool? ?? false,
+      sleepCycleAlarmsEnabled:
+          json['sleepCycleAlarmsEnabled'] as bool? ?? false,
+      sleepCycleMinutesByIndex: _asDoubleList(
+        json['sleepCycleMinutesByIndex'],
+        min: 75,
+        max: 120,
+        limit: 12,
+      ),
+      sleepMotionSensorConsent:
+          json['sleepMotionSensorConsent'] as bool? ?? false,
+      sleepAmbientLightConsent:
+          json['sleepAmbientLightConsent'] as bool? ?? false,
+      sleepPhoneContextConsent:
+          json['sleepPhoneContextConsent'] as bool? ?? false,
       musicDetectionEnabled: json['musicDetectionEnabled'] as bool? ?? true,
       speechDetectionEnabled: json['speechDetectionEnabled'] as bool? ?? true,
-      sleepSmartAlarmEnabled: json['sleepSmartAlarmEnabled'] as bool? ?? true,
-      sleepDefaultCycleMinutes: _asDouble(
-        json['sleepDefaultCycleMinutes'],
-        90.0,
-      ).clamp(60.0, 130.0),
-      sleepTargetCycle: _asInt(json['sleepTargetCycle'], 5).clamp(1, 12),
-      sleepBackstopCycle: _asInt(json['sleepBackstopCycle'], 6).clamp(1, 12),
-      sleepSmartWindowMinutes: _asDouble(
-        json['sleepSmartWindowMinutes'],
-        25.0,
-      ).clamp(0.0, 90.0),
-      sleepMotionConsent: json['sleepMotionConsent'] as bool? ?? false,
-      sleepLightConsent: json['sleepLightConsent'] as bool? ?? false,
       shazamEnabled: json['shazamEnabled'] as bool? ?? false,
       keywords: _asStringList(json['keywords']),
       sttEnabled: json['sttEnabled'] as bool? ?? false,
@@ -680,6 +656,22 @@ class AppConfig {
           .toList();
     }
     return const [];
+  }
+
+  static List<double> _asDoubleList(
+    Object? value, {
+    required double min,
+    required double max,
+    required int limit,
+  }) {
+    if (value is! List) {
+      return const [];
+    }
+    return value
+        .map((entry) => _asDouble(entry, 90.0).clamp(min, max).toDouble())
+        .where((entry) => entry.isFinite)
+        .take(limit)
+        .toList(growable: false);
   }
 
   static int _asInt(Object? value, int fallback) {
