@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../models/app_config.dart';
 import '../models/audio_trigger_event.dart';
 import '../models/cloud_secrets.dart';
+import '../models/consent.dart';
 import '../models/sleep_cycle_profile.dart';
 
 class SettingsStore {
