@@ -488,6 +488,9 @@ class AppController {
     _isInitializing.add(false);
     _diagnostics.add('App controller init completed.');
     await _ensureSupabaseReady();
+    // If consent was captured before sign-in (or a previous sync failed), push it
+    // now that a session may be available.
+    await _maybeSyncConsent();
     requestUploadDrain();
     await _enforceRetention();
     // "Always-on": if the user enabled auto-start and no weekly schedule is
