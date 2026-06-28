@@ -1,5 +1,5 @@
 {
-  description = "Sonus Auris Flutter UI development environment";
+  description = "Sonus Auris rolling-window Flutter development environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
