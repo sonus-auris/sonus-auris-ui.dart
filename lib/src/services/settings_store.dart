@@ -26,6 +26,7 @@ class SettingsStore {
   static const _configKey = 'audio_dashcam.config.v1';
   static const _pendingAlertsKey = 'audio_dashcam.pending_alerts.v1';
   static const _sleepCycleProfileKey = 'audio_dashcam.sleep_cycle_profile.v1';
+  static const _consentRecordKey = 'audio_dashcam.consent_record.v1';
   static const _s3AccessKeyKey = 'audio_dashcam.s3.access_key_id';
   static const _s3SecretKeyKey = 'audio_dashcam.s3.secret_access_key';
   static const _s3SessionTokenKey = 'audio_dashcam.s3.session_token';
