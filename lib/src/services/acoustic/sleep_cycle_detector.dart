@@ -76,6 +76,7 @@ class SleepCycleConfig {
       deepSleepBucketFraction: deepSleepBucketFraction
           .clamp(0.0, 1.0)
           .toDouble(),
+      maxGapMinutes: maxGapMinutes.clamp(1.0, 60.0).toDouble(),
       motionSignalEnabled: motionSignalEnabled,
       ambientLightSignalEnabled: ambientLightSignalEnabled,
       phoneContextSignalEnabled: phoneContextSignalEnabled,
