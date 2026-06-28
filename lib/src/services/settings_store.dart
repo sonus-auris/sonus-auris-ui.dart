@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../models/app_config.dart';
 import '../models/audio_trigger_event.dart';
 import '../models/cloud_secrets.dart';
+import '../models/sleep_cycle_profile.dart';
 
 class SettingsStore {
   SettingsStore({FlutterSecureStorage? secureStorage, Uuid? uuid})
@@ -23,6 +24,7 @@ class SettingsStore {
 
   static const _configKey = 'audio_dashcam.config.v1';
   static const _pendingAlertsKey = 'audio_dashcam.pending_alerts.v1';
+  static const _sleepCycleProfileKey = 'audio_dashcam.sleep_cycle_profile.v1';
   static const _s3AccessKeyKey = 'audio_dashcam.s3.access_key_id';
   static const _s3SecretKeyKey = 'audio_dashcam.s3.secret_access_key';
   static const _s3SessionTokenKey = 'audio_dashcam.s3.session_token';
@@ -93,6 +95,32 @@ class SettingsStore {
       _pendingAlertsKey,
       jsonEncode(events.map((event) => event.toJson()).toList()),
     );
+  }
+
+  Future<SleepCycleProfile> loadSleepCycleProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_sleepCycleProfileKey);
+    if (raw == null || raw.trim().isEmpty) {
+      return const SleepCycleProfile();
+    }
+    try {
+      return SleepCycleProfile.fromJson(
+        (jsonDecode(raw) as Map).cast<String, dynamic>(),
+      ).pruned(DateTime.now().toUtc());
+    } catch (_) {
+      await prefs.remove(_sleepCycleProfileKey);
+      return const SleepCycleProfile();
+    }
+  }
+
+  Future<void> saveSleepCycleProfile(SleepCycleProfile profile) async {
+    final prefs = await SharedPreferences.getInstance();
+    final pruned = profile.pruned(DateTime.now().toUtc());
+    if (pruned.observations.isEmpty) {
+      await prefs.remove(_sleepCycleProfileKey);
+      return;
+    }
+    await prefs.setString(_sleepCycleProfileKey, jsonEncode(pruned.toJson()));
   }
 
   Future<CloudSecrets> loadSecrets() async {

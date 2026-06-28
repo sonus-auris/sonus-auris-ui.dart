@@ -8,6 +8,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../models/context_trigger.dart';
 import '../models/recording_schedule.dart';
+import '../models/acoustic_detection.dart';
 import 'diagnostic_log.dart';
 
 /// Single owner of [FlutterLocalNotificationsPlugin] so there is exactly one
@@ -33,19 +34,14 @@ class LocalNotificationsService {
   static const String consentPayload = 'context-consent';
   static const String scheduleStartPayload = 'schedule-start';
   static const String scheduleStopPayload = 'schedule-stop';
-  static const String sleepAlarmPayload = 'sleep-alarm';
+  static const String sleepCycleAlarmPayload = 'sleep-cycle-alarm';
 
   // Notification id partitions.
   static const int _scheduleStartBase = 780000;
   static const int _scheduleStopBase = 790000;
   static const int _scheduleSpan = 64;
   static const int _consentId = 800000;
-  static const int _sleepAlarmId = 810000;
-  static const int _sleepBackstopId = 810001;
-
-  /// Invoked (main isolate) when the user taps a sleep alarm while the app is
-  /// alive. Set by the controller to stop the sleep session.
-  void Function()? onSleepAlarmTap;
+  static const int _sleepCycleAlarmBase = 810000;
 
   /// iOS allows at most 64 *pending* local notifications per app. Cap the total
   /// scheduled (start + stop) below that, leaving headroom for the consent
@@ -82,8 +78,6 @@ class LocalNotificationsService {
     if (response.payload == consentPayload ||
         response.payload == scheduleStartPayload) {
       onConsentTap?.call();
-    } else if (response.payload == sleepAlarmPayload) {
-      onSleepAlarmTap?.call();
     }
   }
 
@@ -127,6 +121,23 @@ class LocalNotificationsService {
           'Reminders and consent prompts for scheduled recording.',
       importance: Importance.high,
       priority: Priority.high,
+    ),
+    iOS: DarwinNotificationDetails(
+      presentAlert: true,
+      presentSound: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+    ),
+  );
+
+  static const NotificationDetails _sleepAlarmDetails = NotificationDetails(
+    android: AndroidNotificationDetails(
+      'sonus_auris_sleep_alarm',
+      'Sleep cycle alarms',
+      channelDescription: 'Wake alarms after inferred sleep cycles.',
+      importance: Importance.max,
+      priority: Priority.max,
+      playSound: true,
+      category: AndroidNotificationCategory.alarm,
     ),
     iOS: DarwinNotificationDetails(
       presentAlert: true,
@@ -212,74 +223,18 @@ class LocalNotificationsService {
     await _plugin.cancel(_consentId);
   }
 
-  /// Alarm-grade notification details: loud, high-priority, time-sensitive so it
-  /// can rouse a sleeper. Uses a dedicated channel/sound from the schedule one.
-  static const NotificationDetails _sleepDetails = NotificationDetails(
-    android: AndroidNotificationDetails(
-      'sonus_auris_sleep_alarm',
-      'Sleep alarm',
-      channelDescription: 'Cycle-aware wake-up alarms during a sleep session.',
-      importance: Importance.max,
-      priority: Priority.max,
-      category: AndroidNotificationCategory.alarm,
-      fullScreenIntent: true,
-      audioAttributesUsage: AudioAttributesUsage.alarm,
-    ),
-    iOS: DarwinNotificationDetails(
-      presentAlert: true,
-      presentSound: true,
-      interruptionLevel: InterruptionLevel.timeSensitive,
-    ),
-  );
-
-  /// Fire the cycle-aware wake alarm **now** (the dynamic smart wake — the engine
-  /// decided this is a light-sleep moment, or the backstop deadline was hit).
-  Future<void> fireSleepAlarm({required bool backstop}) async {
+  Future<void> showSleepCycleAlarm(AcousticDetection detection) async {
     await ensureInitialized();
+    final details = detection.details;
+    final cycle = details['cycleIndex'] ?? '?';
+    final minutes = details['estimatedCycleMinutes'] ?? 90;
+    final id = _sleepCycleAlarmBase + (cycle is int ? cycle : 0);
     await _plugin.show(
-      backstop ? _sleepBackstopId : _sleepAlarmId,
-      backstop ? 'Time to wake up' : 'Good morning',
-      backstop
-          ? 'You reached your latest wake time. Tap to stop the alarm.'
-          : 'You\'re in light sleep near your wake window. Tap to stop the alarm.',
-      _sleepDetails,
-      payload: sleepAlarmPayload,
+      id,
+      'Sleep cycle $cycle complete',
+      'Estimated cycle length: $minutes minutes.',
+      _sleepAlarmDetails,
+      payload: sleepCycleAlarmPayload,
     );
-  }
-
-  /// Schedule the hard backstop wake at [whenUtc] as an OS-level alarm, so the
-  /// sleeper is still woken by the backstop cycle even if the app was killed
-  /// overnight. The dynamic smart wake is handled in-app via [fireSleepAlarm].
-  Future<void> scheduleSleepBackstop(DateTime whenUtc) async {
-    await ensureInitialized();
-    final when = tz.TZDateTime.from(whenUtc.toLocal(), tz.local);
-    if (when.isBefore(tz.TZDateTime.now(tz.local))) {
-      return;
-    }
-    await _plugin.zonedSchedule(
-      _sleepBackstopId,
-      'Time to wake up',
-      'You reached your latest wake time. Tap to stop the alarm.',
-      when,
-      _sleepDetails,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-      payload: sleepAlarmPayload,
-    );
-    _diagnostics?.add('Scheduled sleep backstop alarm for $when.');
-  }
-
-  Future<void> cancelSleepAlarms() async {
-    await ensureInitialized();
-    await _plugin.cancel(_sleepAlarmId);
-    await _plugin.cancel(_sleepBackstopId);
-  }
-
-  /// Cancel only the scheduled OS backstop (used once the smart wake has fired,
-  /// so the 9 h backstop doesn't also go off later).
-  Future<void> cancelSleepBackstop() async {
-    await ensureInitialized();
-    await _plugin.cancel(_sleepBackstopId);
   }
 }

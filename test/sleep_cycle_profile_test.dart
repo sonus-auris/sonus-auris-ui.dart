@@ -1,66 +1,118 @@
-import 'package:audio_dashcam/src/models/sleep_cycle.dart';
 import 'package:audio_dashcam/src/models/sleep_cycle_profile.dart';
-import 'package:audio_dashcam/src/models/sleep_session.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-SleepSession _night(int dayOffset, List<double> cycleMinutes) {
-  final start = DateTime.utc(2026, 1, 1).add(Duration(days: dayOffset));
-  var t = start;
-  final cycles = <SleepCycle>[];
-  for (var i = 0; i < cycleMinutes.length; i++) {
-    final end = t.add(Duration(seconds: (cycleMinutes[i] * 60).round()));
-    cycles.add(SleepCycle(
-      index: i + 1,
-      startedAtUtc: t,
-      endedAtUtc: end,
-      minDepth: 0.3,
-      maxDepth: 0.8,
-    ));
-    t = end;
-  }
-  return SleepSession(
-    id: 'n$dayOffset',
-    startedAtUtc: start,
-    endedAtUtc: t,
-    cycles: cycles,
-    dominantCycleMinutes: cycleMinutes.isEmpty ? 0 : cycleMinutes.first,
+SleepCycleObservation obs({
+  required DateTime endedAtUtc,
+  required int cycleIndex,
+  required double observed,
+  List<double> vector = const [],
+}) {
+  return SleepCycleObservation(
+    endedAtUtc: endedAtUtc,
+    cycleIndex: cycleIndex,
+    observedCycleMinutes: observed,
+    estimatedCycleMinutes: observed,
+    cycleMinutesByIndex: vector,
   );
 }
 
 void main() {
-  test('cold start falls back to the default cycle length', () {
-    const profile = SleepCycleProfile.initial(defaultCycleMinutes: 90);
-    expect(profile.cumulativeMinutesToEndOfCycle(5), 450); // 7.5 h
-    expect(profile.cumulativeMinutesToEndOfCycle(6), 540); // 9 h
+  test('prunes observations older than 35 days', () {
+    final now = DateTime.utc(2026, 6, 27, 8);
+    final profile = SleepCycleProfile(
+      observations: [
+        obs(
+          endedAtUtc: now.subtract(const Duration(days: 36)),
+          cycleIndex: 1,
+          observed: 80,
+        ),
+        obs(
+          endedAtUtc: now.subtract(const Duration(days: 35)),
+          cycleIndex: 1,
+          observed: 85,
+        ),
+        obs(
+          endedAtUtc: now.subtract(const Duration(days: 2)),
+          cycleIndex: 2,
+          observed: 100,
+        ),
+      ],
+    ).pruned(now);
+
+    expect(profile.observations, hasLength(2));
+    expect(profile.observations.first.observedCycleMinutes, 85);
   });
 
-  test('learns a short-cycle user (~75 min)', () {
-    final sessions = [
-      for (var d = 0; d < 7; d++) _night(d, [75, 76, 74, 77, 75]),
-    ];
-    final profile = SleepCycleProfile.learn(sessions);
-    expect(profile.overallMeanMinutes, closeTo(75, 3));
-    // 5th-cycle target lands near 5 * 75 = 375 min, not the 450 default.
-    expect(profile.cumulativeMinutesToEndOfCycle(5), closeTo(375, 20));
-    expect(profile.sampleNights, 7);
-    expect(profile.confidence, greaterThan(0));
+  test('summarizes each cycle index separately', () {
+    final now = DateTime.utc(2026, 6, 27, 8);
+    final profile = SleepCycleProfile(
+      observations: [
+        obs(
+          endedAtUtc: now.subtract(const Duration(days: 3)),
+          cycleIndex: 1,
+          observed: 75,
+        ),
+        obs(
+          endedAtUtc: now.subtract(const Duration(days: 2)),
+          cycleIndex: 1,
+          observed: 90,
+        ),
+        obs(
+          endedAtUtc: now.subtract(const Duration(days: 1)),
+          cycleIndex: 5,
+          observed: 115,
+        ),
+      ],
+    ).pruned(now);
+
+    final seeds = profile.cycleMinuteSeeds(maxCycles: 6);
+    expect(seeds[0], closeTo(85, 0.1));
+    expect(seeds[4], 115);
+    expect(seeds[5], 115);
   });
 
-  test('captures within-night drift (later cycles longer)', () {
-    final sessions = [
-      for (var d = 0; d < 10; d++) _night(d, [70, 80, 90, 100, 110]),
-    ];
-    final profile = SleepCycleProfile.learn(sessions);
-    expect(profile.expectedLengthOfCycle(1),
-        lessThan(profile.expectedLengthOfCycle(5)));
-    // Cumulative respects the drift rather than meanCycle * n.
-    final cum5 = profile.cumulativeMinutesToEndOfCycle(5);
-    expect(cum5, closeTo(450, 30));
-  });
+  test(
+    'uses latest detector vector when a cycle has no direct observation',
+    () {
+      final now = DateTime.utc(2026, 6, 27, 8);
+      final profile = SleepCycleProfile(
+        observations: [
+          obs(
+            endedAtUtc: now,
+            cycleIndex: 1,
+            observed: 90,
+            vector: const [90, 95, 100, 105, 110, 115],
+          ),
+        ],
+      );
 
-  test('ignores nights with no measured cycles', () {
-    final sessions = [_night(0, const []), _night(1, [90, 92])];
-    final profile = SleepCycleProfile.learn(sessions);
-    expect(profile.sampleNights, 1);
+      expect(profile.cycleMinuteSeeds(maxCycles: 6), [
+        90,
+        95,
+        100,
+        105,
+        110,
+        115,
+      ]);
+    },
+  );
+
+  test('skips malformed persisted observations', () {
+    final profile = SleepCycleProfile.fromJson({
+      'observations': [
+        {'endedAtUtc': 'not-a-date', 'cycleIndex': 1},
+        {'endedAtUtc': DateTime.utc(2026, 6, 27).toIso8601String()},
+        {
+          'endedAtUtc': DateTime.utc(2026, 6, 27, 8).toIso8601String(),
+          'cycleIndex': 2,
+          'observedCycleMinutes': 82,
+          'estimatedCycleMinutes': 90,
+        },
+      ],
+    });
+
+    expect(profile.observations, hasLength(1));
+    expect(profile.observations.single.cycleIndex, 2);
+    expect(profile.observations.single.observedCycleMinutes, 82);
   });
 }

@@ -1,8 +1,9 @@
 /// A single acoustic event recognized by the on-device FFT analysis engine.
 ///
 /// These are *non-diagnostic* heuristic detections. In particular [apneaPattern]
-/// describes a breathing-cessation-like acoustic pattern and is explicitly not a
-/// medical diagnosis. Events are surfaced in-app and synced to Supabase.
+/// describes a breathing-cessation-like acoustic pattern, and sleep-cycle events
+/// estimate rest timing only; none of these are medical diagnoses. Events are
+/// surfaced in-app and synced to Supabase.
 class AcousticDetection {
   const AcousticDetection({
     required this.kind,
@@ -96,18 +97,11 @@ class AcousticDetection {
 enum AcousticDetectionKind {
   snore,
   apneaPattern,
+  sleepCycle,
+  sleepCycleAlarm,
   music,
   speech,
-  keyword,
-
-  /// One aggregated sleep epoch (~30 s): carries the epoch's depth/stage/features
-  /// in [details]. Emitted continuously while a sleep session is active.
-  sleepEpoch,
-
-  /// A completed sleep cycle boundary: [details] carries `cycleIndex`,
-  /// `lengthMinutes`, and the detected `dominantCycleMinutes`. Drives the
-  /// cycle-aware alarm.
-  sleepCycle;
+  keyword;
 
   static AcousticDetectionKind fromName(String? name) {
     return AcousticDetectionKind.values.firstWhere(
@@ -123,16 +117,16 @@ enum AcousticDetectionKind {
         return 'Snoring';
       case AcousticDetectionKind.apneaPattern:
         return 'Possible apnea pattern';
+      case AcousticDetectionKind.sleepCycle:
+        return 'Sleep cycle';
+      case AcousticDetectionKind.sleepCycleAlarm:
+        return 'Sleep cycle alarm';
       case AcousticDetectionKind.music:
         return 'Music';
       case AcousticDetectionKind.speech:
         return 'Speech';
       case AcousticDetectionKind.keyword:
         return 'Keyword';
-      case AcousticDetectionKind.sleepEpoch:
-        return 'Sleep epoch';
-      case AcousticDetectionKind.sleepCycle:
-        return 'Sleep cycle';
     }
   }
 }

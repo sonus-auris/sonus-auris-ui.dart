@@ -1,409 +1,529 @@
 import 'dart:math' as math;
 
 import '../../models/acoustic_detection.dart';
-import '../../models/sleep_stage.dart';
-import 'sleep_periodicity.dart';
+import '../sleep_signal_model.dart';
 import 'spectral_features.dart';
 
-/// Tunables for [SleepCycleDetector]. Defaults target a phone on a nightstand
-/// within ~1 m of the sleeper.
-class SleepConfig {
-  const SleepConfig({
-    this.epochSeconds = 30.0,
-    this.depthSmoothingMinutes = 4.0,
-    this.movementDeltaDb = 9.0,
-    this.floorRiseDbPerSecond = 0.05,
-    this.quietSpanDb = 14.0,
-    this.deepThreshold = 0.62,
-    this.shallowThreshold = 0.42,
-    this.asleepThreshold = 0.35,
-    this.awakeMovement = 0.45,
-    this.remRegularityMax = 0.45,
-    this.minCycleMinutes = 55.0,
-    this.minBreathBpm = 6.0,
-    this.maxBreathBpm = 30.0,
-    this.periodicityEveryEpochs = 4,
-    this.minPeriodMinutes = 60.0,
-    this.maxPeriodMinutes = 130.0,
+/// Tunables for [SleepCycleDetector].
+///
+/// The detector is intentionally heuristic and non-diagnostic: it uses FFT
+/// shape, snore-like bursts, quiet breathing-like frames, and restless arousal
+/// cues to estimate a personal cycle length. It never infers medical sleep
+/// disorders.
+class SleepCycleConfig {
+  const SleepCycleConfig({
+    this.initialCycleMinutes = 90.0,
+    this.cycleMinutesByIndex = const [],
+    this.alarmsEnabled = true,
+    this.alarmCycles = const {5, 6},
+    this.minCycleMinutes = 75.0,
+    this.maxCycleMinutes = 120.0,
+    this.sleepOnsetMinutes = 10.0,
+    this.fallbackGraceMinutes = 8.0,
+    this.bucketSeconds = 60.0,
+    this.deepSleepDepthScore = 0.62,
+    this.deepSleepBucketFraction = 0.55,
+    this.motionSignalEnabled = false,
+    this.ambientLightSignalEnabled = false,
+    this.phoneContextSignalEnabled = false,
   });
 
-  /// Length of one aggregated sleep epoch.
-  final double epochSeconds;
-
-  /// Time constant of the depth EMA (cycles are slow, so smooth hard).
-  final double depthSmoothingMinutes;
-
-  /// dB above the adaptive quiet floor that marks a frame as movement/arousal.
-  final double movementDeltaDb;
-
-  /// How fast the adaptive quiet floor drifts back up after a quiet stretch.
-  final double floorRiseDbPerSecond;
-
-  /// Loudness span (above the floor) over which depth fades from 1 to 0.
-  final double quietSpanDb;
-
-  /// Smoothed-depth level that counts as "descended into deep sleep".
-  final double deepThreshold;
-
-  /// Smoothed-depth level a descended sleeper must climb back above (shallow
-  /// arousal) to close a cycle.
-  final double shallowThreshold;
-
-  /// Smoothed-depth level above which we consider the sleeper actually asleep
-  /// (used to anchor sleep onset == start of cycle 1).
-  final double asleepThreshold;
-
-  /// Per-epoch movement fraction above which the epoch is classed [awake].
-  final double awakeMovement;
-
-  /// Breathing regularity below which a still, mid-depth epoch is classed [rem].
-  final double remRegularityMax;
-
-  /// A cycle shorter than this is treated as a micro-arousal, not a boundary.
+  final double initialCycleMinutes;
+  final List<double> cycleMinutesByIndex;
+  final bool alarmsEnabled;
+  final Set<int> alarmCycles;
   final double minCycleMinutes;
+  final double maxCycleMinutes;
+  final double sleepOnsetMinutes;
+  final double fallbackGraceMinutes;
+  final double bucketSeconds;
+  final double deepSleepDepthScore;
+  final double deepSleepBucketFraction;
+  final bool motionSignalEnabled;
+  final bool ambientLightSignalEnabled;
+  final bool phoneContextSignalEnabled;
 
-  final double minBreathBpm;
-  final double maxBreathBpm;
-
-  /// Re-run the FFT period estimate every N epochs (cheap, but no need each one).
-  final int periodicityEveryEpochs;
-
-  final double minPeriodMinutes;
-  final double maxPeriodMinutes;
+  SleepCycleConfig normalized() {
+    final minCycle = minCycleMinutes.clamp(75.0, 120.0).toDouble();
+    final maxCycle = math
+        .max(maxCycleMinutes.clamp(75.0, 120.0).toDouble(), minCycle)
+        .toDouble();
+    final normalizedCycles = cycleMinutesByIndex
+        .map((minutes) => minutes.clamp(minCycle, maxCycle).toDouble())
+        .where((minutes) => minutes.isFinite)
+        .take(12)
+        .toList(growable: false);
+    return SleepCycleConfig(
+      initialCycleMinutes: initialCycleMinutes.clamp(minCycle, maxCycle),
+      cycleMinutesByIndex: normalizedCycles,
+      alarmsEnabled: alarmsEnabled,
+      alarmCycles: alarmCycles.where((cycle) => cycle > 0).toSet(),
+      minCycleMinutes: minCycle,
+      maxCycleMinutes: maxCycle,
+      sleepOnsetMinutes: sleepOnsetMinutes.clamp(1.0, 45.0),
+      fallbackGraceMinutes: fallbackGraceMinutes.clamp(0.0, 30.0),
+      bucketSeconds: bucketSeconds.clamp(10.0, 300.0),
+      deepSleepDepthScore: deepSleepDepthScore.clamp(0.0, 1.0).toDouble(),
+      deepSleepBucketFraction: deepSleepBucketFraction
+          .clamp(0.0, 1.0)
+          .toDouble(),
+      motionSignalEnabled: motionSignalEnabled,
+      ambientLightSignalEnabled: ambientLightSignalEnabled,
+      phoneContextSignalEnabled: phoneContextSignalEnabled,
+    );
+  }
 }
 
-/// Stateful, pure sleep engine. Feed it [SpectralFrame]s (in capture order) plus
-/// any snore detections emitted for the same frame; it aggregates ~30 s epochs,
-/// estimates relative sleep depth and stage, finds the night's dominant cycle
-/// length by FFT over the depth envelope, and emits:
-///   * [AcousticDetectionKind.sleepEpoch] once per epoch (depth/stage/features), and
-///   * [AcousticDetectionKind.sleepCycle] when a completed cycle boundary passes.
-///
-/// No I/O, no isolates — runs inside the existing analysis isolate and is
-/// directly unit-testable.
+/// Estimates sleep onset, cycle boundaries, and wake-window alarms from
+/// FFT-derived acoustic frames.
 class SleepCycleDetector {
   SleepCycleDetector({
     required this.frameSeconds,
-    this.config = const SleepConfig(),
+    SleepCycleConfig config = const SleepCycleConfig(),
     this.captureSessionId = '',
-  })  : _framesPerEpoch =
-            math.max(1, (config.epochSeconds / frameSeconds).round()),
-        _estimator = SleepPeriodicityEstimator(
-          minPeriodMinutes: config.minPeriodMinutes,
-          maxPeriodMinutes: config.maxPeriodMinutes,
-        );
+  }) : config = config.normalized(),
+       _cycleMinutesByIndex = config.normalized().cycleMinutesByIndex.toList();
 
-  /// Seconds of audio per analyzer frame (the hop).
   final double frameSeconds;
-  final SleepConfig config;
+  final SleepCycleConfig config;
   final String captureSessionId;
 
-  final int _framesPerEpoch;
-  final SleepPeriodicityEstimator _estimator;
+  DateTime? _bucketStartedAt;
+  _Bucket _bucket = _Bucket();
+  DateTime? _sleepStartedAt;
+  DateTime? _lastCycleBoundaryAt;
+  final List<double> _cycleMinutesByIndex;
+  int _nextCycleIndex = 1;
+  int _learnedObservations = 0;
+  int _cycleBuckets = 0;
+  int _deepCycleBuckets = 0;
+  final Set<int> _deepCycleIndexes = {};
+  final List<_BucketSummary> _recent = [];
+  static const SleepProbabilityModel _probabilityModel =
+      SleepProbabilityModel();
 
-  // --- Adaptive quiet floor (night-long) ---
-  double? _floorDb;
+  Duration get _bucketDuration =>
+      Duration(milliseconds: (config.bucketSeconds * 1000).round());
 
-  // --- Current-epoch accumulators ---
-  int _epochFrames = 0;
-  DateTime? _epochStart;
-  double _dbSum = 0;
-  int _movementFrames = 0;
-  double _snoreSeconds = 0;
-  final List<double> _lowBandSeries = []; // per-frame low-band power, this epoch
-
-  // --- Cross-epoch state ---
-  double _smoothedDepth = 0.0;
-  bool _hasDepth = false;
-  final List<double> _depthEnvelope = [];
-  int _epochCount = 0;
-
-  // --- Cycle boundary state machine ---
-  DateTime? _onsetAt; // start of the current (in-progress) cycle
-  bool _descended = false;
-  double _cycleMinDepth = 1.0;
-  double _cycleMaxDepth = 0.0;
-  int _cycleIndex = 0;
-  double _dominantCycleMinutes = 0;
-
-  /// Coarse depth envelope (one value per epoch) — the FFT input and a chart
-  /// source. Exposed for tests/diagnostics.
-  List<double> get depthEnvelope => List.unmodifiable(_depthEnvelope);
-
-  /// Latest FFT-estimated dominant cycle length (minutes); 0 until enough data.
-  double get dominantCycleMinutes => _dominantCycleMinutes;
-
-  /// Feed one analyzer frame plus the snore detections (if any) that the snore
-  /// detector emitted for it. Returns any sleep detections produced.
-  List<AcousticDetection> add(
-    SpectralFrame frame,
-    DateTime atUtc,
-    List<AcousticDetection> snoreEvents,
-  ) {
-    _epochStart ??= atUtc;
-
-    // Adaptive quiet floor: snaps down to new quiet, drifts slowly back up.
-    final db = frame.db;
-    if (_floorDb == null || db < _floorDb!) {
-      _floorDb = db;
-    } else {
-      _floorDb = _floorDb! + config.floorRiseDbPerSecond * frameSeconds;
-    }
-    if (db > _floorDb! + config.movementDeltaDb) {
-      _movementFrames += 1;
-    }
-
-    _dbSum += db;
-    _lowBandSeries.add(frame.lowBandRatio * frame.totalPower);
-    _epochFrames += 1;
-
-    for (final e in snoreEvents) {
-      if (e.kind == AcousticDetectionKind.snore) {
-        _snoreSeconds += e.duration.inMilliseconds / 1000.0;
-      }
-    }
-
-    if (_epochFrames >= _framesPerEpoch) {
-      return _closeEpoch(atUtc);
-    }
-    return const [];
-  }
-
-  /// Flush the in-progress epoch (call when capture stops). Does not force a
-  /// cycle boundary.
-  List<AcousticDetection> flush() {
-    if (_epochFrames == 0) {
-      return const [];
-    }
-    return _closeEpoch(_epochStart!.add(
-      Duration(milliseconds: (_epochFrames * frameSeconds * 1000).round()),
-    ));
-  }
-
-  List<AcousticDetection> _closeEpoch(DateTime endAt) {
-    final start = _epochStart ?? endAt;
+  List<AcousticDetection> add(SpectralFrame frame, DateTime atUtc) {
+    final utc = atUtc.toUtc();
+    final bucketStart = _bucketStartFor(utc);
     final out = <AcousticDetection>[];
-
-    final meanDb = _epochFrames > 0 ? _dbSum / _epochFrames : config.quietSpanDb * -1;
-    final movement =
-        _epochFrames > 0 ? _movementFrames / _epochFrames : 0.0;
-    final epochSeconds = endAt.difference(start).inMilliseconds / 1000.0;
-    final snoreFraction =
-        epochSeconds > 0 ? (_snoreSeconds / epochSeconds).clamp(0.0, 1.0) : 0.0;
-    final breathing = _estimateBreathing();
-    final floor = _floorDb ?? meanDb;
-
-    // --- Depth: quieter + more regular + less movement == deeper ---
-    final quietScore =
-        (1 - (meanDb - floor) / config.quietSpanDb).clamp(0.0, 1.0);
-    final movementScore = (1 - movement).clamp(0.0, 1.0);
-    final regularityScore = breathing.regularity;
-    // Steady snoring is a (weak) slow-wave cue, but only when breathing is regular.
-    final snoreSteady =
-        (snoreFraction * regularityScore).clamp(0.0, 1.0);
-    final rawDepth = (0.40 * quietScore +
-            0.30 * movementScore +
-            0.22 * regularityScore +
-            0.08 * snoreSteady)
-        .clamp(0.0, 1.0);
-
-    // EMA smoothing across epochs.
-    final alpha =
-        (config.epochSeconds / (config.depthSmoothingMinutes * 60.0))
-            .clamp(0.05, 1.0);
-    _smoothedDepth =
-        _hasDepth ? _smoothedDepth + alpha * (rawDepth - _smoothedDepth) : rawDepth;
-    _hasDepth = true;
-    _depthEnvelope.add(_smoothedDepth);
-    _epochCount += 1;
-
-    final stage = _classifyStage(
-      depth: _smoothedDepth,
-      movement: movement,
-      regularity: breathing.regularity,
-      snoreFraction: snoreFraction,
-    );
-
-    out.add(AcousticDetection(
-      kind: AcousticDetectionKind.sleepEpoch,
-      startedAtUtc: start.toUtc(),
-      endedAtUtc: endAt.toUtc(),
-      confidence: 1.0,
-      captureSessionId: captureSessionId,
-      details: {
-        'depth': double.parse(_smoothedDepth.toStringAsFixed(3)),
-        'rawDepth': double.parse(rawDepth.toStringAsFixed(3)),
-        'stage': stage.name,
-        'meanDb': double.parse(meanDb.toStringAsFixed(1)),
-        'movement': double.parse(movement.toStringAsFixed(3)),
-        'snoreFraction': double.parse(snoreFraction.toStringAsFixed(3)),
-        'breathingRateBpm': double.parse(breathing.bpm.toStringAsFixed(1)),
-        'breathingRegularity':
-            double.parse(breathing.regularity.toStringAsFixed(3)),
-      },
-    ));
-
-    // --- Periodicity (FFT) refresh ---
-    if (_epochCount % config.periodicityEveryEpochs == 0) {
-      final est = _estimator.estimate(
-        _depthEnvelope,
-        config.epochSeconds / 60.0,
-      );
-      if (est.isValid) {
-        _dominantCycleMinutes = est.periodMinutes;
-      }
+    _bucketStartedAt ??= bucketStart;
+    while (_bucketStartedAt!.isBefore(bucketStart)) {
+      out.addAll(_closeBucket(_bucketStartedAt!));
+      _bucketStartedAt = _bucketStartedAt!.add(_bucketDuration);
+      _bucket = _Bucket();
     }
-
-    // --- Cycle boundary state machine ---
-    final boundary = _updateCycle(_smoothedDepth, stage, endAt);
-    if (boundary != null) {
-      out.add(boundary);
-    }
-
-    // Reset epoch accumulators.
-    _epochStart = endAt;
-    _epochFrames = 0;
-    _dbSum = 0;
-    _movementFrames = 0;
-    _snoreSeconds = 0;
-    _lowBandSeries.clear();
+    _bucket.add(frame);
     return out;
   }
 
-  SleepStage _classifyStage({
-    required double depth,
-    required double movement,
-    required double regularity,
-    required double snoreFraction,
-  }) {
-    if (movement >= config.awakeMovement) {
-      return SleepStage.awake;
+  List<AcousticDetection> flush() {
+    final startedAt = _bucketStartedAt;
+    if (startedAt == null || _bucket.frames == 0) {
+      return const [];
     }
-    if (depth < config.asleepThreshold) {
-      // Shallow + still: ambiguous between drowsy-awake and light; if breathing
-      // is irregular and there's some movement, call awake, else light.
-      return movement > config.awakeMovement * 0.5
-          ? SleepStage.awake
-          : SleepStage.light;
-    }
-    if (depth >= config.deepThreshold) {
-      return SleepStage.deep;
-    }
-    // Mid depth: REM if breathing is irregular and snoring has dropped off.
-    if (regularity < config.remRegularityMax && snoreFraction < 0.15) {
-      return SleepStage.rem;
-    }
-    return SleepStage.light;
+    final out = _closeBucket(startedAt);
+    _bucketStartedAt = null;
+    _bucket = _Bucket();
+    return out;
   }
 
-  AcousticDetection? _updateCycle(
-    double depth,
-    SleepStage stage,
-    DateTime atUtc,
-  ) {
-    // Anchor sleep onset (= start of cycle 1) at the first asleep epoch.
-    if (_onsetAt == null) {
-      if (depth >= config.asleepThreshold) {
-        _onsetAt = atUtc;
-        _cycleMinDepth = depth;
-        _cycleMaxDepth = depth;
-      }
+  DateTime _bucketStartFor(DateTime atUtc) {
+    final micros = atUtc.microsecondsSinceEpoch;
+    final bucketMicros = _bucketDuration.inMicroseconds;
+    return DateTime.fromMicrosecondsSinceEpoch(
+      micros - micros.remainder(bucketMicros),
+      isUtc: true,
+    );
+  }
+
+  List<AcousticDetection> _closeBucket(DateTime startedAt) {
+    final summary = _bucket.summary(
+      startedAt: startedAt,
+      endedAt: startedAt.add(_bucketDuration),
+    );
+    if (summary.frames == 0) {
+      return const [];
+    }
+    _recent.add(summary);
+    final maxRecent = math.max(4, (30 * 60 / config.bucketSeconds).ceil());
+    if (_recent.length > maxRecent) {
+      _recent.removeAt(0);
+    }
+
+    if (_sleepStartedAt == null) {
+      return _maybeStartSleep();
+    }
+    final boundary = _maybeCycleBoundary(summary);
+    return boundary == null ? const [] : [boundary];
+  }
+
+  List<AcousticDetection> _maybeStartSleep() {
+    final needed = math.max(
+      2,
+      (config.sleepOnsetMinutes * 60 / config.bucketSeconds).ceil(),
+    );
+    if (_recent.length < needed) {
+      return const [];
+    }
+    final window = _recent.sublist(_recent.length - needed);
+    final sleepBuckets = window.where((b) => b.sleepScore >= 0.48).length;
+    final averageWake =
+        window.fold<double>(0, (sum, b) => sum + b.wakeScore) / window.length;
+    if (sleepBuckets < math.max(2, (needed * 0.72).ceil()) ||
+        averageWake > 0.36) {
+      return const [];
+    }
+
+    _sleepStartedAt = window.first.startedAt;
+    _lastCycleBoundaryAt = _sleepStartedAt;
+    _nextCycleIndex = 1;
+    _resetCycleDepth();
+    final probability = _probabilityFor(window.last);
+    return [
+      AcousticDetection(
+        kind: AcousticDetectionKind.sleepCycle,
+        startedAtUtc: window.first.startedAt,
+        endedAtUtc: window.last.endedAt,
+        confidence: _confidenceFor(window.last, observedCycleMinutes: null),
+        captureSessionId: captureSessionId,
+        details: {
+          'cycleIndex': 0,
+          'stageHint': 'sleep onset',
+          'estimatedCycleMinutes': _round1(_cycleMinutesFor(1)),
+          'cycleMinutesByIndex': _roundedCycleMinutes(),
+          'sleepScore': _round2(window.last.sleepScore),
+          'sleepProbability': _round2(probability.sleepProbability),
+          'probabilitySignals': probability.activeSignals,
+          'note': 'Non-diagnostic acoustic sleep estimate.',
+        },
+      ),
+    ];
+  }
+
+  AcousticDetection? _maybeCycleBoundary(_BucketSummary summary) {
+    final lastBoundary = _lastCycleBoundaryAt;
+    if (lastBoundary == null) {
+      return null;
+    }
+    _trackCycleDepth(summary);
+    final elapsedMinutes =
+        summary.endedAt.difference(lastBoundary).inSeconds / 60.0;
+    final expectedMinutes = _cycleMinutesFor(_nextCycleIndex);
+    final bucketMinutes = config.bucketSeconds / 60.0;
+    final arousalBoundary =
+        summary.arousalScore >= 0.55 &&
+        elapsedMinutes >= config.minCycleMinutes &&
+        elapsedMinutes <= config.maxCycleMinutes + bucketMinutes;
+    final fallbackTarget = _hasPersonalCycleSeed(_nextCycleIndex)
+        ? expectedMinutes + config.fallbackGraceMinutes
+        : config.maxCycleMinutes + bucketMinutes;
+    final fallbackBoundary = elapsedMinutes >= fallbackTarget;
+    if (!arousalBoundary && !fallbackBoundary) {
       return null;
     }
 
-    _cycleMinDepth = math.min(_cycleMinDepth, depth);
-    _cycleMaxDepth = math.max(_cycleMaxDepth, depth);
-    if (depth >= config.deepThreshold) {
-      _descended = true;
+    final observedMinutes = arousalBoundary ? elapsedMinutes : null;
+    if (observedMinutes != null) {
+      _learnFromObservedCycle(_nextCycleIndex, observedMinutes);
     }
-
-    final cycleMinutes =
-        atUtc.difference(_onsetAt!).inMilliseconds / 60000.0;
-    final reachedShallow =
-        depth <= config.shallowThreshold || stage == SleepStage.awake;
-    if (_descended &&
-        reachedShallow &&
-        cycleMinutes >= config.minCycleMinutes) {
-      // Close the cycle at this arousal.
-      _cycleIndex += 1;
-      final detection = AcousticDetection(
-        kind: AcousticDetectionKind.sleepCycle,
-        startedAtUtc: _onsetAt!.toUtc(),
-        endedAtUtc: atUtc.toUtc(),
-        confidence: (_cycleMaxDepth - _cycleMinDepth).clamp(0.2, 1.0),
-        captureSessionId: captureSessionId,
-        details: {
-          'cycleIndex': _cycleIndex,
-          'lengthMinutes': double.parse(cycleMinutes.toStringAsFixed(1)),
-          'minDepth': double.parse(_cycleMinDepth.toStringAsFixed(3)),
-          'maxDepth': double.parse(_cycleMaxDepth.toStringAsFixed(3)),
-          'dominantCycleMinutes':
-              double.parse(_dominantCycleMinutes.toStringAsFixed(1)),
-          'stage': stage.name,
-        },
-      );
-      // Start the next cycle from this boundary.
-      _onsetAt = atUtc;
-      _descended = false;
-      _cycleMinDepth = depth;
-      _cycleMaxDepth = depth;
-      return detection;
+    final cycleIndex = _nextCycleIndex;
+    _nextCycleIndex += 1;
+    _lastCycleBoundaryAt = summary.endedAt;
+    final deepSleepCycle = _currentCycleWasDeep;
+    if (deepSleepCycle) {
+      _deepCycleIndexes.add(cycleIndex);
     }
-    return null;
-  }
-
-  /// Estimates breathing rate + regularity from this epoch's per-frame low-band
-  /// power series via autocorrelation. The low-band envelope rises and falls once
-  /// per breath; the strongest autocorrelation lag in the human breathing band is
-  /// the period, and its (normalized) height is the regularity.
-  ({double bpm, double regularity}) _estimateBreathing() {
-    final n = _lowBandSeries.length;
-    if (n < 8 || frameSeconds <= 0) {
-      return (bpm: 0.0, regularity: 0.0);
-    }
-    // Mean-remove.
-    var mean = 0.0;
-    for (final v in _lowBandSeries) {
-      mean += v;
-    }
-    mean /= n;
-    final x = List<double>.generate(n, (i) => _lowBandSeries[i] - mean);
-    var zero = 0.0;
-    for (final v in x) {
-      zero += v * v;
-    }
-    if (zero <= 1e-12) {
-      return (bpm: 0.0, regularity: 0.0);
-    }
-
-    final minLag = math.max(1, (60.0 / config.maxBreathBpm / frameSeconds).round());
-    final maxLag = math.min(
-      n - 1,
-      (60.0 / config.minBreathBpm / frameSeconds).round(),
+    final deferFifthAlarm =
+        cycleIndex == 5 && (_deepCycleIndexes.contains(4) || deepSleepCycle);
+    final alarmCycle =
+        config.alarmsEnabled &&
+        config.alarmCycles.contains(cycleIndex) &&
+        !deferFifthAlarm;
+    final kind = alarmCycle
+        ? AcousticDetectionKind.sleepCycleAlarm
+        : AcousticDetectionKind.sleepCycle;
+    final probability = _probabilityFor(summary);
+    _resetCycleDepth();
+    return AcousticDetection(
+      kind: kind,
+      startedAtUtc: summary.startedAt,
+      endedAtUtc: summary.endedAt,
+      confidence: _confidenceFor(
+        summary,
+        observedCycleMinutes: observedMinutes,
+      ),
+      captureSessionId: captureSessionId,
+      details: {
+        'cycleIndex': cycleIndex,
+        'alarmCycle': alarmCycle,
+        'deepSleepCycle': deepSleepCycle,
+        if (deferFifthAlarm) 'alarmDeferred': true,
+        if (deferFifthAlarm) 'deferredToCycle': 6,
+        'estimatedCycleMinutes': _round1(_cycleMinutesFor(cycleIndex)),
+        'expectedCycleMinutes': _round1(expectedMinutes),
+        if (observedMinutes != null)
+          'observedCycleMinutes': _round1(observedMinutes),
+        'cycleMinutesByIndex': _roundedCycleMinutes(),
+        'elapsedSleepMinutes': _round1(
+          summary.endedAt.difference(_sleepStartedAt!).inSeconds / 60.0,
+        ),
+        'learnedFromUser': _learnedObservations > 0,
+        'stageHint': _stageHint(summary),
+        'sleepScore': _round2(summary.sleepScore),
+        'arousalScore': _round2(summary.arousalScore),
+        'sleepProbability': _round2(probability.sleepProbability),
+        'probabilitySignals': probability.activeSignals,
+        'snoreFraction': _round2(summary.snoreFraction),
+        'breathingFraction': _round2(summary.breathingFraction),
+        'note': 'Non-diagnostic acoustic sleep estimate.',
+      },
     );
-    if (maxLag <= minLag) {
-      return (bpm: 0.0, regularity: 0.0);
-    }
-
-    var bestLag = -1;
-    var bestCorr = 0.0;
-    for (var lag = minLag; lag <= maxLag; lag++) {
-      var acc = 0.0;
-      for (var i = lag; i < n; i++) {
-        acc += x[i] * x[i - lag];
-      }
-      final norm = acc / zero;
-      if (norm > bestCorr) {
-        bestCorr = norm;
-        bestLag = lag;
-      }
-    }
-    if (bestLag <= 0 || bestCorr <= 0) {
-      return (bpm: 0.0, regularity: 0.0);
-    }
-    final periodSeconds = bestLag * frameSeconds;
-    final bpm = (60.0 / periodSeconds)
-        .clamp(config.minBreathBpm, config.maxBreathBpm);
-    return (bpm: bpm, regularity: bestCorr.clamp(0.0, 1.0));
   }
+
+  void _learnFromObservedCycle(int cycleIndex, double observedMinutes) {
+    final bounded = observedMinutes.clamp(
+      config.minCycleMinutes,
+      config.maxCycleMinutes,
+    );
+    final weight = _learnedObservations == 0 ? 0.35 : 0.22;
+    final current = _cycleMinutesFor(cycleIndex);
+    final learned = ((1 - weight) * current + weight * bounded).clamp(
+      config.minCycleMinutes,
+      config.maxCycleMinutes,
+    );
+    while (_cycleMinutesByIndex.length < cycleIndex) {
+      _cycleMinutesByIndex.add(config.initialCycleMinutes);
+    }
+    _cycleMinutesByIndex[cycleIndex - 1] = learned.toDouble();
+    _learnedObservations += 1;
+  }
+
+  void _trackCycleDepth(_BucketSummary summary) {
+    if (summary.arousalScore >= 0.55) {
+      return;
+    }
+    _cycleBuckets += 1;
+    if (summary.depthScore >= config.deepSleepDepthScore &&
+        summary.sleepScore >= 0.62) {
+      _deepCycleBuckets += 1;
+    }
+  }
+
+  bool get _currentCycleWasDeep {
+    if (_cycleBuckets == 0) {
+      return false;
+    }
+    return _deepCycleBuckets / _cycleBuckets >= config.deepSleepBucketFraction;
+  }
+
+  void _resetCycleDepth() {
+    _cycleBuckets = 0;
+    _deepCycleBuckets = 0;
+  }
+
+  SleepProbabilityEstimate _probabilityFor(_BucketSummary summary) {
+    return _probabilityModel.estimate(
+      sample: SleepSignalSample(
+        acousticSleepScore: summary.sleepScore,
+        acousticArousalScore: summary.arousalScore,
+      ),
+      consent: SleepSignalConsent(
+        audio: true,
+        motion: config.motionSignalEnabled,
+        ambientLight: config.ambientLightSignalEnabled,
+        phoneContext: config.phoneContextSignalEnabled,
+      ),
+    );
+  }
+
+  double _cycleMinutesFor(int cycleIndex) {
+    if (cycleIndex > 0 && cycleIndex <= _cycleMinutesByIndex.length) {
+      return _cycleMinutesByIndex[cycleIndex - 1];
+    }
+    if (_cycleMinutesByIndex.isNotEmpty) {
+      return _cycleMinutesByIndex.last;
+    }
+    return config.initialCycleMinutes;
+  }
+
+  bool _hasPersonalCycleSeed(int cycleIndex) {
+    if (cycleIndex <= 0 || cycleIndex > _cycleMinutesByIndex.length) {
+      return false;
+    }
+    return (_cycleMinutesByIndex[cycleIndex - 1] - 90.0).abs() > 0.1;
+  }
+
+  List<double> _roundedCycleMinutes() {
+    final count = math.max(_cycleMinutesByIndex.length, 6);
+    return List<double>.generate(
+      count,
+      (index) => _round1(_cycleMinutesFor(index + 1)),
+      growable: false,
+    );
+  }
+
+  double _confidenceFor(
+    _BucketSummary summary, {
+    required double? observedCycleMinutes,
+  }) {
+    final evidence =
+        0.38 * summary.sleepScore +
+        0.32 * summary.arousalScore +
+        0.20 * summary.snoreFraction +
+        (observedCycleMinutes == null ? 0.08 : 0.18);
+    return evidence.clamp(0.35, 0.96);
+  }
+
+  String _stageHint(_BucketSummary summary) {
+    final lastBoundary = _lastCycleBoundaryAt;
+    if (lastBoundary == null) {
+      return 'sleep';
+    }
+    final elapsed = summary.endedAt.difference(lastBoundary).inSeconds / 60.0;
+    final phase = (elapsed / _cycleMinutesFor(_nextCycleIndex)).clamp(0.0, 1.5);
+    if (summary.arousalScore >= 0.55) {
+      return 'light sleep / wake window';
+    }
+    if (phase < 0.20) {
+      return 'settling';
+    }
+    if (phase > 0.76) {
+      return 'light sleep / REM window';
+    }
+    if (summary.depthScore >= 0.55) {
+      return 'deep sleep leaning';
+    }
+    return 'stable sleep';
+  }
+
+  static double _round1(double value) => double.parse(value.toStringAsFixed(1));
+
+  static double _round2(double value) => double.parse(value.toStringAsFixed(2));
+}
+
+class _Bucket {
+  int frames = 0;
+  int breathingFrames = 0;
+  int snoreFrames = 0;
+  int wakeFrames = 0;
+  double dbSum = 0;
+  double lowBandSum = 0;
+
+  void add(SpectralFrame frame) {
+    frames += 1;
+    dbSum += frame.db;
+    lowBandSum += frame.lowBandRatio;
+
+    final audible = frame.db >= -68.0;
+    final snoreLike =
+        frame.db >= -48.0 &&
+        frame.lowBandRatio >= 0.24 &&
+        frame.centroidHz <= 1000.0 &&
+        frame.flatness <= 0.70;
+    final breathingLike =
+        audible &&
+        frame.db <= -24.0 &&
+        frame.centroidHz <= 1600.0 &&
+        frame.rolloffHz <= 3600.0 &&
+        frame.speechBandRatio <= 0.55 &&
+        frame.flatness <= 0.88;
+    final wakeLike =
+        frame.db >= -35.0 &&
+        (frame.speechBandRatio >= 0.45 ||
+            frame.centroidHz >= 1800.0 ||
+            frame.rolloffHz >= 3800.0);
+
+    if (breathingLike || snoreLike) {
+      breathingFrames += 1;
+    }
+    if (snoreLike) {
+      snoreFrames += 1;
+    }
+    if (wakeLike) {
+      wakeFrames += 1;
+    }
+  }
+
+  _BucketSummary summary({
+    required DateTime startedAt,
+    required DateTime endedAt,
+  }) {
+    if (frames == 0) {
+      return _BucketSummary.empty(startedAt: startedAt, endedAt: endedAt);
+    }
+    final breathing = breathingFrames / frames;
+    final snore = snoreFrames / frames;
+    final wake = wakeFrames / frames;
+    final lowBand = lowBandSum / frames;
+    final averageDb = dbSum / frames;
+    final sleepScore = (0.65 * breathing + 0.35 * snore - 0.55 * wake).clamp(
+      0.0,
+      1.0,
+    );
+    final arousalScore =
+        (0.70 * wake +
+                0.20 * (1 - breathing) +
+                (averageDb >= -34.0 ? 0.10 : 0.0))
+            .clamp(0.0, 1.0);
+    final depthScore =
+        (0.40 * breathing + 0.35 * lowBand + 0.25 * snore - 0.45 * wake).clamp(
+          0.0,
+          1.0,
+        );
+    return _BucketSummary(
+      startedAt: startedAt,
+      endedAt: endedAt,
+      frames: frames,
+      sleepScore: sleepScore,
+      arousalScore: arousalScore,
+      wakeScore: wake,
+      depthScore: depthScore,
+      breathingFraction: breathing,
+      snoreFraction: snore,
+    );
+  }
+}
+
+class _BucketSummary {
+  const _BucketSummary({
+    required this.startedAt,
+    required this.endedAt,
+    required this.frames,
+    required this.sleepScore,
+    required this.arousalScore,
+    required this.wakeScore,
+    required this.depthScore,
+    required this.breathingFraction,
+    required this.snoreFraction,
+  });
+
+  factory _BucketSummary.empty({
+    required DateTime startedAt,
+    required DateTime endedAt,
+  }) {
+    return _BucketSummary(
+      startedAt: startedAt,
+      endedAt: endedAt,
+      frames: 0,
+      sleepScore: 0,
+      arousalScore: 0,
+      wakeScore: 0,
+      depthScore: 0,
+      breathingFraction: 0,
+      snoreFraction: 0,
+    );
+  }
+
+  final DateTime startedAt;
+  final DateTime endedAt;
+  final int frames;
+  final double sleepScore;
+  final double arousalScore;
+  final double wakeScore;
+  final double depthScore;
+  final double breathingFraction;
+  final double snoreFraction;
 }

@@ -11,32 +11,67 @@ import 'spectral_features.dart';
 class AcousticDetectorFlags {
   const AcousticDetectorFlags({
     this.snore = true,
+    this.sleep = false,
+    this.sleepCycleAlarms = false,
+    this.sleepCycleMinutesByIndex = const [],
+    this.sleepMotionSignal = false,
+    this.sleepAmbientLightSignal = false,
+    this.sleepPhoneContextSignal = false,
     this.music = true,
     this.speech = true,
-    this.sleep = false,
   });
 
   final bool snore;
+  final bool sleep;
+  final bool sleepCycleAlarms;
+  final List<double> sleepCycleMinutesByIndex;
+  final bool sleepMotionSignal;
+  final bool sleepAmbientLightSignal;
+  final bool sleepPhoneContextSignal;
   final bool music;
   final bool speech;
 
-  /// Sleep-cycle analysis. Off by default; turned on for a sleep session. The
-  /// sleep detector consumes the snore detector's output, so [snore] is forced
-  /// on internally whenever [sleep] is set.
-  final bool sleep;
+  bool get any => snore || sleep || music || speech;
 
-  bool get any => snore || music || speech || sleep;
-
-  Map<String, dynamic> toMap() =>
-      {'snore': snore, 'music': music, 'speech': speech, 'sleep': sleep};
+  Map<String, dynamic> toMap() => {
+    'snore': snore,
+    'sleep': sleep,
+    'sleepCycleAlarms': sleepCycleAlarms,
+    'sleepCycleMinutesByIndex': sleepCycleMinutesByIndex,
+    'sleepMotionSignal': sleepMotionSignal,
+    'sleepAmbientLightSignal': sleepAmbientLightSignal,
+    'sleepPhoneContextSignal': sleepPhoneContextSignal,
+    'music': music,
+    'speech': speech,
+  };
 
   factory AcousticDetectorFlags.fromMap(Map<dynamic, dynamic> map) {
     return AcousticDetectorFlags(
       snore: map['snore'] as bool? ?? true,
+      sleep: map['sleep'] as bool? ?? false,
+      sleepCycleAlarms: map['sleepCycleAlarms'] as bool? ?? false,
+      sleepCycleMinutesByIndex: _asDoubleList(map['sleepCycleMinutesByIndex']),
+      sleepMotionSignal: map['sleepMotionSignal'] as bool? ?? false,
+      sleepAmbientLightSignal: map['sleepAmbientLightSignal'] as bool? ?? false,
+      sleepPhoneContextSignal: map['sleepPhoneContextSignal'] as bool? ?? false,
       music: map['music'] as bool? ?? true,
       speech: map['speech'] as bool? ?? true,
-      sleep: map['sleep'] as bool? ?? false,
     );
+  }
+
+  static List<double> _asDoubleList(Object? value) {
+    if (value is! List) {
+      return const [];
+    }
+    return value
+        .map((entry) {
+          if (entry is num) {
+            return entry.toDouble();
+          }
+          return double.tryParse(entry.toString()) ?? 90.0;
+        })
+        .where((entry) => entry.isFinite)
+        .toList(growable: false);
   }
 }
 
@@ -50,44 +85,44 @@ class AcousticPipeline {
     required this.sampleRate,
     AcousticDetectorFlags flags = const AcousticDetectorFlags(),
     String captureSessionId = '',
-  })  : _analyzer = SpectralAnalyzer(fftSize: fftSize, sampleRate: sampleRate),
-        // The sleep detector needs snore events, so enable snore whenever sleep
-        // is on even if the snore flag itself is off.
-        _snore = (flags.snore || flags.sleep)
-            ? SnoreDetector(
-                frameSeconds: (fftSize ~/ 2) / sampleRate,
-                captureSessionId: captureSessionId,
-              )
-            : null,
-        _sleep = flags.sleep
-            ? SleepCycleDetector(
-                frameSeconds: (fftSize ~/ 2) / sampleRate,
-                captureSessionId: captureSessionId,
-              )
-            : null,
-        _emitSnore = flags.snore,
-        _music = flags.music
-            ? MusicDetector(
-                frameSeconds: (fftSize ~/ 2) / sampleRate,
-                captureSessionId: captureSessionId,
-              )
-            : null,
-        _speech = flags.speech
-            ? SpeechDetector(
-                frameSeconds: (fftSize ~/ 2) / sampleRate,
-                captureSessionId: captureSessionId,
-              )
-            : null;
+  }) : _analyzer = SpectralAnalyzer(fftSize: fftSize, sampleRate: sampleRate),
+       _snore = flags.snore
+           ? SnoreDetector(
+               frameSeconds: (fftSize ~/ 2) / sampleRate,
+               captureSessionId: captureSessionId,
+             )
+           : null,
+       _sleep = flags.sleep
+           ? SleepCycleDetector(
+               frameSeconds: (fftSize ~/ 2) / sampleRate,
+               captureSessionId: captureSessionId,
+               config: SleepCycleConfig(
+                 cycleMinutesByIndex: flags.sleepCycleMinutesByIndex,
+                 alarmsEnabled: flags.sleepCycleAlarms,
+                 motionSignalEnabled: flags.sleepMotionSignal,
+                 ambientLightSignalEnabled: flags.sleepAmbientLightSignal,
+                 phoneContextSignalEnabled: flags.sleepPhoneContextSignal,
+               ),
+             )
+           : null,
+       _music = flags.music
+           ? MusicDetector(
+               frameSeconds: (fftSize ~/ 2) / sampleRate,
+               captureSessionId: captureSessionId,
+             )
+           : null,
+       _speech = flags.speech
+           ? SpeechDetector(
+               frameSeconds: (fftSize ~/ 2) / sampleRate,
+               captureSessionId: captureSessionId,
+             )
+           : null;
 
   final int fftSize;
   final int sampleRate;
   final SpectralAnalyzer _analyzer;
   final SnoreDetector? _snore;
   final SleepCycleDetector? _sleep;
-
-  /// Whether snore detections should be surfaced. False when snore is only
-  /// running internally to feed the sleep detector.
-  final bool _emitSnore;
   final MusicDetector? _music;
   final SpeechDetector? _speech;
 
@@ -100,14 +135,11 @@ class AcousticPipeline {
     final sleep = _sleep;
     final music = _music;
     final speech = _speech;
-    // Run snore first; the sleep detector consumes its episodes for this frame.
-    final snoreEvents =
-        snore != null ? snore.add(features, atUtc) : const <AcousticDetection>[];
-    if (_emitSnore) {
-      out.addAll(snoreEvents);
+    if (snore != null) {
+      out.addAll(snore.add(features, atUtc));
     }
     if (sleep != null) {
-      out.addAll(sleep.add(features, atUtc, snoreEvents));
+      out.addAll(sleep.add(features, atUtc));
     }
     if (music != null) {
       out.addAll(music.add(features, atUtc));
@@ -118,17 +150,15 @@ class AcousticPipeline {
     return out;
   }
 
-  /// Closes any open snore episode and flushes the in-progress sleep epoch. Call
-  /// when the analysis gate closes.
+  /// Closes any open snore episode. Call when the analysis gate closes.
   List<AcousticDetection> flush() {
     final out = <AcousticDetection>[];
-    final snoreFlush = _snore?.flush() ?? const <AcousticDetection>[];
-    if (_emitSnore) {
-      out.addAll(snoreFlush);
-    }
+    final snore = _snore;
     final sleep = _sleep;
+    if (snore != null) {
+      out.addAll(snore.flush());
+    }
     if (sleep != null) {
-      // Feed the snore detector's flushed episodes into the sleep epoch too.
       out.addAll(sleep.flush());
     }
     return out;
@@ -141,7 +171,7 @@ class AcousticPipeline {
 /// sessions (or after a gap) so the time anchor stays accurate.
 class FrameSlicer {
   FrameSlicer({required this.fftSize, required this.sampleRate})
-      : _hop = fftSize ~/ 2;
+    : _hop = fftSize ~/ 2;
 
   final int fftSize;
   final int sampleRate;
