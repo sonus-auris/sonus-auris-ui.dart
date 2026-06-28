@@ -84,6 +84,40 @@ class SupabaseRestClient {
     }
   }
 
+  /// Inserts the onboarding [record] for the signed-in user. Returns an error
+  /// string on failure, or null on success.
+  Future<String?> insertConsent({
+    required AppConfig config,
+    required CloudSecrets secrets,
+    required ConsentRecord record,
+  }) async {
+    if (!canInsert(config, secrets)) {
+      return 'Supabase URL, anon key, and a signed-in session are required.';
+    }
+    final Uri uri;
+    try {
+      uri = _restUri(config, userConsentsTable);
+    } on FormatException catch (error) {
+      return error.message;
+    }
+    try {
+      final response = await _httpClient
+          .post(
+            uri,
+            headers: _headers(config, secrets),
+            body: jsonEncode([record.toSupabaseRow(config.deviceId)]),
+          )
+          .timeout(requestTimeout);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return 'Supabase consent insert failed (${response.statusCode}): '
+          '${_shortBody(response.body)}';
+    } catch (error) {
+      return 'Supabase consent insert error: $error';
+    }
+  }
+
   void close() {
     _httpClient.close();
   }
