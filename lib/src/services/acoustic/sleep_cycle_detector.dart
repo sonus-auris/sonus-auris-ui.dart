@@ -118,6 +118,16 @@ class SleepCycleDetector {
 
   List<AcousticDetection> add(SpectralFrame frame, DateTime atUtc) {
     final utc = atUtc.toUtc();
+    // A large jump in frame time means capture was interrupted (or the clock
+    // moved): drop the in-progress estimate and re-detect sleep onset rather
+    // than counting the gap as elapsed sleep and emitting a phantom cycle.
+    final last = _lastFrameAtUtc;
+    if (last != null &&
+        utc.difference(last).inMilliseconds.abs() / 60000.0 >
+            config.maxGapMinutes) {
+      _resetSleepSession();
+    }
+    _lastFrameAtUtc = utc;
     final bucketStart = _bucketStartFor(utc);
     final out = <AcousticDetection>[];
     _bucketStartedAt ??= bucketStart;
