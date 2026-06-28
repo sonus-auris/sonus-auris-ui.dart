@@ -409,9 +409,16 @@ class AppController {
     final sleepCycleSeeds = _sleepCycleProfile.observations.isEmpty
         ? loadedConfig.sleepCycleMinutesByIndex
         : _sleepCycleProfile.cycleMinuteSeeds();
-    final config = loadedConfig.copyWith(
-      sleepCycleMinutesByIndex: sleepCycleSeeds,
+    final config = _seedSupabaseDefaults(
+      loadedConfig.copyWith(sleepCycleMinutesByIndex: sleepCycleSeeds),
     );
+    // Persist if build-time Supabase defaults filled in previously-empty fields.
+    if (config.supabaseUrl != loadedConfig.supabaseUrl ||
+        config.supabaseAnonKey != loadedConfig.supabaseAnonKey) {
+      await _settingsStore.saveConfig(config);
+    }
+    _consentRecord = await _settingsStore.loadConsentRecord();
+    _onboardingComplete.value = _hasValidConsent(_consentRecord);
     final secrets = await _settingsStore.loadSecrets();
     final pendingAlerts = await _settingsStore.loadPendingAlerts();
     final recovered = await _segmentIndex.recoverOrphanedLocalSegments(
