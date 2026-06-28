@@ -13,6 +13,7 @@ import '../models/app_config.dart';
 import '../models/cloud_provider.dart';
 import '../models/context_trigger.dart';
 import '../models/cloud_secrets.dart';
+import '../models/consent.dart';
 import '../models/playback_snapshot.dart';
 import '../models/recorder_snapshot.dart';
 import '../models/cloud_connection.dart';
