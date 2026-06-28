@@ -75,7 +75,14 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
             if (snapshot.hasError) {
               return ErrorPage(error: snapshot.error.toString());
             }
-            return SettingsPage(controller: _controller);
+            // Gate the app behind onboarding/consent until it's completed for the
+            // current consent version.
+            return ValueListenableBuilder<bool>(
+              valueListenable: _controller.onboardingComplete,
+              builder: (context, complete, _) => complete
+                  ? SettingsPage(controller: _controller)
+                  : OnboardingFlow(controller: _controller),
+            );
           },
         ),
       ),
