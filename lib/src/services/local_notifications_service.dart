@@ -8,6 +8,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../models/context_trigger.dart';
 import '../models/recording_schedule.dart';
+import '../models/acoustic_detection.dart';
 import 'diagnostic_log.dart';
 
 /// Single owner of [FlutterLocalNotificationsPlugin] so there is exactly one
@@ -33,12 +34,14 @@ class LocalNotificationsService {
   static const String consentPayload = 'context-consent';
   static const String scheduleStartPayload = 'schedule-start';
   static const String scheduleStopPayload = 'schedule-stop';
+  static const String sleepCycleAlarmPayload = 'sleep-cycle-alarm';
 
   // Notification id partitions.
   static const int _scheduleStartBase = 780000;
   static const int _scheduleStopBase = 790000;
   static const int _scheduleSpan = 64;
   static const int _consentId = 800000;
+  static const int _sleepCycleAlarmBase = 810000;
 
   /// iOS allows at most 64 *pending* local notifications per app. Cap the total
   /// scheduled (start + stop) below that, leaving headroom for the consent
@@ -126,6 +129,23 @@ class LocalNotificationsService {
     ),
   );
 
+  static const NotificationDetails _sleepAlarmDetails = NotificationDetails(
+    android: AndroidNotificationDetails(
+      'sonus_auris_sleep_alarm',
+      'Sleep cycle alarms',
+      channelDescription: 'Wake alarms after inferred sleep cycles.',
+      importance: Importance.max,
+      priority: Priority.max,
+      playSound: true,
+      category: AndroidNotificationCategory.alarm,
+    ),
+    iOS: DarwinNotificationDetails(
+      presentAlert: true,
+      presentSound: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+    ),
+  );
+
   /// Schedule iOS reminders for window barriers. If the app is already alive,
   /// the in-app scheduler starts/stops capture directly; these reminders help
   /// the user notice a window and can relaunch the app if it was not live.
@@ -201,5 +221,20 @@ class LocalNotificationsService {
   Future<void> clearConsentPrompt() async {
     await ensureInitialized();
     await _plugin.cancel(_consentId);
+  }
+
+  Future<void> showSleepCycleAlarm(AcousticDetection detection) async {
+    await ensureInitialized();
+    final details = detection.details;
+    final cycle = details['cycleIndex'] ?? '?';
+    final minutes = details['estimatedCycleMinutes'] ?? 90;
+    final id = _sleepCycleAlarmBase + (cycle is int ? cycle : 0);
+    await _plugin.show(
+      id,
+      'Sleep cycle $cycle complete',
+      'Estimated cycle length: $minutes minutes.',
+      _sleepAlarmDetails,
+      payload: sleepCycleAlarmPayload,
+    );
   }
 }

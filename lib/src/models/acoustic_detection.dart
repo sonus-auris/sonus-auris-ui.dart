@@ -1,8 +1,9 @@
 /// A single acoustic event recognized by the on-device FFT analysis engine.
 ///
 /// These are *non-diagnostic* heuristic detections. In particular [apneaPattern]
-/// describes a breathing-cessation-like acoustic pattern and is explicitly not a
-/// medical diagnosis. Events are surfaced in-app and synced to Supabase.
+/// describes a breathing-cessation-like acoustic pattern, and sleep-cycle events
+/// estimate rest timing only; none of these are medical diagnoses. Events are
+/// surfaced in-app and synced to Supabase.
 class AcousticDetection {
   const AcousticDetection({
     required this.kind,
@@ -96,6 +97,8 @@ class AcousticDetection {
 enum AcousticDetectionKind {
   snore,
   apneaPattern,
+  sleepCycle,
+  sleepCycleAlarm,
   music,
   speech,
   keyword;
@@ -114,6 +117,10 @@ enum AcousticDetectionKind {
         return 'Snoring';
       case AcousticDetectionKind.apneaPattern:
         return 'Possible apnea pattern';
+      case AcousticDetectionKind.sleepCycle:
+        return 'Sleep cycle';
+      case AcousticDetectionKind.sleepCycleAlarm:
+        return 'Sleep cycle alarm';
       case AcousticDetectionKind.music:
         return 'Music';
       case AcousticDetectionKind.speech:

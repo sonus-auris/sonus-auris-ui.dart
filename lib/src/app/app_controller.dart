@@ -17,6 +17,7 @@ import '../models/recorder_snapshot.dart';
 import '../models/cloud_connection.dart';
 import '../models/recording_schedule.dart';
 import '../models/recording_segment.dart';
+import '../models/sleep_cycle_profile.dart';
 import '../models/supabase_session.dart';
 import '../models/transfer_gate_status.dart';
 import '../services/background_capture_service.dart';
@@ -39,6 +40,8 @@ import '../services/s3_storage_client.dart';
 import '../services/segment_index.dart';
 import '../services/segment_recorder.dart';
 import '../services/settings_store.dart';
+import '../services/sleep_sensor_service.dart';
+import '../services/sleep_signal_model.dart';
 import '../services/shazam_client.dart';
 import '../services/memory_publisher.dart';
 import '../services/day_of_life_archiver.dart';
@@ -78,6 +81,7 @@ class AppController {
     OAuthBrowser? oauthBrowser,
     SpeechToTextClient? speechToTextClient,
     OnDeviceSpeechClient? onDeviceSpeechClient,
+    SleepSensorService? sleepSensorService,
     RecordingScheduler? recordingScheduler,
     LocalNotificationsService? localNotifications,
     ContextTriggerService? contextTriggerService,
@@ -122,6 +126,7 @@ class AppController {
       oauthBrowser: oauthBrowser ?? const FlutterWebAuthBrowser(),
       speechToTextClient: speechToTextClient ?? SpeechToTextClient(),
       onDeviceSpeechClient: onDeviceSpeechClient ?? OnDeviceSpeechClient(),
+      sleepSensorService: sleepSensorService ?? SleepSensorService(),
       scheduler:
           recordingScheduler ??
           RecordingScheduler(
@@ -163,6 +168,7 @@ class AppController {
     required this._oauthBrowser,
     required this._speechToTextClient,
     required this._onDeviceSpeechClient,
+    required this._sleepSensorService,
     required this._scheduler,
     required this._localNotifications,
     required this._contextTriggers,
@@ -295,6 +301,7 @@ class AppController {
   bool _archiveCaughtUp = false;
   final SpeechToTextClient _speechToTextClient;
   final OnDeviceSpeechClient _onDeviceSpeechClient;
+  final SleepSensorService _sleepSensorService;
   final RecordingScheduler _scheduler;
   final LocalNotificationsService _localNotifications;
   final ContextTriggerService _contextTriggers;
@@ -313,6 +320,9 @@ class AppController {
   StreamSubscription<void>? _transferConditionsSubscription;
   String? _lastReportedTransferSignature;
   DateTime? _lastTransferReportAt;
+  SleepCycleProfile _sleepCycleProfile = const SleepCycleProfile();
+  static const SleepProbabilityModel _sleepProbabilityModel =
+      SleepProbabilityModel();
 
   /// While paused, the device re-affirms its state to the backend at least this
   /// often so the server-side pause lease (which the cloud-copy drain honors)
@@ -369,7 +379,16 @@ class AppController {
   Future<void> init() async {
     _diagnostics.add('App controller init started.');
     _backgroundCaptureService.init();
-    final config = await _settingsStore.loadConfig();
+    final loadedConfig = await _settingsStore.loadConfig();
+    _sleepCycleProfile = (await _settingsStore.loadSleepCycleProfile()).pruned(
+      DateTime.now().toUtc(),
+    );
+    final sleepCycleSeeds = _sleepCycleProfile.observations.isEmpty
+        ? loadedConfig.sleepCycleMinutesByIndex
+        : _sleepCycleProfile.cycleMinuteSeeds();
+    final config = loadedConfig.copyWith(
+      sleepCycleMinutesByIndex: sleepCycleSeeds,
+    );
     final secrets = await _settingsStore.loadSecrets();
     final pendingAlerts = await _settingsStore.loadPendingAlerts();
     final recovered = await _segmentIndex.recoverOrphanedLocalSegments(
@@ -709,6 +728,9 @@ class AppController {
       captureSampleRate: config.captureSampleRate.clamp(8000, 48000),
       quietSampleRate: config.quietSampleRate.clamp(8000, 48000),
       adaptiveLoudnessDb: config.adaptiveLoudnessDb.clamp(-90.0, 0.0),
+      sleepCycleMinutesByIndex: _normalizedSleepCycleMinutes(
+        config.sleepCycleMinutesByIndex,
+      ),
       recordingSchedule: config.recordingSchedule.normalize(),
     );
     final scheduleChanged =
@@ -718,6 +740,9 @@ class AppController {
       _backendSessionKey = null;
     }
     _feedback.enabled = normalized.verbalCuesEnabled;
+    if (normalized.sleepCycleAlarmsEnabled) {
+      await _localNotifications.requestPermission();
+    }
     await _settingsStore.saveConfig(normalized);
     _config.add(normalized);
     _message.add('Settings saved.');
@@ -735,6 +760,14 @@ class AppController {
     await _updateContextTriggers();
   }
 
+  List<double> _normalizedSleepCycleMinutes(List<double> minutes) {
+    return minutes
+        .map((entry) => entry.clamp(75.0, 120.0).toDouble())
+        .where((entry) => entry.isFinite)
+        .take(12)
+        .toList(growable: false);
+  }
+
   /// Request the permissions the armed context-trigger [kinds] depend on:
   /// notifications (background consent prompt), Bluetooth (connect/nearby), and
   /// location (Wi-Fi SSID, and BLE scanning on older Android). Without these the
@@ -745,14 +778,16 @@ class AppController {
     await _localNotifications.requestPermission();
     final needsBluetooth =
         kinds.contains(ContextTriggerKind.bluetoothConnect) ||
-            kinds.contains(ContextTriggerKind.nearbyDevice);
+        kinds.contains(ContextTriggerKind.nearbyDevice);
     final needsLocation =
         needsBluetooth || kinds.contains(ContextTriggerKind.wifiChange);
     try {
       if (needsBluetooth) {
         if (Platform.isAndroid) {
-          await [Permission.bluetoothScan, Permission.bluetoothConnect]
-              .request();
+          await [
+            Permission.bluetoothScan,
+            Permission.bluetoothConnect,
+          ].request();
         } else if (Platform.isIOS) {
           await Permission.bluetooth.request();
         }
@@ -2270,11 +2305,131 @@ class AppController {
         await _scanSpeechForKeywords(config, detection);
       }
 
+      if (_isSleepCycleDetection(enriched)) {
+        enriched = await _enrichSleepDetection(config, enriched);
+        await _recordSleepCycleObservation(enriched);
+      }
+      if (enriched.kind == AcousticDetectionKind.sleepCycleAlarm &&
+          config.sleepCycleAlarmsEnabled) {
+        await _localNotifications.showSleepCycleAlarm(enriched);
+      }
+
       _appendDetection(enriched);
       await _storeDetections([enriched]);
     } catch (error) {
       _diagnostics.add('Acoustic detection handling failed: $error');
     }
+  }
+
+  bool _isSleepCycleDetection(AcousticDetection detection) {
+    return detection.kind == AcousticDetectionKind.sleepCycle ||
+        detection.kind == AcousticDetectionKind.sleepCycleAlarm;
+  }
+
+  Future<AcousticDetection> _enrichSleepDetection(
+    AppConfig config,
+    AcousticDetection detection,
+  ) async {
+    final details = {...detection.details};
+    SleepSensorSnapshot? sensor;
+    if (config.sleepMotionSensorConsent || config.sleepAmbientLightConsent) {
+      try {
+        sensor = await _sleepSensorService.sample(
+          motionConsent: config.sleepMotionSensorConsent,
+          ambientLightConsent: config.sleepAmbientLightConsent,
+        );
+      } catch (error) {
+        _diagnostics.add('Sleep sensor sample failed: $error');
+      }
+    }
+    final signalValues = sensor?.toSignalValues();
+    final transfer = _transfer.valueOrNull;
+    final bedtimeScore = config.sleepPhoneContextConsent
+        ? _usualBedtimeScore(detection.endedAtUtc.toLocal())
+        : null;
+    final estimate = _sleepProbabilityModel.estimate(
+      sample: SleepSignalSample(
+        acousticSleepScore: _detailDouble(details['sleepScore']),
+        acousticArousalScore: _detailDouble(details['arousalScore']),
+        motionStillnessScore: signalValues?.motionStillnessScore,
+        ambientLux: signalValues?.ambientLux,
+        isCharging: config.sleepPhoneContextConsent
+            ? transfer?.isCharging
+            : null,
+        usualBedtimeScore: bedtimeScore,
+      ),
+      consent: SleepSignalConsent(
+        audio: true,
+        motion: config.sleepMotionSensorConsent,
+        ambientLight: config.sleepAmbientLightConsent,
+        phoneContext: config.sleepPhoneContextConsent,
+      ),
+    );
+    if (sensor != null) {
+      if (sensor.motionAvailable && sensor.motionStillnessScore != null) {
+        details['motionStillnessScore'] = _round2(sensor.motionStillnessScore!);
+      }
+      if (sensor.ambientLightAvailable && sensor.ambientLux != null) {
+        details['ambientLux'] = _round2(sensor.ambientLux!);
+      }
+      if (sensor.screenBrightness != null) {
+        details['screenBrightness'] = _round2(sensor.screenBrightness!);
+      }
+    }
+    if (config.sleepPhoneContextConsent) {
+      details['phoneCharging'] = transfer?.isCharging;
+      if (bedtimeScore != null) {
+        details['usualBedtimeScore'] = _round2(bedtimeScore);
+      }
+    }
+    details['sleepProbability'] = _round2(estimate.sleepProbability);
+    details['wakeProbability'] = _round2(estimate.wakeProbability);
+    details['probabilitySignals'] = estimate.activeSignals;
+    return detection.copyWith(details: details);
+  }
+
+  double? _detailDouble(Object? value) {
+    if (value is double) {
+      return value;
+    }
+    if (value is num) {
+      return value.toDouble();
+    }
+    return double.tryParse(value?.toString() ?? '');
+  }
+
+  double _usualBedtimeScore(DateTime local) {
+    final hour = local.hour + local.minute / 60.0;
+    if (hour >= 22 || hour < 6) {
+      return 1.0;
+    }
+    if (hour >= 20 && hour < 22) {
+      return (hour - 20) / 2.0;
+    }
+    if (hour >= 6 && hour < 8) {
+      return 1.0 - (hour - 6) / 2.0;
+    }
+    return 0.0;
+  }
+
+  double _round2(double value) => double.parse(value.toStringAsFixed(2));
+
+  Future<void> _recordSleepCycleObservation(AcousticDetection detection) async {
+    final observation = SleepCycleObservation.fromDetection(detection);
+    if (observation == null) {
+      return;
+    }
+    _sleepCycleProfile = _sleepCycleProfile.addObservation(observation);
+    await _settingsStore.saveSleepCycleProfile(_sleepCycleProfile);
+    final current = _config.valueOrNull;
+    if (current == null) {
+      return;
+    }
+    final maxCycles = current.sleepCycleMinutesByIndex.length < 6
+        ? 6
+        : current.sleepCycleMinutesByIndex.length;
+    final seeds = _sleepCycleProfile.cycleMinuteSeeds(maxCycles: maxCycles);
+    _config.add(current.copyWith(sleepCycleMinutesByIndex: seeds));
   }
 
   Future<void> _scanSpeechForKeywords(
