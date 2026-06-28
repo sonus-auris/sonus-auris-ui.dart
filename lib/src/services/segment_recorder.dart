@@ -15,8 +15,15 @@ import '../models/recording_segment.dart';
 import 'acoustic/acoustic_pipeline.dart';
 import 'acoustic/spectral_features.dart';
 import 'acoustic_analyzer.dart';
+import 'capture_resume_coordinator.dart';
 import 'segment_index.dart';
 import 'wav_segment_writer.dart';
+
+/// Build-time gate. Pass `--dart-define=SONUS_DISABLE_INTERRUPTION_RESUME=true`
+/// to make the auto-resume safety net a complete no-op (A/B / fallback).
+const bool _kInterruptionResumeDisabled = bool.fromEnvironment(
+  'SONUS_DISABLE_INTERRUPTION_RESUME',
+);
 
 class SegmentRecorder {
   SegmentRecorder({
@@ -24,19 +31,39 @@ class SegmentRecorder {
     required SegmentIndex segmentIndex,
     AcousticAnalyzer? analyzer,
     Uuid? uuid,
+    bool? autoResumeAfterInterruption,
+    CaptureResumeCoordinator? resumeCoordinator,
   }) : this._(
-          recorder ?? AudioRecorder(),
-          segmentIndex,
-          analyzer ?? AcousticAnalyzer(),
-          uuid ?? const Uuid(),
-        );
+         recorder ?? AudioRecorder(),
+         segmentIndex,
+         analyzer ?? AcousticAnalyzer(),
+         uuid ?? const Uuid(),
+         resumeCoordinator ??
+             CaptureResumeCoordinator(
+               enabled:
+                   autoResumeAfterInterruption ?? !_kInterruptionResumeDisabled,
+             ),
+       );
 
-  SegmentRecorder._(this._recorder, this._segmentIndex, this._analyzer, this._uuid);
+  SegmentRecorder._(
+    this._recorder,
+    this._segmentIndex,
+    this._analyzer,
+    this._uuid,
+    this._resume,
+  );
 
   final AudioRecorder _recorder;
   final SegmentIndex _segmentIndex;
   final AcousticAnalyzer _analyzer;
   final Uuid _uuid;
+
+  // Auto-resume safety net: keeps an unattended (overnight) capture alive across
+  // phone calls, alarms, Siri, and media-services resets. See
+  // [CaptureResumeCoordinator]. A no-op when disabled.
+  final CaptureResumeCoordinator _resume;
+  Timer? _resumeWatchdog;
+  StreamSubscription<AudioInterruptionEvent>? _interruptionSubscription;
   final BehaviorSubject<RecorderSnapshot> _snapshot = BehaviorSubject.seeded(
     const RecorderSnapshot.idle(),
   );
@@ -101,6 +128,11 @@ class SegmentRecorder {
 
   Stream<AudioTriggerEvent> get triggerEvents => _triggerEvents.stream;
 
+  /// Fires (with a short reason) when capture should be restarted to recover
+  /// from an interruption or stall it could not resume on its own. The owner
+  /// (app controller) decides whether to act, applying its own back-off.
+  Stream<String> get resumeRequests => _resume.resumeRequests;
+
   /// Acoustic-intelligence detections from the on-device FFT engine.
   Stream<AcousticDetection> get detections => _analyzer.detections;
 
@@ -157,6 +189,12 @@ class SegmentRecorder {
           fftSize: config.analyzerFftSize,
           flags: AcousticDetectorFlags(
             snore: config.snoreDetectionEnabled,
+            sleep: config.sleepAnalysisEnabled,
+            sleepCycleAlarms: config.sleepCycleAlarmsEnabled,
+            sleepCycleMinutesByIndex: config.sleepCycleMinutesByIndex,
+            sleepMotionSignal: config.sleepMotionSensorConsent,
+            sleepAmbientLightSignal: config.sleepAmbientLightConsent,
+            sleepPhoneContextSignal: config.sleepPhoneContextConsent,
             music: config.musicDetectionEnabled,
             speech: config.speechDetectionEnabled,
           ),
@@ -182,6 +220,12 @@ class SegmentRecorder {
           .listen(
             (_) {},
             onError: (Object error) {
+              // A stream error mid-recording (e.g. media services reset) is a
+              // recoverable death, not a deliberate stop: ask to restart while
+              // the coordinator still considers us recording.
+              if (!_stopping) {
+                _resume.onCaptureError(DateTime.now().toUtc());
+              }
               _snapshot.add(
                 _snapshot.value.copyWith(
                   isRecording: false,
@@ -215,6 +259,7 @@ class SegmentRecorder {
               ),
             );
           });
+      await _startResumeGuard();
     } catch (error) {
       _running = false;
       await _analyzer.stop();
@@ -233,6 +278,9 @@ class SegmentRecorder {
     _running = false;
     await _amplitudeSubscription?.cancel();
     _amplitudeSubscription = null;
+    // Disarm the auto-resume guard before tearing the stream down so the stop
+    // we are about to perform is not mistaken for an interruption to recover.
+    await _stopResumeGuard();
     try {
       if (await _recorder.isRecording() || await _recorder.isPaused()) {
         await _recorder.stop();
@@ -258,12 +306,20 @@ class SegmentRecorder {
   }
 
   Future<void> dispose() async {
+    // [stop] must finish first: it drains the stream, flushes the final segment
+    // (emitting into _closedSegments), stops the analyzer feed, and disarms the
+    // resume guard. After it the rest are independent resource releases, so run
+    // them concurrently. Future.wait still waits for all to settle before it
+    // surfaces any error, so nothing is left half-disposed.
     await stop();
-    await _analyzer.dispose();
-    await _snapshot.close();
-    await _closedSegments.close();
-    await _triggerEvents.close();
-    await _recorder.dispose();
+    await Future.wait([
+      _resume.dispose(),
+      _analyzer.dispose(),
+      _snapshot.close(),
+      _closedSegments.close(),
+      _triggerEvents.close(),
+      _recorder.dispose(),
+    ]);
   }
 
   Future<void> _configureAudioSession() async {
@@ -282,6 +338,44 @@ class SegmentRecorder {
         androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
       ),
     );
+    await session.setActive(true);
+  }
+
+  /// Arms the auto-resume safety net for the freshly opened stream: a periodic
+  /// liveness watchdog plus an OS interruption listener. Fully skipped (no
+  /// timer, no subscription) when the feature is gated off, so capture behaves
+  /// exactly as before.
+  Future<void> _startResumeGuard() async {
+    if (!_resume.enabled) {
+      return;
+    }
+    _resume.start(DateTime.now().toUtc());
+    await _interruptionSubscription?.cancel();
+    final session = await AudioSession.instance;
+    _interruptionSubscription = session.interruptionEventStream.listen((event) {
+      // Ducking lowers other apps' volume but does not stop our capture.
+      if (event.type == AudioInterruptionType.duck) {
+        return;
+      }
+      if (event.begin) {
+        _resume.onInterruptionBegin();
+      } else {
+        _resume.onInterruptionEnd(DateTime.now().toUtc());
+      }
+    });
+    _resumeWatchdog?.cancel();
+    _resumeWatchdog = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _resume.tick(DateTime.now().toUtc()),
+    );
+  }
+
+  Future<void> _stopResumeGuard() async {
+    _resumeWatchdog?.cancel();
+    _resumeWatchdog = null;
+    await _interruptionSubscription?.cancel();
+    _interruptionSubscription = null;
+    _resume.stop();
   }
 
   void _resetCaptureState(AppConfig config) {
@@ -317,7 +411,8 @@ class SegmentRecorder {
     _gateLoudSamples = 0;
     _gateQuietSamples = 0;
     _gateActivationDb = config.analysisActivationDb;
-    _gateSustainSamples = (config.analysisSustainSeconds * _captureRate).round();
+    _gateSustainSamples = (config.analysisSustainSeconds * _captureRate)
+        .round();
     _gateHoldSamples = (config.analysisHoldSeconds * _captureRate).round();
     _analyzerDecimFactor = config.analyzerDecimationFactor;
     _analyzerDownsampler = _analysisActive && _analyzerDecimFactor > 1
@@ -335,6 +430,10 @@ class SegmentRecorder {
     final config = _config;
     if (!_running || config == null || bytes.isEmpty) {
       return;
+    }
+    // Audio is flowing — tell the resume watchdog capture is alive.
+    if (_resume.enabled) {
+      _resume.notifyChunk(DateTime.now().toUtc());
     }
     final frameSize = config.channels * 2;
     final data = _consumeAlignedFrames(bytes, frameSize);
@@ -442,7 +541,9 @@ class SegmentRecorder {
     );
     final store = _storeDownsampler;
     if (_currentOverlapSamples > 0) {
-      final overlap = store == null ? _overlapBytes : store.process(_overlapBytes);
+      final overlap = store == null
+          ? _overlapBytes
+          : store.process(_overlapBytes);
       await writer.write(overlap);
     }
     _storedOverlapSamples = writer.sampleCount;
@@ -473,8 +574,8 @@ class SegmentRecorder {
     }
     // Until we have a trailing-loudness reading, keep full quality (treat the
     // first segment as loud) rather than needlessly downsampling startup audio.
-    final loud = (_recentDb ?? config.adaptiveLoudnessDb) >=
-        config.adaptiveLoudnessDb;
+    final loud =
+        (_recentDb ?? config.adaptiveLoudnessDb) >= config.adaptiveLoudnessDb;
     if (loud) {
       _storeRate = _captureRate;
       _storeFactor = 1;
@@ -569,8 +670,8 @@ class SegmentRecorder {
     if (config == null) {
       return;
     }
-    final maxBytes =
-        (_captureRate * config.channels * 2 * _recentWindowSeconds).round();
+    final maxBytes = (_captureRate * config.channels * 2 * _recentWindowSeconds)
+        .round();
     _recentChunks.add(Uint8List.fromList(slice));
     _recentBytes += slice.length;
     while (_recentBytes > maxBytes && _recentChunks.length > 1) {
@@ -593,6 +694,10 @@ class SegmentRecorder {
     _PcmPower power,
   ) {
     if (!_analysisActive) {
+      return;
+    }
+    if (config.sleepAnalysisEnabled) {
+      _feedAnalyzer(slice, config);
       return;
     }
     final db = _dbForRms(power.averagePower);
@@ -637,7 +742,8 @@ class SegmentRecorder {
     }
     // The first sample of this slice corresponds to the current live position
     // minus the samples we just added.
-    final sliceStart = _totalLiveSamples - (slice.length ~/ (config.channels * 2));
+    final sliceStart =
+        _totalLiveSamples - (slice.length ~/ (config.channels * 2));
     _analyzer.addMonoSamples(decimated, _timeForSample(sliceStart));
   }
 
@@ -766,7 +872,11 @@ class _AudioDsp {
     if (config.trebleGainDb != 0.0) {
       stages.add(_Biquad.highShelf(fs, 6000, config.trebleGainDb));
     }
-    return _AudioDsp._(config.micSensitivity, stages, config.channels.clamp(1, 2));
+    return _AudioDsp._(
+      config.micSensitivity,
+      stages,
+      config.channels.clamp(1, 2),
+    );
   }
 
   Uint8List process(Uint8List frameBytes, int channels) {
@@ -796,8 +906,8 @@ class _AudioDsp {
 /// the FFT analyzer at ~16 kHz regardless of the capture rate.
 class _MonoDownsampler {
   _MonoDownsampler(this.factor, double fs)
-      : _lp = _Biquad.lowPass(fs, 0.45 * fs / factor, 0.707),
-        _state = _BiquadState();
+    : _lp = _Biquad.lowPass(fs, 0.45 * fs / factor, 0.707),
+      _state = _BiquadState();
 
   final int factor;
   final _Biquad _lp;
@@ -825,8 +935,11 @@ class _MonoDownsampler {
 /// phase persist across calls so a segment's stream stays continuous.
 class _Pcm16Downsampler {
   _Pcm16Downsampler(this.factor, this.channels, double fs)
-      : _lp = _Biquad.lowPass(fs, 0.45 * fs / factor, 0.707),
-        _states = List.generate(channels < 1 ? 1 : channels, (_) => _BiquadState());
+    : _lp = _Biquad.lowPass(fs, 0.45 * fs / factor, 0.707),
+      _states = List.generate(
+        channels < 1 ? 1 : channels,
+        (_) => _BiquadState(),
+      );
 
   final int factor;
   final int channels;
@@ -947,8 +1060,7 @@ class _BiquadState {
   double _y2 = 0;
 
   double process(_Biquad c, double x) {
-    final y =
-        c.b0 * x + c.b1 * _x1 + c.b2 * _x2 - c.a1 * _y1 - c.a2 * _y2;
+    final y = c.b0 * x + c.b1 * _x1 + c.b2 * _x2 - c.a1 * _y1 - c.a2 * _y2;
     _x2 = _x1;
     _x1 = x;
     _y2 = _y1;

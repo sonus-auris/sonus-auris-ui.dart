@@ -609,6 +609,10 @@ class _DetectionsSection extends StatelessWidget {
         return Icons.bedtime;
       case AcousticDetectionKind.apneaPattern:
         return Icons.warning_amber;
+      case AcousticDetectionKind.sleepCycle:
+        return Icons.nights_stay;
+      case AcousticDetectionKind.sleepCycleAlarm:
+        return Icons.alarm;
       case AcousticDetectionKind.music:
         return Icons.music_note;
       case AcousticDetectionKind.speech:
@@ -632,6 +636,10 @@ class _DetectionsSection extends StatelessWidget {
         return '$time · "${d.details['keyword'] ?? ''}"';
       case AcousticDetectionKind.apneaPattern:
         return '$time · gap ${d.details['gapSeconds'] ?? '?'}s (not a diagnosis)';
+      case AcousticDetectionKind.sleepCycle:
+        return '$time · cycle ${d.details['cycleIndex'] ?? '?'} · ${d.details['estimatedCycleMinutes'] ?? '?'} min';
+      case AcousticDetectionKind.sleepCycleAlarm:
+        return '$time · wake after cycle ${d.details['cycleIndex'] ?? '?'}';
       default:
         return time;
     }
@@ -2034,6 +2042,12 @@ class _AcousticSectionState extends State<_AcousticSection> {
   String? _syncedDeviceId;
   late bool _enabled;
   late bool _snore;
+  late bool _sleep;
+  late bool _sleepAlarms;
+  late bool _sleepMotionConsent;
+  late bool _sleepAmbientLightConsent;
+  late bool _sleepPhoneContextConsent;
+  late double _sleepCycleMinutes;
   late bool _music;
   late bool _speech;
   late bool _shazam;
@@ -2049,6 +2063,14 @@ class _AcousticSectionState extends State<_AcousticSection> {
   void _seed(AppConfig config) {
     _enabled = config.acousticAnalysisEnabled;
     _snore = config.snoreDetectionEnabled;
+    _sleep = config.sleepAnalysisEnabled;
+    _sleepAlarms = config.sleepCycleAlarmsEnabled;
+    _sleepMotionConsent = config.sleepMotionSensorConsent;
+    _sleepAmbientLightConsent = config.sleepAmbientLightConsent;
+    _sleepPhoneContextConsent = config.sleepPhoneContextConsent;
+    _sleepCycleMinutes = config.sleepCycleMinutesByIndex.isEmpty
+        ? 90.0
+        : config.sleepCycleMinutesByIndex.first;
     _music = config.musicDetectionEnabled;
     _speech = config.speechDetectionEnabled;
     _shazam = config.shazamEnabled;
@@ -2080,6 +2102,12 @@ class _AcousticSectionState extends State<_AcousticSection> {
       widget.config.copyWith(
         acousticAnalysisEnabled: _enabled,
         snoreDetectionEnabled: _snore,
+        sleepAnalysisEnabled: _sleep,
+        sleepCycleAlarmsEnabled: _sleepAlarms,
+        sleepCycleMinutesByIndex: _sleepCycleVector(),
+        sleepMotionSensorConsent: _sleepMotionConsent,
+        sleepAmbientLightConsent: _sleepAmbientLightConsent,
+        sleepPhoneContextConsent: _sleepPhoneContextConsent,
         musicDetectionEnabled: _music,
         speechDetectionEnabled: _speech,
         shazamEnabled: _shazam,
@@ -2128,6 +2156,78 @@ class _AcousticSectionState extends State<_AcousticSection> {
                 _apply();
               },
             ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Sleep analysis'),
+              subtitle: const Text('Breathing cadence and snoring cycles'),
+              value: _sleep,
+              onChanged: (v) {
+                setState(() {
+                  _sleep = v;
+                  if (!v) {
+                    _sleepAlarms = false;
+                    _sleepMotionConsent = false;
+                    _sleepAmbientLightConsent = false;
+                    _sleepPhoneContextConsent = false;
+                  }
+                });
+                _apply();
+              },
+            ),
+            if (_sleep) ...[
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Alarm after cycles 5 and 6'),
+                subtitle: const Text('7.5h and 9h baseline; learned per user'),
+                value: _sleepAlarms,
+                onChanged: (v) {
+                  setState(() => _sleepAlarms = v);
+                  _apply();
+                },
+              ),
+              _slider(
+                label: 'Cycle seed',
+                value: _sleepCycleMinutes,
+                min: 75,
+                max: 120,
+                divisions: 45,
+                display: '${_sleepCycleMinutes.toStringAsFixed(0)} min',
+                onChanged: (v) {
+                  setState(() => _sleepCycleMinutes = v);
+                  _apply();
+                },
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Allow motion signal'),
+                subtitle: const Text('Stillness, tossing, getting up'),
+                value: _sleepMotionConsent,
+                onChanged: (v) {
+                  setState(() => _sleepMotionConsent = v);
+                  _apply();
+                },
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Allow ambient light signal'),
+                subtitle: const Text('Dark room and morning light changes'),
+                value: _sleepAmbientLightConsent,
+                onChanged: (v) {
+                  setState(() => _sleepAmbientLightConsent = v);
+                  _apply();
+                },
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Allow phone context signal'),
+                subtitle: const Text('Charging, idle time, usual bedtime'),
+                value: _sleepPhoneContextConsent,
+                onChanged: (v) {
+                  setState(() => _sleepPhoneContextConsent = v);
+                  _apply();
+                },
+              ),
+            ],
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Music detection'),
@@ -2304,6 +2404,20 @@ class _AcousticSectionState extends State<_AcousticSection> {
         ],
       ),
     );
+  }
+
+  List<double> _sleepCycleVector() {
+    final existing = widget.config.sleepCycleMinutesByIndex;
+    final vector = existing.isEmpty
+        ? List<double>.filled(6, _sleepCycleMinutes)
+        : existing.toList();
+    while (vector.length < 6) {
+      vector.add(vector.isEmpty ? _sleepCycleMinutes : vector.last);
+    }
+    vector[0] = _sleepCycleMinutes;
+    return vector
+        .map((minutes) => minutes.clamp(75.0, 120.0).toDouble())
+        .toList(growable: false);
   }
 }
 
@@ -3334,8 +3448,8 @@ class _ScheduleSectionState extends State<_ScheduleSection> {
         children: [
           Text(
             'Record automatically during the windows you set for each day. '
-            'Setting these times is your consent to record then — on iOS each '
-            'window asks you to tap to begin.',
+            'Setting these times is your consent to record then; keep the app '
+            'running so iOS can maintain the active audio session.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: SonusColors.inkSoft,
             ),

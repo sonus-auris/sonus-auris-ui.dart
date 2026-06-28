@@ -47,6 +47,12 @@ class AppConfig {
     this.analysisSustainSeconds = 2.0,
     this.analysisHoldSeconds = 45.0,
     this.snoreDetectionEnabled = true,
+    this.sleepAnalysisEnabled = false,
+    this.sleepCycleAlarmsEnabled = false,
+    this.sleepCycleMinutesByIndex = const [],
+    this.sleepMotionSensorConsent = false,
+    this.sleepAmbientLightConsent = false,
+    this.sleepPhoneContextConsent = false,
     this.musicDetectionEnabled = true,
     this.speechDetectionEnabled = true,
     this.shazamEnabled = false,
@@ -181,6 +187,12 @@ class AppConfig {
 
   /// Per-detector toggles for the analysis engine.
   final bool snoreDetectionEnabled;
+  final bool sleepAnalysisEnabled;
+  final bool sleepCycleAlarmsEnabled;
+  final List<double> sleepCycleMinutesByIndex;
+  final bool sleepMotionSensorConsent;
+  final bool sleepAmbientLightConsent;
+  final bool sleepPhoneContextConsent;
   final bool musicDetectionEnabled;
   final bool speechDetectionEnabled;
 
@@ -260,6 +272,7 @@ class AppConfig {
   bool get hasAcousticAnalysis =>
       acousticAnalysisEnabled &&
       (snoreDetectionEnabled ||
+          sleepAnalysisEnabled ||
           musicDetectionEnabled ||
           speechDetectionEnabled);
 
@@ -356,6 +369,12 @@ class AppConfig {
     double? analysisSustainSeconds,
     double? analysisHoldSeconds,
     bool? snoreDetectionEnabled,
+    bool? sleepAnalysisEnabled,
+    bool? sleepCycleAlarmsEnabled,
+    List<double>? sleepCycleMinutesByIndex,
+    bool? sleepMotionSensorConsent,
+    bool? sleepAmbientLightConsent,
+    bool? sleepPhoneContextConsent,
     bool? musicDetectionEnabled,
     bool? speechDetectionEnabled,
     bool? shazamEnabled,
@@ -422,6 +441,17 @@ class AppConfig {
       analysisHoldSeconds: analysisHoldSeconds ?? this.analysisHoldSeconds,
       snoreDetectionEnabled:
           snoreDetectionEnabled ?? this.snoreDetectionEnabled,
+      sleepAnalysisEnabled: sleepAnalysisEnabled ?? this.sleepAnalysisEnabled,
+      sleepCycleAlarmsEnabled:
+          sleepCycleAlarmsEnabled ?? this.sleepCycleAlarmsEnabled,
+      sleepCycleMinutesByIndex:
+          sleepCycleMinutesByIndex ?? this.sleepCycleMinutesByIndex,
+      sleepMotionSensorConsent:
+          sleepMotionSensorConsent ?? this.sleepMotionSensorConsent,
+      sleepAmbientLightConsent:
+          sleepAmbientLightConsent ?? this.sleepAmbientLightConsent,
+      sleepPhoneContextConsent:
+          sleepPhoneContextConsent ?? this.sleepPhoneContextConsent,
       musicDetectionEnabled:
           musicDetectionEnabled ?? this.musicDetectionEnabled,
       speechDetectionEnabled:
@@ -486,6 +516,12 @@ class AppConfig {
       'analysisSustainSeconds': analysisSustainSeconds,
       'analysisHoldSeconds': analysisHoldSeconds,
       'snoreDetectionEnabled': snoreDetectionEnabled,
+      'sleepAnalysisEnabled': sleepAnalysisEnabled,
+      'sleepCycleAlarmsEnabled': sleepCycleAlarmsEnabled,
+      'sleepCycleMinutesByIndex': sleepCycleMinutesByIndex,
+      'sleepMotionSensorConsent': sleepMotionSensorConsent,
+      'sleepAmbientLightConsent': sleepAmbientLightConsent,
+      'sleepPhoneContextConsent': sleepPhoneContextConsent,
       'musicDetectionEnabled': musicDetectionEnabled,
       'speechDetectionEnabled': speechDetectionEnabled,
       'shazamEnabled': shazamEnabled,
@@ -566,6 +602,21 @@ class AppConfig {
         45.0,
       ).clamp(0.0, 600.0),
       snoreDetectionEnabled: json['snoreDetectionEnabled'] as bool? ?? true,
+      sleepAnalysisEnabled: json['sleepAnalysisEnabled'] as bool? ?? false,
+      sleepCycleAlarmsEnabled:
+          json['sleepCycleAlarmsEnabled'] as bool? ?? false,
+      sleepCycleMinutesByIndex: _asDoubleList(
+        json['sleepCycleMinutesByIndex'],
+        min: 75,
+        max: 120,
+        limit: 12,
+      ),
+      sleepMotionSensorConsent:
+          json['sleepMotionSensorConsent'] as bool? ?? false,
+      sleepAmbientLightConsent:
+          json['sleepAmbientLightConsent'] as bool? ?? false,
+      sleepPhoneContextConsent:
+          json['sleepPhoneContextConsent'] as bool? ?? false,
       musicDetectionEnabled: json['musicDetectionEnabled'] as bool? ?? true,
       speechDetectionEnabled: json['speechDetectionEnabled'] as bool? ?? true,
       shazamEnabled: json['shazamEnabled'] as bool? ?? false,
@@ -605,6 +656,22 @@ class AppConfig {
           .toList();
     }
     return const [];
+  }
+
+  static List<double> _asDoubleList(
+    Object? value, {
+    required double min,
+    required double max,
+    required int limit,
+  }) {
+    if (value is! List) {
+      return const [];
+    }
+    return value
+        .map((entry) => _asDouble(entry, 90.0).clamp(min, max).toDouble())
+        .where((entry) => entry.isFinite)
+        .take(limit)
+        .toList(growable: false);
   }
 
   static int _asInt(Object? value, int fallback) {

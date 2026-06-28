@@ -17,6 +17,7 @@ import '../models/recorder_snapshot.dart';
 import '../models/cloud_connection.dart';
 import '../models/recording_schedule.dart';
 import '../models/recording_segment.dart';
+import '../models/sleep_cycle_profile.dart';
 import '../models/supabase_session.dart';
 import '../models/transfer_gate_status.dart';
 import '../services/background_capture_service.dart';
@@ -39,6 +40,8 @@ import '../services/s3_storage_client.dart';
 import '../services/segment_index.dart';
 import '../services/segment_recorder.dart';
 import '../services/settings_store.dart';
+import '../services/sleep_sensor_service.dart';
+import '../services/sleep_signal_model.dart';
 import '../services/shazam_client.dart';
 import '../services/memory_publisher.dart';
 import '../services/day_of_life_archiver.dart';
@@ -78,6 +81,7 @@ class AppController {
     OAuthBrowser? oauthBrowser,
     SpeechToTextClient? speechToTextClient,
     OnDeviceSpeechClient? onDeviceSpeechClient,
+    SleepSensorService? sleepSensorService,
     RecordingScheduler? recordingScheduler,
     LocalNotificationsService? localNotifications,
     ContextTriggerService? contextTriggerService,
@@ -122,6 +126,7 @@ class AppController {
       oauthBrowser: oauthBrowser ?? const FlutterWebAuthBrowser(),
       speechToTextClient: speechToTextClient ?? SpeechToTextClient(),
       onDeviceSpeechClient: onDeviceSpeechClient ?? OnDeviceSpeechClient(),
+      sleepSensorService: sleepSensorService ?? SleepSensorService(),
       scheduler:
           recordingScheduler ??
           RecordingScheduler(
@@ -163,6 +168,7 @@ class AppController {
     required this._oauthBrowser,
     required this._speechToTextClient,
     required this._onDeviceSpeechClient,
+    required this._sleepSensorService,
     required this._scheduler,
     required this._localNotifications,
     required this._contextTriggers,
@@ -295,6 +301,7 @@ class AppController {
   bool _archiveCaughtUp = false;
   final SpeechToTextClient _speechToTextClient;
   final OnDeviceSpeechClient _onDeviceSpeechClient;
+  final SleepSensorService _sleepSensorService;
   final RecordingScheduler _scheduler;
   final LocalNotificationsService _localNotifications;
   final ContextTriggerService _contextTriggers;
@@ -313,6 +320,9 @@ class AppController {
   StreamSubscription<void>? _transferConditionsSubscription;
   String? _lastReportedTransferSignature;
   DateTime? _lastTransferReportAt;
+  SleepCycleProfile _sleepCycleProfile = const SleepCycleProfile();
+  static const SleepProbabilityModel _sleepProbabilityModel =
+      SleepProbabilityModel();
 
   /// While paused, the device re-affirms its state to the backend at least this
   /// often so the server-side pause lease (which the cloud-copy drain honors)
@@ -347,6 +357,16 @@ class AppController {
   StreamSubscription<dynamic>? _triggerSubscription;
   StreamSubscription<dynamic>? _detectionsSubscription;
   StreamSubscription<dynamic>? _uploadSubscription;
+  StreamSubscription<String>? _resumeRequestsSubscription;
+
+  // Auto-resume state. [_intendRecording] is the user/schedule intent (true
+  // between a successful start and the next stop), independent of whether the
+  // mic stream is momentarily down. The rest rate-limit auto-restarts so a
+  // device that genuinely cannot record does not spin.
+  bool _intendRecording = false;
+  bool _autoResuming = false;
+  final List<DateTime> _recentAutoResumes = [];
+  static const int _maxAutoResumesPerMinute = 4;
   BackendUploadSession? _backendSession;
   String? _backendSessionKey;
   final List<AudioTriggerEvent> _pendingAlertEvents = [];
@@ -359,7 +379,16 @@ class AppController {
   Future<void> init() async {
     _diagnostics.add('App controller init started.');
     _backgroundCaptureService.init();
-    final config = await _settingsStore.loadConfig();
+    final loadedConfig = await _settingsStore.loadConfig();
+    _sleepCycleProfile = (await _settingsStore.loadSleepCycleProfile()).pruned(
+      DateTime.now().toUtc(),
+    );
+    final sleepCycleSeeds = _sleepCycleProfile.observations.isEmpty
+        ? loadedConfig.sleepCycleMinutesByIndex
+        : _sleepCycleProfile.cycleMinuteSeeds();
+    final config = loadedConfig.copyWith(
+      sleepCycleMinutesByIndex: sleepCycleSeeds,
+    );
     final secrets = await _settingsStore.loadSecrets();
     final pendingAlerts = await _settingsStore.loadPendingAlerts();
     final recovered = await _segmentIndex.recoverOrphanedLocalSegments(
@@ -395,6 +424,15 @@ class AppController {
       (detection) => unawaited(_onDetection(detection)),
       onError: (Object error) {
         _diagnostics.add('Acoustic detection stream error: $error');
+      },
+    );
+    // Auto-resume: restart capture when the recorder reports an interruption or
+    // stall it could not recover from on its own (keeps overnight capture alive
+    // across calls, alarms, Siri, media-services resets).
+    _resumeRequestsSubscription = _recorder.resumeRequests.listen(
+      (reason) => unawaited(_handleAutoResume(reason)),
+      onError: (Object error) {
+        _diagnostics.add('Auto-resume stream error: $error');
       },
     );
     _uploadSubscription = _uploadRequests
@@ -434,8 +472,10 @@ class AppController {
     await _localNotifications.ensureInitialized();
     final launchedFromConsent = await _localNotifications.launchedFromConsent();
     // Register OS alarms/notifications for the recording schedule and reconcile
-    // current capture against the schedule. iOS requires a notification tap to
-    // begin inside an active scheduled window.
+    // current capture against the schedule. On iOS this can continue through
+    // lock/background once a real recording session is active; local
+    // notifications remain reminders/relaunch affordances, not the only start
+    // path.
     await _scheduler.sync(config.recordingSchedule);
     final pendingScheduleCommand = await _scheduler.drainPendingShouldRecord();
     if (pendingScheduleCommand != null) {
@@ -444,16 +484,7 @@ class AppController {
         '${pendingScheduleCommand ? "start" : "stop"}.',
       );
     }
-    if (_shouldWaitForIosScheduleTap(
-      config.recordingSchedule,
-      launchedFromConsent,
-    )) {
-      _diagnostics.add(
-        'Schedule window active on iOS; waiting for notification tap.',
-      );
-    } else {
-      await _reconcileWithSchedule(config.recordingSchedule);
-    }
+    await _reconcileWithSchedule(config.recordingSchedule);
     // Arm context triggers and honor a consent notification the user may have
     // tapped to launch the app.
     await _updateContextTriggers();
@@ -469,24 +500,7 @@ class AppController {
     if (config == null || !config.recordingSchedule.enabled) {
       return;
     }
-    if (shouldRecord &&
-        _shouldWaitForIosScheduleTap(config.recordingSchedule, false)) {
-      _diagnostics.add(
-        'Schedule start reached on iOS; waiting for notification tap.',
-      );
-      return;
-    }
     unawaited(_applyScheduleState(shouldRecord));
-  }
-
-  bool _shouldWaitForIosScheduleTap(
-    RecordingSchedule schedule,
-    bool launchedFromConsent,
-  ) {
-    return Platform.isIOS &&
-        !launchedFromConsent &&
-        schedule.enabled &&
-        schedule.isActiveAt(DateTime.now());
   }
 
   /// Brings capture in line with what the schedule says should be happening
@@ -714,6 +728,9 @@ class AppController {
       captureSampleRate: config.captureSampleRate.clamp(8000, 48000),
       quietSampleRate: config.quietSampleRate.clamp(8000, 48000),
       adaptiveLoudnessDb: config.adaptiveLoudnessDb.clamp(-90.0, 0.0),
+      sleepCycleMinutesByIndex: _normalizedSleepCycleMinutes(
+        config.sleepCycleMinutesByIndex,
+      ),
       recordingSchedule: config.recordingSchedule.normalize(),
     );
     final scheduleChanged =
@@ -723,6 +740,9 @@ class AppController {
       _backendSessionKey = null;
     }
     _feedback.enabled = normalized.verbalCuesEnabled;
+    if (normalized.sleepCycleAlarmsEnabled) {
+      await _localNotifications.requestPermission();
+    }
     await _settingsStore.saveConfig(normalized);
     _config.add(normalized);
     _message.add('Settings saved.');
@@ -740,6 +760,14 @@ class AppController {
     await _updateContextTriggers();
   }
 
+  List<double> _normalizedSleepCycleMinutes(List<double> minutes) {
+    return minutes
+        .map((entry) => entry.clamp(75.0, 120.0).toDouble())
+        .where((entry) => entry.isFinite)
+        .take(12)
+        .toList(growable: false);
+  }
+
   /// Request the permissions the armed context-trigger [kinds] depend on:
   /// notifications (background consent prompt), Bluetooth (connect/nearby), and
   /// location (Wi-Fi SSID, and BLE scanning on older Android). Without these the
@@ -750,14 +778,16 @@ class AppController {
     await _localNotifications.requestPermission();
     final needsBluetooth =
         kinds.contains(ContextTriggerKind.bluetoothConnect) ||
-            kinds.contains(ContextTriggerKind.nearbyDevice);
+        kinds.contains(ContextTriggerKind.nearbyDevice);
     final needsLocation =
         needsBluetooth || kinds.contains(ContextTriggerKind.wifiChange);
     try {
       if (needsBluetooth) {
         if (Platform.isAndroid) {
-          await [Permission.bluetoothScan, Permission.bluetoothConnect]
-              .request();
+          await [
+            Permission.bluetoothScan,
+            Permission.bluetoothConnect,
+          ].request();
         } else if (Platform.isIOS) {
           await Permission.bluetooth.request();
         }
@@ -1061,6 +1091,8 @@ class AppController {
       try {
         _diagnostics.add('Starting PCM microphone stream.');
         await _recorder.start(_config.value);
+        // Capture is live: from here a dropped stream should be auto-resumed.
+        _intendRecording = true;
         _diagnostics.add('PCM microphone stream started.');
         unawaited(_feedback.say('Recording started'));
         _message.add(
@@ -1082,6 +1114,8 @@ class AppController {
 
   Future<void> stopRecording() async {
     _diagnostics.add('Stop recording requested.');
+    // Clear intent first so an in-flight resume request does not re-start us.
+    _intendRecording = false;
     Object? recorderError;
     try {
       await _recorder.stop();
@@ -1156,6 +1190,40 @@ class AppController {
     final wasScheduleOwned = _scheduleStartedRecording;
     await stopRecording();
     await startRecording(scheduleInitiated: wasScheduleOwned);
+  }
+
+  /// Restarts capture after the recorder reports an interruption/stall it could
+  /// not resume itself. Silent (no spoken cue, no schedule-ownership change) and
+  /// rate-limited so a device that genuinely cannot record does not spin.
+  Future<void> _handleAutoResume(String reason) async {
+    if (!_intendRecording || _autoResuming) {
+      return;
+    }
+    final now = DateTime.now();
+    _recentAutoResumes.removeWhere(
+      (t) => now.difference(t) > const Duration(seconds: 60),
+    );
+    if (_recentAutoResumes.length >= _maxAutoResumesPerMinute) {
+      _diagnostics.add(
+        'Auto-resume suppressed after '
+        '${_recentAutoResumes.length} attempts in 60s ($reason).',
+      );
+      _message.add(
+        'Recording was interrupted and could not restart automatically. '
+        'Tap record to resume.',
+      );
+      return;
+    }
+    _recentAutoResumes.add(now);
+    _autoResuming = true;
+    _diagnostics.add('Auto-resuming capture ($reason).');
+    try {
+      await restartRecording(announce: false);
+    } catch (error) {
+      _diagnostics.add('Auto-resume restart failed: $error.');
+    } finally {
+      _autoResuming = false;
+    }
   }
 
   Future<void> playLocalWindow() async {
@@ -1696,16 +1764,20 @@ class AppController {
   }
 
   Future<void> dispose() async {
-    await _closedSegmentsSubscription?.cancel();
-    await _triggerSubscription?.cancel();
-    await _detectionsSubscription?.cancel();
-    await _uploadSubscription?.cancel();
-    await _transferConditionsSubscription?.cancel();
+    // 1. Stop listening before tearing down the sources these subscriptions
+    //    read, so a late event can't fire into a half-disposed controller. The
+    //    cancels are mutually independent — run them together.
+    await Future.wait([
+      _closedSegmentsSubscription?.cancel() ?? Future<void>.value(),
+      _triggerSubscription?.cancel() ?? Future<void>.value(),
+      _detectionsSubscription?.cancel() ?? Future<void>.value(),
+      _uploadSubscription?.cancel() ?? Future<void>.value(),
+      _resumeRequestsSubscription?.cancel() ?? Future<void>.value(),
+      _transferConditionsSubscription?.cancel() ?? Future<void>.value(),
+    ]);
+
+    // 2. Synchronous client/scheduler closes — fire them off together.
     _scheduler.dispose();
-    await _contextTriggers.dispose();
-    await _uploadRequests.close();
-    await _recorder.dispose();
-    await _playback.dispose();
     _s3StorageClient.close();
     _icloudSyncService.close();
     _backendClient.close();
@@ -1715,18 +1787,30 @@ class AppController {
     _memoryPublisher.close();
     _dayOfLifeArchiver.close();
     _musicOAuthService.close();
-    await _feedback.dispose();
+
+    // 3. Independent async teardowns + own-stream closes, now that the
+    //    subscriptions feeding/reading them are gone. _diagnostics is held back
+    //    to step 4 because these may still log to it.
+    await Future.wait([
+      _contextTriggers.dispose(),
+      _uploadRequests.close(),
+      _recorder.dispose(),
+      _playback.dispose(),
+      _feedback.dispose(),
+      _config.close(),
+      _secrets.close(),
+      _segments.close(),
+      _isInitializing.close(),
+      _isStarting.close(),
+      _isUploading.close(),
+      _transfer.close(),
+      _message.close(),
+      _detectionsList.close(),
+      _consentRequest.close(),
+    ]);
+
+    // 4. Diagnostics last: the teardowns above may still write to it.
     await _diagnostics.dispose();
-    await _config.close();
-    await _secrets.close();
-    await _segments.close();
-    await _isInitializing.close();
-    await _isStarting.close();
-    await _isUploading.close();
-    await _transfer.close();
-    await _message.close();
-    await _detectionsList.close();
-    await _consentRequest.close();
   }
 
   Future<void> _onSegmentClosed(RecordingSegment segment) async {
@@ -2221,11 +2305,131 @@ class AppController {
         await _scanSpeechForKeywords(config, detection);
       }
 
+      if (_isSleepCycleDetection(enriched)) {
+        enriched = await _enrichSleepDetection(config, enriched);
+        await _recordSleepCycleObservation(enriched);
+      }
+      if (enriched.kind == AcousticDetectionKind.sleepCycleAlarm &&
+          config.sleepCycleAlarmsEnabled) {
+        await _localNotifications.showSleepCycleAlarm(enriched);
+      }
+
       _appendDetection(enriched);
       await _storeDetections([enriched]);
     } catch (error) {
       _diagnostics.add('Acoustic detection handling failed: $error');
     }
+  }
+
+  bool _isSleepCycleDetection(AcousticDetection detection) {
+    return detection.kind == AcousticDetectionKind.sleepCycle ||
+        detection.kind == AcousticDetectionKind.sleepCycleAlarm;
+  }
+
+  Future<AcousticDetection> _enrichSleepDetection(
+    AppConfig config,
+    AcousticDetection detection,
+  ) async {
+    final details = {...detection.details};
+    SleepSensorSnapshot? sensor;
+    if (config.sleepMotionSensorConsent || config.sleepAmbientLightConsent) {
+      try {
+        sensor = await _sleepSensorService.sample(
+          motionConsent: config.sleepMotionSensorConsent,
+          ambientLightConsent: config.sleepAmbientLightConsent,
+        );
+      } catch (error) {
+        _diagnostics.add('Sleep sensor sample failed: $error');
+      }
+    }
+    final signalValues = sensor?.toSignalValues();
+    final transfer = _transfer.valueOrNull;
+    final bedtimeScore = config.sleepPhoneContextConsent
+        ? _usualBedtimeScore(detection.endedAtUtc.toLocal())
+        : null;
+    final estimate = _sleepProbabilityModel.estimate(
+      sample: SleepSignalSample(
+        acousticSleepScore: _detailDouble(details['sleepScore']),
+        acousticArousalScore: _detailDouble(details['arousalScore']),
+        motionStillnessScore: signalValues?.motionStillnessScore,
+        ambientLux: signalValues?.ambientLux,
+        isCharging: config.sleepPhoneContextConsent
+            ? transfer?.isCharging
+            : null,
+        usualBedtimeScore: bedtimeScore,
+      ),
+      consent: SleepSignalConsent(
+        audio: true,
+        motion: config.sleepMotionSensorConsent,
+        ambientLight: config.sleepAmbientLightConsent,
+        phoneContext: config.sleepPhoneContextConsent,
+      ),
+    );
+    if (sensor != null) {
+      if (sensor.motionAvailable && sensor.motionStillnessScore != null) {
+        details['motionStillnessScore'] = _round2(sensor.motionStillnessScore!);
+      }
+      if (sensor.ambientLightAvailable && sensor.ambientLux != null) {
+        details['ambientLux'] = _round2(sensor.ambientLux!);
+      }
+      if (sensor.screenBrightness != null) {
+        details['screenBrightness'] = _round2(sensor.screenBrightness!);
+      }
+    }
+    if (config.sleepPhoneContextConsent) {
+      details['phoneCharging'] = transfer?.isCharging;
+      if (bedtimeScore != null) {
+        details['usualBedtimeScore'] = _round2(bedtimeScore);
+      }
+    }
+    details['sleepProbability'] = _round2(estimate.sleepProbability);
+    details['wakeProbability'] = _round2(estimate.wakeProbability);
+    details['probabilitySignals'] = estimate.activeSignals;
+    return detection.copyWith(details: details);
+  }
+
+  double? _detailDouble(Object? value) {
+    if (value is double) {
+      return value;
+    }
+    if (value is num) {
+      return value.toDouble();
+    }
+    return double.tryParse(value?.toString() ?? '');
+  }
+
+  double _usualBedtimeScore(DateTime local) {
+    final hour = local.hour + local.minute / 60.0;
+    if (hour >= 22 || hour < 6) {
+      return 1.0;
+    }
+    if (hour >= 20 && hour < 22) {
+      return (hour - 20) / 2.0;
+    }
+    if (hour >= 6 && hour < 8) {
+      return 1.0 - (hour - 6) / 2.0;
+    }
+    return 0.0;
+  }
+
+  double _round2(double value) => double.parse(value.toStringAsFixed(2));
+
+  Future<void> _recordSleepCycleObservation(AcousticDetection detection) async {
+    final observation = SleepCycleObservation.fromDetection(detection);
+    if (observation == null) {
+      return;
+    }
+    _sleepCycleProfile = _sleepCycleProfile.addObservation(observation);
+    await _settingsStore.saveSleepCycleProfile(_sleepCycleProfile);
+    final current = _config.valueOrNull;
+    if (current == null) {
+      return;
+    }
+    final maxCycles = current.sleepCycleMinutesByIndex.length < 6
+        ? 6
+        : current.sleepCycleMinutesByIndex.length;
+    final seeds = _sleepCycleProfile.cycleMinuteSeeds(maxCycles: maxCycles);
+    _config.add(current.copyWith(sleepCycleMinutesByIndex: seeds));
   }
 
   Future<void> _scanSpeechForKeywords(
