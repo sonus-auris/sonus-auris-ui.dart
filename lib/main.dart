@@ -739,7 +739,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   _signIn(viewModel, email, password),
               onSignUp: (email, password) =>
                   _signUp(viewModel, email, password),
+              onPasswordReset: (email) => _resetPassword(viewModel, email),
               onSignOut: widget.controller.signOutSupabase,
+              onDeleteAccount: widget.controller.deleteAccount,
             ),
             selectedProvider: _selectedProvider,
             uploadEnabled: _uploadEnabled,
@@ -877,6 +879,11 @@ class _SettingsPageState extends State<SettingsPage> {
       email: email,
       password: password,
     );
+  }
+
+  Future<void> _resetPassword(AppViewModel viewModel, String email) async {
+    await _persistSupabaseConfig(viewModel);
+    await widget.controller.sendSupabasePasswordReset(email: email);
   }
 
   int _parseInt(String value, int fallback) {
@@ -1018,6 +1025,7 @@ class _DetectionsSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return _Section(
       title: 'Acoustic detections',
+      icon: Icons.hearing_outlined,
       child: detections.isEmpty
           ? const Padding(
               padding: EdgeInsets.symmetric(vertical: 8),
@@ -1597,15 +1605,23 @@ class _ConfigureView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-      children: [
-        accountSection,
-        const SizedBox(height: 16),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final wide = constraints.maxWidth >= 840;
-            final children = [
+    return _SettingsTabbedPane(
+      onSave: onSave,
+      tabs: [
+        _SettingsTab(
+          label: 'Account',
+          icon: Icons.account_circle_outlined,
+          child: _SettingsPane(
+            storageKey: 'configure-account',
+            children: [accountSection],
+          ),
+        ),
+        _SettingsTab(
+          label: 'Capture',
+          icon: Icons.mic_none,
+          child: _SettingsPane(
+            storageKey: 'configure-capture',
+            children: [
               _CaptureSection(
                 deviceId: viewModel.config.deviceId,
                 uploadEnabled: uploadEnabled,
@@ -1617,6 +1633,42 @@ class _ConfigureView extends StatelessWidget {
                 sampleRateController: sampleRateController,
                 channelsController: channelsController,
               ),
+              _TransferPolicySection(
+                config: viewModel.config,
+                status: viewModel.transferStatus,
+                onChanged: onAudioConfigChanged,
+              ),
+              _AudioTuningSection(
+                config: viewModel.config,
+                onChanged: onAudioConfigChanged,
+              ),
+            ],
+          ),
+        ),
+        _SettingsTab(
+          label: 'Automation',
+          icon: Icons.event_available_outlined,
+          child: _SettingsPane(
+            storageKey: 'configure-automation',
+            children: [
+              _ScheduleSection(
+                config: viewModel.config,
+                onChanged: onAudioConfigChanged,
+              ),
+              _ContextTriggersSection(
+                config: viewModel.config,
+                onChanged: onAudioConfigChanged,
+                controller: controller,
+              ),
+            ],
+          ),
+        ),
+        _SettingsTab(
+          label: 'Cloud',
+          icon: Icons.cloud_outlined,
+          child: _SettingsPane(
+            storageKey: 'configure-cloud',
+            children: [
               _CloudSection(
                 selectedProvider: selectedProvider,
                 onProviderChanged: onProviderChanged,
@@ -1630,71 +1682,241 @@ class _ConfigureView extends StatelessWidget {
                 s3SecretKeyController: s3SecretKeyController,
                 s3SessionTokenController: s3SessionTokenController,
               ),
-            ];
-            if (!wide) {
-              return Column(
-                children: [
-                  children.first,
-                  const SizedBox(height: 16),
-                  children.last,
-                ],
-              );
-            }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: children.first),
-                const SizedBox(width: 16),
-                Expanded(child: children.last),
-              ],
-            );
-          },
+              if (viewModel.isDeviceRegistered)
+                _CloudLinkSection(controller: controller, viewModel: viewModel)
+              else
+                const _InlineState(
+                  icon: Icons.cloud_off_outlined,
+                  text:
+                      'Sign in and register this device to link cloud destinations.',
+                ),
+            ],
+          ),
         ),
-        const SizedBox(height: 16),
-        _TransferPolicySection(
-          config: viewModel.config,
-          status: viewModel.transferStatus,
-          onChanged: onAudioConfigChanged,
-        ),
-        const SizedBox(height: 16),
-        _AudioTuningSection(
-          config: viewModel.config,
-          onChanged: onAudioConfigChanged,
-        ),
-        const SizedBox(height: 16),
-        _ScheduleSection(
-          config: viewModel.config,
-          onChanged: onAudioConfigChanged,
-        ),
-        const SizedBox(height: 16),
-        _ContextTriggersSection(
-          config: viewModel.config,
-          onChanged: onAudioConfigChanged,
-          controller: controller,
-        ),
-        const SizedBox(height: 16),
-        _MusicMemoriesSection(
-          config: viewModel.config,
-          onChanged: onAudioConfigChanged,
-          controller: controller,
-        ),
-        const SizedBox(height: 16),
-        _AcousticSection(
-          config: viewModel.config,
-          onChanged: onAudioConfigChanged,
-          sttApiKeyController: sttApiKeyController,
-        ),
-        if (viewModel.isDeviceRegistered) ...[
-          const SizedBox(height: 16),
-          _CloudLinkSection(controller: controller, viewModel: viewModel),
-        ],
-        const SizedBox(height: 16),
-        FilledButton.icon(
-          onPressed: onSave,
-          icon: const Icon(Icons.save),
-          label: const Text('Save Configuration'),
+        _SettingsTab(
+          label: 'Intelligence',
+          icon: Icons.graphic_eq,
+          child: _SettingsPane(
+            storageKey: 'configure-intelligence',
+            children: [
+              _AcousticSection(
+                config: viewModel.config,
+                onChanged: onAudioConfigChanged,
+                sttApiKeyController: sttApiKeyController,
+              ),
+              _MusicMemoriesSection(
+                config: viewModel.config,
+                onChanged: onAudioConfigChanged,
+                controller: controller,
+              ),
+            ],
+          ),
         ),
       ],
+    );
+  }
+}
+
+class _SettingsTab {
+  const _SettingsTab({
+    required this.label,
+    required this.icon,
+    required this.child,
+  });
+
+  final String label;
+  final IconData icon;
+  final Widget child;
+}
+
+class _SettingsTabbedPane extends StatefulWidget {
+  const _SettingsTabbedPane({required this.tabs, required this.onSave});
+
+  final List<_SettingsTab> tabs;
+  final VoidCallback onSave;
+
+  @override
+  State<_SettingsTabbedPane> createState() => _SettingsTabbedPaneState();
+}
+
+class _SettingsTabbedPaneState extends State<_SettingsTabbedPane> {
+  int _selectedIndex = 0;
+
+  @override
+  void didUpdateWidget(covariant _SettingsTabbedPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_selectedIndex >= widget.tabs.length) {
+      _selectedIndex = 0;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: _SettingsTabStrip(
+            tabs: widget.tabs,
+            selectedIndex: _selectedIndex,
+            onSelected: (index) => setState(() => _selectedIndex = index),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: IndexedStack(
+            index: _selectedIndex,
+            sizing: StackFit.expand,
+            children: [for (final tab in widget.tabs) tab.child],
+          ),
+        ),
+        _ConfigureActionBar(onSave: widget.onSave),
+      ],
+    );
+  }
+}
+
+class _SettingsTabStrip extends StatelessWidget {
+  const _SettingsTabStrip({
+    required this.tabs,
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final List<_SettingsTab> tabs;
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.all(4),
+        child: Row(
+          children: [
+            for (var i = 0; i < tabs.length; i++) ...[
+              _SettingsTabButton(
+                tab: tabs[i],
+                selected: i == selectedIndex,
+                onTap: () => onSelected(i),
+              ),
+              if (i != tabs.length - 1) const SizedBox(width: 4),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsTabButton extends StatelessWidget {
+  const _SettingsTabButton({
+    required this.tab,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _SettingsTab tab;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final foreground = selected
+        ? theme.colorScheme.primary
+        : theme.colorScheme.onSurfaceVariant;
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: selected ? theme.colorScheme.surface : Colors.transparent,
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 44, minWidth: 118),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(tab.icon, size: 18, color: foreground),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      tab.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: foreground,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsPane extends StatelessWidget {
+  const _SettingsPane({required this.storageKey, required this.children});
+
+  final String storageKey;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      key: PageStorageKey<String>(storageKey),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+      itemBuilder: (context, index) => children[index],
+      separatorBuilder: (context, index) => const SizedBox(height: 12),
+      itemCount: children.length,
+    );
+  }
+}
+
+class _ConfigureActionBar extends StatelessWidget {
+  const _ConfigureActionBar({required this.onSave});
+
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: SonusColors.paper,
+        border: Border(
+          top: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          child: FilledButton.icon(
+            onPressed: onSave,
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('Save Configuration'),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1712,7 +1934,9 @@ class _AccountSection extends StatefulWidget {
     required this.supabaseAnonKeyController,
     required this.onSignIn,
     required this.onSignUp,
+    required this.onPasswordReset,
     required this.onSignOut,
+    required this.onDeleteAccount,
   });
 
   final bool isSignedIn;
@@ -1723,7 +1947,9 @@ class _AccountSection extends StatefulWidget {
   final TextEditingController supabaseAnonKeyController;
   final Future<void> Function(String email, String password) onSignIn;
   final Future<void> Function(String email, String password) onSignUp;
+  final Future<void> Function(String email) onPasswordReset;
   final VoidCallback onSignOut;
+  final Future<void> Function() onDeleteAccount;
 
   @override
   State<_AccountSection> createState() => _AccountSectionState();
@@ -1755,9 +1981,65 @@ class _AccountSectionState extends State<_AccountSection> {
     }
   }
 
+  Future<void> _runEmail(Future<void> Function(String) action) async {
+    if (_busy) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await action(_emailController.text.trim());
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _runAccountAction(Future<void> Function() action) async {
+    if (_busy) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await action();
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _confirmDeleteAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete account?'),
+        content: const Text(
+          'This deletes your account, backend metadata, local recordings, and saved tokens on this device. Recordings copied to your own cloud storage must be removed there.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete account'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _runAccountAction(widget.onDeleteAccount);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hasBundledSupabaseConfig =
+        AppConfig.defaultSupabaseUrl.trim().isNotEmpty &&
+        AppConfig.defaultSupabaseAnonKey.trim().isNotEmpty;
     if (widget.isSignedIn) {
       final status = widget.isDeviceRegistered
           ? 'Device registered.'
@@ -1766,6 +2048,7 @@ class _AccountSectionState extends State<_AccountSection> {
           : 'Set the backend URL to register this device.';
       return _Section(
         title: 'Account',
+        icon: Icons.account_circle_outlined,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1784,10 +2067,24 @@ class _AccountSectionState extends State<_AccountSection> {
             const SizedBox(height: 4),
             Text(status, style: theme.textTheme.bodySmall),
             const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: widget.onSignOut,
-              icon: const Icon(Icons.logout),
-              label: const Text('Sign out'),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : widget.onSignOut,
+                  icon: const Icon(Icons.logout),
+                  label: const Text('Sign out'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _confirmDeleteAccount,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: theme.colorScheme.error,
+                  ),
+                  icon: const Icon(Icons.delete_forever),
+                  label: const Text('Delete account'),
+                ),
+              ],
             ),
           ],
         ),
@@ -1795,33 +2092,36 @@ class _AccountSectionState extends State<_AccountSection> {
     }
     return _Section(
       title: 'Account',
+      icon: Icons.account_circle_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Sign in with Supabase to record under your account and back up to cloud storage.',
+            'Sign in to record under your account and back up to cloud storage.',
             style: theme.textTheme.bodySmall,
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: widget.supabaseUrlController,
-            decoration: const InputDecoration(
-              labelText: 'Supabase URL',
-              hintText: 'https://YOUR-PROJECT.supabase.co',
+          if (!hasBundledSupabaseConfig) ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: widget.supabaseUrlController,
+              decoration: const InputDecoration(
+                labelText: 'Supabase URL',
+                hintText: 'https://YOUR-PROJECT.supabase.co',
+              ),
+              autocorrect: false,
+              enableSuggestions: false,
+              keyboardType: TextInputType.url,
             ),
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.url,
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: widget.supabaseAnonKeyController,
-            decoration: const InputDecoration(labelText: 'Supabase anon key'),
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.visiblePassword,
-          ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: widget.supabaseAnonKeyController,
+              decoration: const InputDecoration(labelText: 'Supabase anon key'),
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              keyboardType: TextInputType.visiblePassword,
+            ),
+          ],
           const SizedBox(height: 12),
           TextField(
             controller: _emailController,
@@ -1863,6 +2163,15 @@ class _AccountSectionState extends State<_AccountSection> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _busy ? null : () => _runEmail(widget.onPasswordReset),
+              icon: const Icon(Icons.lock_reset),
+              label: const Text('Reset password'),
+            ),
           ),
         ],
       ),
@@ -1920,6 +2229,7 @@ class _TransferPolicySectionState extends State<_TransferPolicySection> {
     final status = widget.status;
     return _Section(
       title: 'Battery & Network',
+      icon: Icons.battery_charging_full_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2106,6 +2416,7 @@ class _AudioTuningSectionState extends State<_AudioTuningSection> {
     }
     return _Section(
       title: 'Audio Tuning',
+      icon: Icons.tune,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2315,6 +2626,7 @@ class _MusicMemoriesSectionState extends State<_MusicMemoriesSection> {
     final spLinked = widget.controller.isSpotifyLinked;
     return _Section(
       title: 'Music memories',
+      icon: Icons.music_note_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2499,6 +2811,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
     }
     return _Section(
       title: 'Acoustic Intelligence',
+      icon: Icons.graphic_eq,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2863,6 +3176,7 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
   Widget build(BuildContext context) {
     return _Section(
       title: 'Cloud Backup Links',
+      icon: Icons.cloud_sync_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -3126,6 +3440,7 @@ class _StatusSection extends StatelessWidget {
         viewModel.config.sampleRate >= AppController.highQualitySampleRate;
     return _Section(
       title: 'Live Capture',
+      icon: Icons.mic_none,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -3347,6 +3662,7 @@ class _CaptureSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return _Section(
       title: 'Capture',
+      icon: Icons.settings_voice_outlined,
       child: Column(
         children: [
           SelectableText('Device ID: $deviceId'),
@@ -3432,6 +3748,7 @@ class _CloudSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return _Section(
       title: 'Cloud',
+      icon: Icons.cloud_outlined,
       child: Column(
         children: [
           DropdownButtonFormField<CloudProvider>(
@@ -3812,6 +4129,7 @@ class _ScheduleSectionState extends State<_ScheduleSection> {
     final theme = Theme.of(context);
     return _Section(
       title: 'Recording Schedule',
+      icon: Icons.event_available_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -4333,6 +4651,7 @@ class _ContextTriggersSection extends StatelessWidget {
     final scheduleOff = !config.recordingSchedule.enabled;
     return _Section(
       title: 'Wake-on-Event Triggers',
+      icon: Icons.radar_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -4403,41 +4722,64 @@ class _ContextTriggersSection extends StatelessWidget {
 }
 
 class _Section extends StatelessWidget {
-  const _Section({required this.title, required this.child});
+  const _Section({required this.title, required this.child, this.icon});
 
   final String title;
   final Widget child;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: SonusColors.hairline),
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: kSonusShadowSm,
+    return Material(
+      color: theme.colorScheme.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: theme.colorScheme.outlineVariant),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Container(
-                  width: 4,
-                  height: 18,
-                  decoration: BoxDecoration(
-                    gradient: SonusColors.markGradient,
-                    borderRadius: BorderRadius.circular(999),
+                if (icon == null)
+                  Container(
+                    width: 4,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      gradient: SonusColors.markGradient,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  )
+                else
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      icon,
+                      size: 18,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleMedium,
                   ),
                 ),
-                const SizedBox(width: 10),
-                Text(title, style: theme.textTheme.titleMedium),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             child,
           ],
         ),

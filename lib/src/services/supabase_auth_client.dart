@@ -26,12 +26,10 @@ class SupabaseAuthClient {
     required String password,
   }) async {
     final uri = _authUri(config, 'token', query: {'grant_type': 'password'});
-    return _session(
-      config,
-      uri,
-      {'email': email.trim(), 'password': password},
-      'Supabase sign-in failed.',
-    );
+    return _session(config, uri, {
+      'email': email.trim(),
+      'password': password,
+    }, 'Supabase sign-in failed.');
   }
 
   /// Creates an account. Returns null when the project requires email
@@ -42,12 +40,10 @@ class SupabaseAuthClient {
     required String password,
   }) async {
     final uri = _authUri(config, 'signup');
-    final decoded = await _post(
-      config,
-      uri,
-      {'email': email.trim(), 'password': password},
-      'Supabase sign-up failed.',
-    );
+    final decoded = await _post(config, uri, {
+      'email': email.trim(),
+      'password': password,
+    }, 'Supabase sign-up failed.');
     if ((decoded['access_token'] as String? ?? '').trim().isEmpty) {
       return null;
     }
@@ -64,12 +60,21 @@ class SupabaseAuthClient {
       'token',
       query: {'grant_type': 'refresh_token'},
     );
-    return _session(
-      config,
-      uri,
-      {'refresh_token': refreshToken.trim()},
-      'Supabase token refresh failed.',
-    );
+    return _session(config, uri, {
+      'refresh_token': refreshToken.trim(),
+    }, 'Supabase token refresh failed.');
+  }
+
+  /// Sends Supabase's hosted password-reset email. The reset link is generated
+  /// by the project Auth settings; the app never sees the user's new password.
+  Future<void> sendPasswordResetEmail({
+    required AppConfig config,
+    required String email,
+  }) async {
+    final uri = _authUri(config, 'recover');
+    await _post(config, uri, {
+      'email': email.trim(),
+    }, 'Supabase password reset failed.');
   }
 
   /// Best-effort server-side session revocation. Local secrets are cleared by
@@ -167,7 +172,8 @@ class SupabaseAuthClient {
   }
 
   String _errorMessage(Map<String, dynamic> body, String fallback) {
-    final message = body['error_description'] ??
+    final message =
+        body['error_description'] ??
         body['msg'] ??
         body['message'] ??
         body['error'];

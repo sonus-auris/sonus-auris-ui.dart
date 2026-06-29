@@ -12,7 +12,9 @@ bad()  { echo "  ✗ $*"; fail=1; }
 soft() { echo "  ! $*"; warn=1; }
 
 echo "== Version =="
-grep -E '^version:' pubspec.yaml | sed 's/^/  /'
+version_line="$(grep -E '^version:' pubspec.yaml || true)"
+if [[ -n "$version_line" ]]; then printf '  %s\n' "$version_line"
+else bad "pubspec.yaml version missing"; fi
 
 echo "== Static analysis (hard gate) =="
 if flutter analyze 2>&1 | tail -1 | grep -q "No issues found"; then ok "flutter analyze clean"
@@ -30,6 +32,11 @@ echo "== iOS export config =="
 [[ -f ios/ExportOptions.plist ]] && ok "ios/ExportOptions.plist present" || soft "ios/ExportOptions.plist missing"
 if grep -q ITSAppUsesNonExemptEncryption ios/Runner/Info.plist; then ok "export-compliance key set in Info.plist"
 else soft "ITSAppUsesNonExemptEncryption missing (uploads will prompt) — see docs/compliance/EXPORT_COMPLIANCE.md"; fi
+
+echo "== Release auth config =="
+[[ -n "${SONUS_BACKEND_BASE_URL:-}" ]] && ok "SONUS_BACKEND_BASE_URL set" || soft "SONUS_BACKEND_BASE_URL missing — release builds will need manual backend config"
+[[ -n "${SONUS_SUPABASE_URL:-}" ]] && ok "SONUS_SUPABASE_URL set" || soft "SONUS_SUPABASE_URL missing — sign-in form will show developer project fields"
+[[ -n "${SONUS_SUPABASE_ANON_KEY:-}" ]] && ok "SONUS_SUPABASE_ANON_KEY set" || soft "SONUS_SUPABASE_ANON_KEY missing — sign-in form will show developer project fields"
 
 echo "== Compliance artifacts (store gates) =="
 for f in PRIVACY_POLICY ACCOUNT_DELETION DATA_SAFETY_play PRIVACY_LABELS_appstore PERMISSIONS_RATIONALE EXPORT_COMPLIANCE; do
