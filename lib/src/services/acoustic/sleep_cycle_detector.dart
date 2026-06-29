@@ -23,6 +23,7 @@ class SleepCycleConfig {
     this.bucketSeconds = 60.0,
     this.deepSleepDepthScore = 0.62,
     this.deepSleepBucketFraction = 0.55,
+    this.maxGapMinutes = 5.0,
     this.motionSignalEnabled = false,
     this.ambientLightSignalEnabled = false,
     this.phoneContextSignalEnabled = false,
@@ -39,6 +40,14 @@ class SleepCycleConfig {
   final double bucketSeconds;
   final double deepSleepDepthScore;
   final double deepSleepBucketFraction;
+
+  /// A jump in frame timestamps larger than this (a capture interruption: a
+  /// phone call pausing the audio session, the analyzer falling far behind, or a
+  /// wall-clock change) resets the in-progress sleep estimate so we re-detect
+  /// onset cleanly instead of treating the gap as continuous sleep and firing a
+  /// phantom cycle/alarm.
+  final double maxGapMinutes;
+
   final bool motionSignalEnabled;
   final bool ambientLightSignalEnabled;
   final bool phoneContextSignalEnabled;
@@ -67,6 +76,7 @@ class SleepCycleConfig {
       deepSleepBucketFraction: deepSleepBucketFraction
           .clamp(0.0, 1.0)
           .toDouble(),
+      maxGapMinutes: maxGapMinutes.clamp(1.0, 60.0).toDouble(),
       motionSignalEnabled: motionSignalEnabled,
       ambientLightSignalEnabled: ambientLightSignalEnabled,
       phoneContextSignalEnabled: phoneContextSignalEnabled,
@@ -89,6 +99,7 @@ class SleepCycleDetector {
   final String captureSessionId;
 
   DateTime? _bucketStartedAt;
+  DateTime? _lastFrameAtUtc;
   _Bucket _bucket = _Bucket();
   DateTime? _sleepStartedAt;
   DateTime? _lastCycleBoundaryAt;
@@ -107,6 +118,16 @@ class SleepCycleDetector {
 
   List<AcousticDetection> add(SpectralFrame frame, DateTime atUtc) {
     final utc = atUtc.toUtc();
+    // A large jump in frame time means capture was interrupted (or the clock
+    // moved): drop the in-progress estimate and re-detect sleep onset rather
+    // than counting the gap as elapsed sleep and emitting a phantom cycle.
+    final last = _lastFrameAtUtc;
+    if (last != null &&
+        utc.difference(last).inMilliseconds.abs() / 60000.0 >
+            config.maxGapMinutes) {
+      _resetSleepSession();
+    }
+    _lastFrameAtUtc = utc;
     final bucketStart = _bucketStartFor(utc);
     final out = <AcousticDetection>[];
     _bucketStartedAt ??= bucketStart;
@@ -128,6 +149,20 @@ class SleepCycleDetector {
     _bucketStartedAt = null;
     _bucket = _Bucket();
     return out;
+  }
+
+  /// Drops in-progress sleep-session state (onset, cycle progress, recent
+  /// buckets, per-cycle depth) after a capture gap. Learned per-cycle minute
+  /// seeds are kept — they are a valid prior for the resumed sleep.
+  void _resetSleepSession() {
+    _bucketStartedAt = null;
+    _bucket = _Bucket();
+    _sleepStartedAt = null;
+    _lastCycleBoundaryAt = null;
+    _nextCycleIndex = 1;
+    _recent.clear();
+    _deepCycleIndexes.clear();
+    _resetCycleDepth();
   }
 
   DateTime _bucketStartFor(DateTime atUtc) {

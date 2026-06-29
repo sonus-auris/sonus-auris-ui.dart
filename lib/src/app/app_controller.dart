@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
 import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:rxdart/rxdart.dart';
@@ -12,6 +13,7 @@ import '../models/app_config.dart';
 import '../models/cloud_provider.dart';
 import '../models/context_trigger.dart';
 import '../models/cloud_secrets.dart';
+import '../models/consent.dart';
 import '../models/playback_snapshot.dart';
 import '../models/recorder_snapshot.dart';
 import '../models/cloud_connection.dart';
@@ -55,8 +57,19 @@ import '../services/supabase_rest_client.dart';
 import 'app_view_model.dart';
 
 /// Consent string recorded against the device on registration. Bump when the
-/// recording/privacy disclosure shown to the user materially changes.
+/// recording/privacy disclosure shown to the user materially changes. Bumping
+/// this also re-triggers the onboarding consent flow.
 const String kConsentVersion = 'audio-dashcam-consent-v1';
+
+/// App-level Supabase project, injected at build time so the onboarding
+/// login/sign-up works out of the box:
+/// `--dart-define=SUPABASE_URL=… --dart-define=SUPABASE_ANON_KEY=…`.
+/// Both are public client values (the anon key is safe to embed); the
+/// service_role key must never reach the device. When unset, the user can still
+/// configure their own Supabase project in the Configure tab.
+const String kDefaultSupabaseUrl = String.fromEnvironment('SUPABASE_URL');
+const String kDefaultSupabaseAnonKey =
+    String.fromEnvironment('SUPABASE_ANON_KEY');
 
 class AppController {
   factory AppController({
@@ -291,6 +304,16 @@ class AppController {
   final LocationService _locationService;
   final PowerNetworkGate _powerNetworkGate;
   final SupabaseRestClient _supabaseRestClient;
+
+  /// The onboarding consent the user accepted (null until first onboarding).
+  ConsentRecord? _consentRecord;
+  ConsentRecord? get consentRecord => _consentRecord;
+
+  final ValueNotifier<bool> _onboardingComplete = ValueNotifier<bool>(false);
+
+  /// Whether onboarding (consent for the current [kConsentVersion]) is done.
+  /// The app root watches this to gate the onboarding flow vs. the main UI.
+  ValueListenable<bool> get onboardingComplete => _onboardingComplete;
   final ShazamClient _shazamClient;
   final MemoryPublisher _memoryPublisher;
   final DayOfLifeArchiver _dayOfLifeArchiver;
@@ -386,9 +409,16 @@ class AppController {
     final sleepCycleSeeds = _sleepCycleProfile.observations.isEmpty
         ? loadedConfig.sleepCycleMinutesByIndex
         : _sleepCycleProfile.cycleMinuteSeeds();
-    final config = loadedConfig.copyWith(
-      sleepCycleMinutesByIndex: sleepCycleSeeds,
+    final config = _seedSupabaseDefaults(
+      loadedConfig.copyWith(sleepCycleMinutesByIndex: sleepCycleSeeds),
     );
+    // Persist if build-time Supabase defaults filled in previously-empty fields.
+    if (config.supabaseUrl != loadedConfig.supabaseUrl ||
+        config.supabaseAnonKey != loadedConfig.supabaseAnonKey) {
+      await _settingsStore.saveConfig(config);
+    }
+    _consentRecord = await _settingsStore.loadConsentRecord();
+    _onboardingComplete.value = _hasValidConsent(_consentRecord);
     final secrets = await _settingsStore.loadSecrets();
     final pendingAlerts = await _settingsStore.loadPendingAlerts();
     final recovered = await _segmentIndex.recoverOrphanedLocalSegments(
@@ -458,6 +488,9 @@ class AppController {
     _isInitializing.add(false);
     _diagnostics.add('App controller init completed.');
     await _ensureSupabaseReady();
+    // If consent was captured before sign-in (or a previous sync failed), push it
+    // now that a session may be available.
+    await _maybeSyncConsent();
     requestUploadDrain();
     await _enforceRetention();
     // "Always-on": if the user enabled auto-start and no weekly schedule is
@@ -800,6 +833,109 @@ class AppController {
     }
   }
 
+  // --- Onboarding & consent --------------------------------------------------
+
+  bool _hasValidConsent(ConsentRecord? record) {
+    return record != null &&
+        record.consentVersion == kConsentVersion &&
+        record.hasRequiredConsents;
+  }
+
+  AppConfig _seedSupabaseDefaults(AppConfig config) {
+    final url = config.supabaseUrl.trim().isEmpty
+        ? kDefaultSupabaseUrl.trim()
+        : config.supabaseUrl;
+    final key = config.supabaseAnonKey.trim().isEmpty
+        ? kDefaultSupabaseAnonKey.trim()
+        : config.supabaseAnonKey;
+    if (url == config.supabaseUrl && key == config.supabaseAnonKey) {
+      return config;
+    }
+    return config.copyWith(supabaseUrl: url, supabaseAnonKey: key);
+  }
+
+  /// Finalize onboarding: persist the consent [record] locally, apply the
+  /// granted optional consents to feature flags, request the matching OS
+  /// permissions, sync the record to Supabase when signed in, and unlock the
+  /// main UI.
+  Future<void> completeOnboarding(ConsentRecord record) async {
+    _consentRecord = record;
+    await _settingsStore.saveConsentRecord(record);
+    await _applyConsentToConfig(record);
+    await requestOnboardingPermissions(record);
+    await _maybeSyncConsent();
+    _onboardingComplete.value = true;
+    _diagnostics.add('Onboarding completed (consent $kConsentVersion).');
+  }
+
+  Future<void> _applyConsentToConfig(ConsentRecord record) async {
+    if (!_config.hasValue) {
+      return;
+    }
+    final updated = _config.value.copyWith(
+      sleepMotionSensorConsent: record.granted(ConsentItem.motion),
+      locationTaggingEnabled: record.granted(ConsentItem.location),
+    );
+    _config.add(updated);
+    await _settingsStore.saveConfig(updated);
+  }
+
+  /// Requests the OS permissions for the consents the user granted. Motion
+  /// (accelerometer) needs no Android runtime permission and prompts on first use
+  /// on iOS, so it is not requested here. Best-effort; failures are logged.
+  Future<void> requestOnboardingPermissions(ConsentRecord record) async {
+    try {
+      if (record.granted(ConsentItem.microphone)) {
+        await Permission.microphone.request();
+      }
+      if (record.granted(ConsentItem.notifications)) {
+        await _localNotifications.requestPermission();
+      }
+      if (record.granted(ConsentItem.location) &&
+          (Platform.isAndroid || Platform.isIOS)) {
+        await Permission.locationWhenInUse.request();
+      }
+      if (record.granted(ConsentItem.bluetooth)) {
+        if (Platform.isAndroid) {
+          await [Permission.bluetoothScan, Permission.bluetoothConnect]
+              .request();
+        } else if (Platform.isIOS) {
+          await Permission.bluetooth.request();
+        }
+      }
+    } catch (error) {
+      _diagnostics.add('Onboarding permission request failed: $error');
+    }
+  }
+
+  /// Writes the local consent record to Supabase once a session exists. No-op
+  /// when there is nothing to sync or no signed-in session yet (it is retried on
+  /// the next sign-in / launch).
+  Future<void> _maybeSyncConsent() async {
+    final record = _consentRecord;
+    final config = _config.valueOrNull;
+    final secrets = _secrets.valueOrNull;
+    if (record == null || record.synced || config == null || secrets == null) {
+      return;
+    }
+    if (!_supabaseRestClient.canInsert(config, secrets)) {
+      return; // not signed in yet — sync deferred
+    }
+    final error = await _supabaseRestClient.insertConsent(
+      config: config,
+      secrets: secrets,
+      record: record,
+    );
+    if (error == null) {
+      final synced = record.copyWith(synced: true);
+      _consentRecord = synced;
+      await _settingsStore.saveConsentRecord(synced);
+      _diagnostics.add('Consent synced to Supabase.');
+    } else {
+      _diagnostics.add('Consent sync deferred: $error');
+    }
+  }
+
   Future<void> saveSecrets(CloudSecrets secrets) async {
     // copyWith (not a fresh constructor) so Supabase session fields — which have
     // no settings form — are always carried through; reconstructing the object
@@ -895,6 +1031,8 @@ class AppController {
       }
       await _applySupabaseSession(session);
       await _ensureDeviceRegistered();
+      // Flush any consent captured before sign-in.
+      await _maybeSyncConsent();
       _message.add(successMessage);
       requestUploadDrain();
     } catch (error) {
@@ -1783,6 +1921,7 @@ class AppController {
     _backendClient.close();
     _authClient.close();
     _supabaseRestClient.close();
+    _onboardingComplete.dispose();
     _speechToTextClient.close();
     _memoryPublisher.close();
     _dayOfLifeArchiver.close();

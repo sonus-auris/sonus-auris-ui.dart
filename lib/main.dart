@@ -16,6 +16,7 @@ import 'src/models/acoustic_detection.dart';
 import 'src/models/app_config.dart';
 import 'src/models/cloud_connection.dart';
 import 'src/models/cloud_provider.dart';
+import 'src/models/consent.dart';
 import 'src/models/context_trigger.dart';
 import 'src/models/recording_schedule.dart';
 import 'src/models/storage_estimate.dart';
@@ -74,7 +75,14 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
             if (snapshot.hasError) {
               return ErrorPage(error: snapshot.error.toString());
             }
-            return SettingsPage(controller: _controller);
+            // Gate the app behind onboarding/consent until it's completed for the
+            // current consent version.
+            return ValueListenableBuilder<bool>(
+              valueListenable: _controller.onboardingComplete,
+              builder: (context, complete, _) => complete
+                  ? SettingsPage(controller: _controller)
+                  : OnboardingFlow(controller: _controller),
+            );
           },
         ),
       ),
@@ -132,6 +140,367 @@ class ErrorPage extends StatelessWidget {
           padding: const EdgeInsets.all(24),
           child: Text(error, textAlign: TextAlign.center),
         ),
+      ),
+    );
+  }
+}
+
+/// First-run onboarding: welcome → Supabase account (built-in auth) → granular
+/// data-capture consent → OS permission requests. Blocks the main app until the
+/// user accepts the required consents; the accepted [ConsentRecord] is stored
+/// locally and synced to Supabase.
+class OnboardingFlow extends StatefulWidget {
+  const OnboardingFlow({super.key, required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<OnboardingFlow> createState() => _OnboardingFlowState();
+}
+
+class _OnboardingFlowState extends State<OnboardingFlow> {
+  int _step = 0;
+  bool _busy = false;
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  late final Map<ConsentItem, bool> _grants = {
+    for (final item in ConsentItem.values) item: item.required,
+  };
+
+  static const int _lastStep = 3;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  bool get _requiredAccepted =>
+      ConsentItem.values.where((i) => i.required).every((i) => _grants[i]!);
+
+  Future<void> _auth(Future<void> Function() run) async {
+    setState(() => _busy = true);
+    try {
+      await run();
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _finish() async {
+    setState(() => _busy = true);
+    final record = ConsentRecord(
+      consentVersion: kConsentVersion,
+      acceptedAtUtc: DateTime.now().toUtc(),
+      platform: Platform.isAndroid
+          ? 'android'
+          : Platform.isIOS
+              ? 'ios'
+              : Platform.operatingSystem,
+      grants: {for (final e in _grants.entries) e.key.key: e.value},
+    );
+    await widget.controller.completeOnboarding(record);
+    // The root's ValueListenableBuilder swaps to the main app once complete.
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<AppViewModel>(
+      stream: widget.controller.viewModels,
+      builder: (context, snapshot) {
+        final vm = snapshot.data;
+        return Scaffold(
+          appBar: AppBar(
+            titleSpacing: 16,
+            title: const SonusWordmark(),
+            automaticallyImplyLeading: false,
+          ),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Column(
+                  children: [
+                    _ProgressDots(step: _step, total: _lastStep + 1),
+                    Expanded(
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                        children: [_buildStep(context, vm)],
+                      ),
+                    ),
+                    if (vm?.message != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Text(
+                          vm!.message!,
+                          style: const TextStyle(color: SonusColors.inkSoft),
+                        ),
+                      ),
+                    _buildNav(vm),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildStep(BuildContext context, AppViewModel? vm) {
+    switch (_step) {
+      case 1:
+        return _accountStep(vm);
+      case 2:
+        return _consentStep(context);
+      case 3:
+        return _permissionsStep();
+      default:
+        return _welcomeStep(context);
+    }
+  }
+
+  Widget _welcomeStep(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        Icon(Icons.hearing, size: 48, color: SonusColors.orange500),
+        const SizedBox(height: 16),
+        Text('Welcome to Sonus Auris', style: theme.textTheme.headlineSmall),
+        const SizedBox(height: 12),
+        const Text(
+          'Sonus Auris keeps a rolling, on-device audio buffer and can analyze '
+          'it privately — snoring, sleep cycles, and more. Audio is encrypted on '
+          'your device before anything is backed up.\n\n'
+          "Next we'll create your account and ask permission for exactly the "
+          'data the app captures. You stay in control of every item.',
+          style: TextStyle(color: SonusColors.inkSoft, height: 1.4),
+        ),
+      ],
+    );
+  }
+
+  Widget _accountStep(AppViewModel? vm) {
+    final theme = Theme.of(context);
+    final signedIn = vm?.isSignedIn ?? false;
+    final configured = vm?.hasSupabaseAuthConfig ?? false;
+    if (signedIn) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 8),
+          const Icon(Icons.verified_user, size: 40, color: SonusColors.orange500),
+          const SizedBox(height: 12),
+          Text('Signed in', style: theme.textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text(
+            'Signed in as ${vm?.signedInEmail ?? 'your account'}. Your consent '
+            'will be saved to your account.',
+            style: const TextStyle(color: SonusColors.inkSoft),
+          ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        Text('Create your account', style: theme.textTheme.titleLarge),
+        const SizedBox(height: 8),
+        const Text(
+          'Sign up or sign in to securely store your settings and consent.',
+          style: TextStyle(color: SonusColors.inkSoft),
+        ),
+        const SizedBox(height: 16),
+        if (!configured)
+          const Text(
+            'Account sign-in is not configured in this build. You can continue '
+            'and connect an account later in Settings.',
+            style: TextStyle(color: SonusColors.inkSoft),
+          )
+        else ...[
+          TextField(
+            controller: _emailController,
+            keyboardType: TextInputType.emailAddress,
+            autocorrect: false,
+            enabled: !_busy,
+            decoration: const InputDecoration(labelText: 'Email'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _passwordController,
+            obscureText: true,
+            enabled: !_busy,
+            decoration: const InputDecoration(labelText: 'Password'),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton(
+                  onPressed: _busy ? null : () => _auth(_signUp),
+                  child: const Text('Create account'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _busy ? null : () => _auth(_signIn),
+                  child: const Text('Sign in'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _signUp() => widget.controller.signUpWithSupabase(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+
+  Future<void> _signIn() => widget.controller.signInWithSupabase(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+
+  Widget _consentStep(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        Text('What you consent to', style: theme.textTheme.titleLarge),
+        const SizedBox(height: 8),
+        const Text(
+          'Choose what Sonus Auris may capture. Required items keep the core '
+          'recorder working; everything else is optional and off by default.',
+          style: TextStyle(color: SonusColors.inkSoft),
+        ),
+        const SizedBox(height: 8),
+        for (final item in ConsentItem.values)
+          Card(
+            elevation: 0,
+            color: SonusColors.green50,
+            margin: const EdgeInsets.symmetric(vertical: 6),
+            child: SwitchListTile(
+              title: Text(
+                item.required ? '${item.title} (required)' : item.title,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text(item.rationale),
+              isThreeLine: true,
+              value: _grants[item]!,
+              onChanged: item.required
+                  ? null
+                  : (v) => setState(() => _grants[item] = v),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _permissionsStep() {
+    final theme = Theme.of(context);
+    final granted =
+        ConsentItem.values.where((i) => _grants[i]!).toList(growable: false);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        Text('Device permissions', style: theme.textTheme.titleLarge),
+        const SizedBox(height: 8),
+        const Text(
+          "When you finish, your device will ask for the permissions behind the "
+          'items you allowed. You can change any of these later in Settings or '
+          "your phone's settings.",
+          style: TextStyle(color: SonusColors.inkSoft),
+        ),
+        const SizedBox(height: 12),
+        for (final item in granted)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle,
+                    size: 18, color: SonusColors.orange500),
+                const SizedBox(width: 8),
+                Expanded(child: Text(item.title)),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildNav(AppViewModel? vm) {
+    final isLast = _step == _lastStep;
+    final onAccountStep = _step == 1;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+      child: Row(
+        children: [
+          if (_step > 0)
+            TextButton(
+              onPressed: _busy ? null : () => setState(() => _step -= 1),
+              child: const Text('Back'),
+            ),
+          const Spacer(),
+          if (onAccountStep && !(vm?.isSignedIn ?? false))
+            TextButton(
+              onPressed: _busy ? null : () => setState(() => _step += 1),
+              child: const Text('Skip for now'),
+            ),
+          const SizedBox(width: 8),
+          FilledButton(
+            onPressed: _busy || (_step == 2 && !_requiredAccepted)
+                ? null
+                : () {
+                    if (isLast) {
+                      _finish();
+                    } else {
+                      setState(() => _step += 1);
+                    }
+                  },
+            child: Text(isLast ? 'Finish' : 'Continue'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProgressDots extends StatelessWidget {
+  const _ProgressDots({required this.step, required this.total});
+
+  final int step;
+  final int total;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          for (var i = 0; i < total; i++)
+            Container(
+              width: i == step ? 22 : 8,
+              height: 8,
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              decoration: BoxDecoration(
+                color: i <= step ? SonusColors.orange500 : SonusColors.hairline,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+        ],
       ),
     );
   }

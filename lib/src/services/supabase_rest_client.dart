@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../models/acoustic_detection.dart';
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
+import '../models/consent.dart';
 
 /// Thin PostgREST client for writing user data into Supabase. Only the signed-in
 /// user's access token is used (never a service key), so row-level-security
@@ -20,6 +21,26 @@ class SupabaseRestClient {
   final Duration requestTimeout;
 
   static const String acousticEventsTable = 'acoustic_events';
+
+  /// Onboarding consent records.
+  ///
+  /// Expected Supabase schema (RLS scopes every row to the authed user):
+  /// ```sql
+  /// create table public.user_consents (
+  ///   id           uuid primary key default gen_random_uuid(),
+  ///   user_id      uuid not null default auth.uid() references auth.users(id),
+  ///   device_id    text not null,
+  ///   consent_version text not null,
+  ///   platform     text,
+  ///   granted      jsonb not null,
+  ///   accepted_at  timestamptz not null,
+  ///   created_at   timestamptz not null default now()
+  /// );
+  /// alter table public.user_consents enable row level security;
+  /// create policy "own consents" on public.user_consents
+  ///   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  /// ```
+  static const String userConsentsTable = 'user_consents';
 
   /// Whether an insert can even be attempted with the current config/secrets.
   bool canInsert(AppConfig config, CloudSecrets secrets) {
@@ -60,6 +81,40 @@ class SupabaseRestClient {
           '${_shortBody(response.body)}';
     } catch (error) {
       return 'Supabase insert error: $error';
+    }
+  }
+
+  /// Inserts the onboarding [record] for the signed-in user. Returns an error
+  /// string on failure, or null on success.
+  Future<String?> insertConsent({
+    required AppConfig config,
+    required CloudSecrets secrets,
+    required ConsentRecord record,
+  }) async {
+    if (!canInsert(config, secrets)) {
+      return 'Supabase URL, anon key, and a signed-in session are required.';
+    }
+    final Uri uri;
+    try {
+      uri = _restUri(config, userConsentsTable);
+    } on FormatException catch (error) {
+      return error.message;
+    }
+    try {
+      final response = await _httpClient
+          .post(
+            uri,
+            headers: _headers(config, secrets),
+            body: jsonEncode([record.toSupabaseRow(config.deviceId)]),
+          )
+          .timeout(requestTimeout);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return 'Supabase consent insert failed (${response.statusCode}): '
+          '${_shortBody(response.body)}';
+    } catch (error) {
+      return 'Supabase consent insert error: $error';
     }
   }
 

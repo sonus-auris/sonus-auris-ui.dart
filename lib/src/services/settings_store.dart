@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../models/app_config.dart';
 import '../models/audio_trigger_event.dart';
 import '../models/cloud_secrets.dart';
+import '../models/consent.dart';
 import '../models/sleep_cycle_profile.dart';
 
 class SettingsStore {
@@ -25,6 +26,7 @@ class SettingsStore {
   static const _configKey = 'audio_dashcam.config.v1';
   static const _pendingAlertsKey = 'audio_dashcam.pending_alerts.v1';
   static const _sleepCycleProfileKey = 'audio_dashcam.sleep_cycle_profile.v1';
+  static const _consentRecordKey = 'audio_dashcam.consent_record.v1';
   static const _s3AccessKeyKey = 'audio_dashcam.s3.access_key_id';
   static const _s3SecretKeyKey = 'audio_dashcam.s3.secret_access_key';
   static const _s3SessionTokenKey = 'audio_dashcam.s3.session_token';
@@ -121,6 +123,27 @@ class SettingsStore {
       return;
     }
     await prefs.setString(_sleepCycleProfileKey, jsonEncode(pruned.toJson()));
+  }
+
+  /// The onboarding consent the user last accepted, or null if they have not
+  /// completed onboarding on this install.
+  Future<ConsentRecord?> loadConsentRecord() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_consentRecordKey);
+    if (raw == null || raw.trim().isEmpty) {
+      return null;
+    }
+    try {
+      return ConsentRecord.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    } catch (_) {
+      await prefs.remove(_consentRecordKey);
+      return null;
+    }
+  }
+
+  Future<void> saveConsentRecord(ConsentRecord record) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_consentRecordKey, jsonEncode(record.toJson()));
   }
 
   Future<CloudSecrets> loadSecrets() async {
