@@ -11,7 +11,7 @@
 	-->
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
-		<string>iCloud.YOUR.BUNDLE.ID</string>
+		<string>iCloud.com.ores.audioDashcam</string>
 	</array>
 	<key>com.apple.developer.icloud-services</key>
 	<array>
@@ -19,7 +19,7 @@
 	</array>
 	<key>com.apple.developer.ubiquity-container-identifiers</key>
 	<array>
-		<string>iCloud.YOUR.BUNDLE.ID</string>
+		<string>iCloud.com.ores.audioDashcam</string>
 	</array>
 	<!--
 	  ShazamKit capability for the audio_dashcam/shazam bridge (song id when the
