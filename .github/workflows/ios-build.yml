@@ -46,9 +46,8 @@ jobs:
       # --- Signed IPA only when signing secrets are present ---
       - name: Import signing assets
         id: signing
-        if: ${{ env.HAS_SIGNING == 'true' }}
+        if: ${{ secrets.IOS_DIST_CERT_P12_BASE64 != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
         env:
-          HAS_SIGNING: ${{ secrets.IOS_DIST_CERT_P12_BASE64 != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
           CERT_B64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
           CERT_PW: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
           PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
