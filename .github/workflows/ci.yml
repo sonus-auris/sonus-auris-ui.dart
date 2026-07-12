@@ -1,0 +1,30 @@
+name: CI (analyze + test)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+      - run: flutter --version
+      - run: flutter pub get
+      - name: Analyze (hard gate)
+        run: flutter analyze
+      - name: Unit tests (hard gate)
+        run: flutter test
