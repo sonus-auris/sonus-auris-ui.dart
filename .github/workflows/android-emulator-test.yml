@@ -1,0 +1,69 @@
+name: Android emulator permission test
+
+# Boots a headless Android emulator and runs the permission smoke-test
+# (scripts/emulator/permission-smoke.sh): sensitive context permissions must
+# default to opt-in, mic/notifications grant cleanly, and the app must not crash.
+# GitHub's ubuntu-latest runners expose /dev/kvm, so the emulator is hardware
+# accelerated here (the same test also runs on the cluster via
+# ci/android-emulator/, for KVM-capable Hetzner/EC2 nodes).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  emulator-permission-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+
+      - run: flutter pub get
+
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      - name: Run permission smoke-test on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: false
+          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: true
+          script: |
+            adb wait-for-device
+            SMOKE_SCREENSHOT="$PWD/permission-smoke.png" \
+              bash scripts/emulator/permission-smoke.sh \
+              build/app/outputs/flutter-apk/app-debug.apk
+
+      - name: Upload evidence screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: permission-smoke-screenshot
+          path: permission-smoke.png
+          if-no-files-found: ignore

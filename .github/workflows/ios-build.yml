@@ -1,0 +1,81 @@
+name: iOS build (macOS)
+
+# iOS builds require full Xcode, which only exists on macOS runners — this is how
+# Sonus Auris is built for the App Store without a local Xcode install.
+#
+# Always: an UNSIGNED archive build (`flutter build ios --no-codesign`) that
+#         validates the iOS target compiles, pods resolve, and capabilities are
+#         wired — the CI equivalent of "does it build for iPhone".
+# When signing secrets are configured: a real signed App Store IPA is produced
+#         and uploaded as a build artifact. It is NEVER uploaded to App Store
+#         Connect here — TestFlight/App Store submission stays a deliberate,
+#         separate step (Transporter, Xcode Organizer, or `fastlane beta`).
+#
+# Optional secrets for the signed path:
+#   IOS_DEVELOPMENT_TEAM, IOS_DIST_CERT_P12_BASE64, IOS_DIST_CERT_PASSWORD,
+#   IOS_PROVISIONING_PROFILE_BASE64, plus prod config
+#   SONUS_BACKEND_BASE_URL / SONUS_SUPABASE_URL / SONUS_SUPABASE_ANON_KEY.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios-build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+      - run: flutter pub get
+      - name: CocoaPods
+        run: cd ios && pod install
+
+      # --- Always: unsigned build validates the iOS target compiles ---
+      - name: Build iOS (unsigned, validates compile/archive)
+        run: flutter build ios --release --no-codesign
+
+      # --- Signed IPA only when signing secrets are present ---
+      - name: Import signing assets
+        id: signing
+        if: ${{ secrets.IOS_DIST_CERT_P12_BASE64 != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
+        env:
+          CERT_B64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          CERT_PW: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          KEYCHAIN=build.keychain
+          security create-keychain -p "" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "" "$KEYCHAIN"
+          echo "$CERT_B64" | base64 --decode > cert.p12
+          security import cert.p12 -k "$KEYCHAIN" -P "$CERT_PW" -T /usr/bin/codesign
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          security set-key-partition-list -S apple-tool:,apple: -k "" "$KEYCHAIN" >/dev/null
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$PROFILE_B64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
+
+      - name: Build signed App Store IPA (no upload)
+        if: ${{ secrets.IOS_DIST_CERT_P12_BASE64 != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
+        env:
+          DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+          SONUS_BACKEND_BASE_URL: ${{ secrets.SONUS_BACKEND_BASE_URL }}
+          SONUS_SUPABASE_URL: ${{ secrets.SONUS_SUPABASE_URL }}
+          SONUS_SUPABASE_ANON_KEY: ${{ secrets.SONUS_SUPABASE_ANON_KEY }}
+        run: scripts/release/ios-build-ipa.sh
+
+      - name: Upload IPA artifact
+        if: ${{ secrets.IOS_DIST_CERT_P12_BASE64 != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonus-auris-ipa
+          path: build/ios/ipa/*.ipa
+          if-no-files-found: warn

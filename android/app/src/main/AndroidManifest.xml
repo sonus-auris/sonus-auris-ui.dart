@@ -22,7 +22,11 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- Context (wake-on-event) triggers, all off by default:
          - Bluetooth connect / nearby BLE scan detection. -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!-- neverForLocation: we scan for nearby BLE devices only to offer a scheduled
+         recording, never to derive the device's physical location (geotagging uses
+         ACCESS_FINE_LOCATION separately). Declaring this narrows Play review scrutiny. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- Legacy Bluetooth perms for pre-Android-12 devices. -->
     <uses-permission android:name="android.permission.BLUETOOTH"
@@ -85,6 +89,21 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+        <!-- OAuth redirect handler for flutter_web_auth_2 (Spotify/SoundCloud
+             account linking). The app opens sonusauris://oauth/callback in a
+             browser tab; this activity catches the redirect back into the app.
+             Without it the linking flow cannot complete on Android. PKCE + a
+             validated state param protect the flow (see oauth_browser.dart). -->
+        <activity
+            android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+            android:exported="true">
+            <intent-filter android:label="flutter_web_auth_2">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="sonusauris" />
+            </intent-filter>
+        </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
