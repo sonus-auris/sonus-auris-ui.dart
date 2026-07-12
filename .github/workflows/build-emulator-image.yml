@@ -14,6 +14,11 @@ on:
       - ci/android-emulator/**
       - scripts/emulator/**
       - .github/workflows/build-emulator-image.yml
+  pull_request:
+    paths:
+      - ci/android-emulator/**
+      - scripts/emulator/**
+      - .github/workflows/build-emulator-image.yml
 
 permissions:
   contents: read
