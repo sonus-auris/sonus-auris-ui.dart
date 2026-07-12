@@ -151,6 +151,25 @@ void main() {
     client.close();
   });
 
+  test('deletes account with Supabase identity header', () async {
+    final client = SoundRecorderBackendClient(
+      httpClient: MockClient((request) async {
+        expect(request.method, 'DELETE');
+        expect(request.url.path, '/api/mobile/v1/account');
+        expect(request.headers['x-supabase-auth'], 'Bearer user-jwt');
+        expect(request.headers['authorization'], isNull);
+        return http.Response('{"ok":true}', 200);
+      }),
+    );
+
+    await client.deleteAccount(
+      config: config,
+      secrets: const CloudSecrets(supabaseAccessToken: 'user-jwt'),
+    );
+
+    client.close();
+  });
+
   test('posts permanent save requests and maps storage keys', () async {
     final client = SoundRecorderBackendClient(
       httpClient: MockClient((request) async {

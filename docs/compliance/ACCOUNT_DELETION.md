@@ -11,18 +11,18 @@ Both stores require this, and they require slightly different things:
 
 ## Current status / gap to close before submission
 
-⚠️ The backend data model has a soft-deleted state (`status = 'deleted'`), but
-there is **no confirmed public "delete my account" endpoint** and the in-app
-action may not be wired yet. Before submitting, ensure:
+The in-app pathway is wired: Settings / Configure → Account → "Delete account"
+confirms with the user, calls the backend, clears local recordings, clears
+pending alerts and sleep profile data, and wipes secure-storage secrets.
+Before submitting, ensure:
 
-1. **In-app:** Settings → "Delete account" → confirm → calls the backend to delete
-   the account and server-side metadata, clears local clips + secure-storage
-   tokens/keys, and signs out. (Local-only users with no account: offer "Delete
-   all recordings & data".)
-2. **Backend:** an authenticated `DELETE /api/mobile/v1/account` (or similar) that
-   purges account rows, device tokens, and clip metadata. Backed-up clips live in
-   the user's own storage; tell the user those must be removed there (or offer to
-   trigger deletion if you hold the credentials).
+1. **Backend:** deploy `DELETE /api/mobile/v1/account` with
+   `SOUND_RECORDER_SUPABASE_SERVICE_ROLE_KEY` set server-side. The endpoint
+   verifies the user's Supabase JWT, deletes the Supabase Auth user, revokes
+   device/cloud tokens, and marks backend metadata deleted/expired.
+2. **In-app:** verify the production build has `SONUS_BACKEND_BASE_URL`,
+   `SONUS_SUPABASE_URL`, and `SONUS_SUPABASE_ANON_KEY` so account creation and
+   deletion work without developer project fields.
 3. **Web:** host the request page below at a public URL and put it in the Play
    "Data deletion" field and the App Store privacy section.
 
@@ -30,7 +30,7 @@ action may not be wired yet. Before submitting, ensure:
 
 | Data | On deletion |
 |---|---|
-| Account record, auth/device tokens | Deleted |
+| Account record, Supabase Auth user, auth/device tokens | Deleted |
 | Clip metadata held by the backend | Deleted |
 | On-device recordings, keys, tokens | Wiped from the device |
 | Clips you backed up to **your own** storage (S3/Drive/OneDrive/iCloud) | You control these; delete them in that service |

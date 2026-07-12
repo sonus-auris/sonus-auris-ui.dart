@@ -45,7 +45,7 @@ These require a human with the right accounts; do them once.
 ## Compliance gates ("the wing dings") — required before either store will approve
 
 - [ ] **Privacy policy hosted at a public URL.** Draft: `docs/compliance/PRIVACY_POLICY.md`. Host it on the existing `sonus-auris-site.web` (GitHub Pages) and paste the URL into both stores.
-- [ ] **Account deletion pathway.** Both stores require in-app deletion **and** a public deletion URL. See `docs/compliance/ACCOUNT_DELETION.md`. ⚠️ Backend currently has soft-delete in the data model but **no confirmed public `DELETE account` endpoint / web form** — this must exist before submission.
+- [ ] **Account deletion pathway.** In-app deletion is wired through `DELETE /api/mobile/v1/account`; deploy the backend with `SOUND_RECORDER_SUPABASE_SERVICE_ROLE_KEY`, then host the public deletion URL from `docs/compliance/ACCOUNT_DELETION.md` before submission.
 - [ ] **Google Play Data Safety** form filled from `docs/compliance/DATA_SAFETY_play.md`.
 - [ ] **Apple Privacy "Nutrition Labels"** filled from `docs/compliance/PRIVACY_LABELS_appstore.md`.
 - [ ] **Permissions rationale** ready for reviewers (`docs/compliance/PERMISSIONS_RATIONALE.md`) — mic + **background audio** + location + Bluetooth are all high-scrutiny. Record a demo video showing the recording flow for App Review.
@@ -61,6 +61,15 @@ These require a human with the right accounts; do them once.
 - [ ] **Sign in / demo** for reviewers if any gated feature needs it (see iOS review notes).
 
 ## Release flow (once the above is done)
+
+Set the production account/backend config before building so the app uses the
+built-in Supabase project instead of showing developer project fields:
+
+```bash
+export SONUS_BACKEND_BASE_URL="https://YOUR-BACKEND.example"
+export SONUS_SUPABASE_URL="https://YOUR-PROJECT.supabase.co"
+export SONUS_SUPABASE_ANON_KEY="YOUR-PUBLISHABLE-OR-ANON-KEY"
+```
 
 ```bash
 # 0. Pick versions

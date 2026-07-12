@@ -18,12 +18,19 @@ fi
 echo "Flutter: $(flutter --version | head -1)"
 flutter pub get
 
+dart_define_args=()
+for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
+  value="${!name:-}"
+  [[ -n "$value" ]] && dart_define_args+=(--dart-define="$name=$value")
+done
+
 # --obfuscate + --split-debug-info shrinks the binary and keeps Dart stack
 # traces de-obfuscatable (keep build/symbols/ to symbolicate crashes later).
 flutter build appbundle \
   --release \
   --obfuscate \
-  --split-debug-info=build/symbols
+  --split-debug-info=build/symbols \
+  "${dart_define_args[@]}"
 
 aab="build/app/outputs/bundle/release/app-release.aab"
 echo

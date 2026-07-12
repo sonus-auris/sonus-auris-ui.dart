@@ -55,12 +55,30 @@ android {
 
     buildTypes {
         release {
-            // Sign with the real release keystore when key.properties is present;
-            // otherwise fall back to debug signing so `flutter run --release` and
-            // unsigned CI builds keep working.
+            // Sign with the real release keystore when key.properties is present.
+            // A release artifact must NEVER be silently debug-signed: Google Play
+            // rejects debug-signed uploads, and an accidental upload would be signed
+            // with the wrong (non-upload) key. So if key.properties is absent we FAIL
+            // the release build — unless the developer explicitly opts into debug
+            // signing for a local run (e.g. `flutter run --release`) by passing
+            // `-Pallow_debug_signed_release=true` or setting
+            // ALLOW_DEBUG_SIGNED_RELEASE=1. The store build scripts never set these.
             signingConfig = if (keystorePropertiesFile.exists()) {
                 signingConfigs.getByName("release")
             } else {
+                val allowDebugRelease =
+                    (project.findProperty("allow_debug_signed_release") as String?)
+                        ?.toBoolean() == true ||
+                    System.getenv("ALLOW_DEBUG_SIGNED_RELEASE") == "1"
+                if (!allowDebugRelease) {
+                    throw GradleException(
+                        "Release build requires android/key.properties (release signing). " +
+                        "It is missing, so this build would be DEBUG-SIGNED and rejected by " +
+                        "Google Play. Create it via scripts/release/android-generate-keystore.sh, " +
+                        "or, for a local non-store `flutter run --release`, pass " +
+                        "-Pallow_debug_signed_release=true (or ALLOW_DEBUG_SIGNED_RELEASE=1)."
+                    )
+                }
                 signingConfigs.getByName("debug")
             }
         }

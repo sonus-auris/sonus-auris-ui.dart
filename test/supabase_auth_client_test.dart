@@ -78,6 +78,27 @@ void main() {
     expect(session.refreshToken, 'refresh-2');
   });
 
+  test('sendPasswordResetEmail posts to GoTrue recover', () async {
+    late http.Request captured;
+    final client = SupabaseAuthClient(
+      httpClient: MockClient((request) async {
+        captured = request;
+        return http.Response('{}', 200);
+      }),
+    );
+
+    await client.sendPasswordResetEmail(
+      config: config,
+      email: 'user@example.com',
+    );
+
+    expect(captured.method, 'POST');
+    expect(captured.url.path, '/auth/v1/recover');
+    expect(captured.headers['apikey'], 'anon-key-123');
+    expect(captured.headers['authorization'], 'Bearer anon-key-123');
+    expect(jsonDecode(captured.body)['email'], 'user@example.com');
+  });
+
   test('signUp returns null when email confirmation is required', () async {
     final client = SupabaseAuthClient(
       httpClient: MockClient((request) async {

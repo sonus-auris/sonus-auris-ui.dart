@@ -26,5 +26,8 @@ Cloud / accounts
 - There is no shared media server. Backup goes to storage the user controls.
 - If you need to exercise the optional backend (alerts/links), contact us for a
   demo configuration; it is not required to evaluate the core recording feature.
+- Account creation uses Supabase email/password auth. Signed-in users can delete
+  their account from Configure > Account > Delete account; the app confirms,
+  calls the backend deletion endpoint, and clears local recordings/tokens.
 
 Privacy policy: <PASTE HOSTED URL>   Account deletion: <PASTE HOSTED URL>

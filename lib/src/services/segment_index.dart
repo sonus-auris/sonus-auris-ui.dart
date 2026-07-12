@@ -60,6 +60,17 @@ class SegmentIndex {
     await tempFile.rename(file.path);
   }
 
+  Future<void> clearAll() async {
+    final file = await _indexFile;
+    if (await file.exists()) {
+      await file.delete();
+    }
+    final directory = await segmentsDirectory;
+    if (await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
+  }
+
   Future<void> upsertSegment(RecordingSegment segment) async {
     final segments = await loadSegments();
     final index = segments.indexWhere((item) => item.id == segment.id);

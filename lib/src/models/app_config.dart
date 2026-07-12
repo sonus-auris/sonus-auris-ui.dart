@@ -6,6 +6,16 @@ import 'recording_schedule.dart';
 import 'upload_network_policy.dart';
 
 class AppConfig {
+  static const defaultBackendBaseUrl = String.fromEnvironment(
+    'SONUS_BACKEND_BASE_URL',
+  );
+  static const defaultSupabaseUrl = String.fromEnvironment(
+    'SONUS_SUPABASE_URL',
+  );
+  static const defaultSupabaseAnonKey = String.fromEnvironment(
+    'SONUS_SUPABASE_ANON_KEY',
+  );
+
   const AppConfig({
     required this.deviceId,
     this.deviceRetentionHours = 50,
@@ -17,13 +27,13 @@ class AppConfig {
     this.channels = 1,
     this.uploadEnabled = false,
     this.cloudProvider = CloudProvider.s3,
-    this.backendBaseUrl = '',
+    this.backendBaseUrl = defaultBackendBaseUrl,
     this.s3Bucket = '',
     this.s3Region = 'us-east-1',
     this.s3Prefix = 'audio-dashcam',
     this.s3Endpoint = '',
-    this.supabaseUrl = '',
-    this.supabaseAnonKey = '',
+    this.supabaseUrl = defaultSupabaseUrl,
+    this.supabaseAnonKey = defaultSupabaseAnonKey,
     this.useCase = 'security',
     this.micSensitivity = 1.0,
     this.noiseTriggerSensitivity = 0.5,
@@ -552,13 +562,19 @@ class AppConfig {
       channels: _asInt(json['channels'], 1).clamp(1, 2),
       uploadEnabled: json['uploadEnabled'] as bool? ?? false,
       cloudProvider: CloudProvider.fromName(json['cloudProvider'] as String?),
-      backendBaseUrl: json['backendBaseUrl'] as String? ?? '',
+      backendBaseUrl: _withBuildDefault(
+        json['backendBaseUrl'],
+        defaultBackendBaseUrl,
+      ),
       s3Bucket: json['s3Bucket'] as String? ?? '',
       s3Region: json['s3Region'] as String? ?? 'us-east-1',
       s3Prefix: json['s3Prefix'] as String? ?? 'audio-dashcam',
       s3Endpoint: json['s3Endpoint'] as String? ?? '',
-      supabaseUrl: json['supabaseUrl'] as String? ?? '',
-      supabaseAnonKey: json['supabaseAnonKey'] as String? ?? '',
+      supabaseUrl: _withBuildDefault(json['supabaseUrl'], defaultSupabaseUrl),
+      supabaseAnonKey: _withBuildDefault(
+        json['supabaseAnonKey'],
+        defaultSupabaseAnonKey,
+      ),
       useCase: supportedUseCases.contains(useCase) ? useCase : 'security',
       micSensitivity: _asDouble(json['micSensitivity'], 1.0).clamp(0.25, 4.0),
       noiseTriggerSensitivity: _asDouble(
@@ -656,6 +672,11 @@ class AppConfig {
           .toList();
     }
     return const [];
+  }
+
+  static String _withBuildDefault(Object? value, String fallback) {
+    final raw = value is String ? value : '';
+    return raw.trim().isEmpty ? fallback : raw;
   }
 
   static List<double> _asDoubleList(

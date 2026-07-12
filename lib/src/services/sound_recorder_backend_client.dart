@@ -89,8 +89,8 @@ class SoundRecorderBackendClient {
     http.Client? httpClient,
     this.requestTimeout = const Duration(seconds: 45),
     SegmentEncryptor? encryptor,
-  })  : _httpClient = httpClient ?? http.Client(),
-        _encryptor = encryptor;
+  }) : _httpClient = httpClient ?? http.Client(),
+       _encryptor = encryptor;
 
   final http.Client _httpClient;
   final Duration requestTimeout;
@@ -133,7 +133,9 @@ class SoundRecorderBackendClient {
     final session = _requireMap(body['session'], 'session');
     final id = session['id'];
     if (id is! String || id.trim().isEmpty) {
-      throw StateError('Backend session response did not include a session id.');
+      throw StateError(
+        'Backend session response did not include a session id.',
+      );
     }
     return BackendUploadSession(
       id: id,
@@ -416,6 +418,21 @@ class SoundRecorderBackendClient {
     );
   }
 
+  Future<void> deleteAccount({
+    required AppConfig config,
+    required CloudSecrets secrets,
+  }) async {
+    final uri = _apiUri(config, '/api/mobile/v1/account');
+    final response = await _httpClient
+        .delete(uri, headers: _identityHeaders(secrets))
+        .timeout(requestTimeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+        _errorMessage(_decode(response), 'Account deletion failed.'),
+      );
+    }
+  }
+
   /// Reports the device's current transfer gate to the backend so server-managed
   /// (Google Drive / OneDrive) copies are held while the device defers cloud
   /// streaming for low battery or a network-policy constraint, and resume when
@@ -464,7 +481,9 @@ class SoundRecorderBackendClient {
         .timeout(requestTimeout);
     final body = _decode(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(_errorMessage(body, 'Listing cloud connections failed.'));
+      throw StateError(
+        _errorMessage(body, 'Listing cloud connections failed.'),
+      );
     }
     return _mapList(body['connections']);
   }
@@ -677,7 +696,8 @@ class SoundRecorderBackendClient {
       'accept': 'application/json',
     };
     if (secrets.hasSupabaseToken) {
-      headers['x-supabase-auth'] = 'Bearer ${secrets.supabaseAccessToken.trim()}';
+      headers['x-supabase-auth'] =
+          'Bearer ${secrets.supabaseAccessToken.trim()}';
     }
     return headers;
   }
@@ -690,7 +710,8 @@ class SoundRecorderBackendClient {
       'accept': 'application/json',
     };
     if (secrets.hasSupabaseToken) {
-      headers['x-supabase-auth'] = 'Bearer ${secrets.supabaseAccessToken.trim()}';
+      headers['x-supabase-auth'] =
+          'Bearer ${secrets.supabaseAccessToken.trim()}';
     }
     if (secrets.hasBackendDeviceToken) {
       headers['authorization'] = 'Bearer ${secrets.backendDeviceToken.trim()}';
