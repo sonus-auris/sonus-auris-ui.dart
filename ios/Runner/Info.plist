@@ -73,6 +73,23 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- OAuth redirect scheme for flutter_web_auth_2 (Spotify/SoundCloud account
+	     linking). The app opens sonusauris://oauth/callback via ASWebAuthentication;
+	     registering the scheme lets the redirect return into the app. PKCE + a
+	     validated state param protect the flow (see oauth_browser.dart). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.ores.audioDashcam.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>sonusauris</string>
+			</array>
+		</dict>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
