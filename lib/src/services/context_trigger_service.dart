@@ -1,3 +1,4 @@
+// Context-trigger source interface + coordinator: starts/stops event sources (connectivity, Wi-Fi, Bluetooth) only inside an armed schedule window.
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';

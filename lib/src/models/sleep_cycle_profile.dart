@@ -1,3 +1,4 @@
+// Models for the observed/estimated sleep-cycle lengths the sleep-cycle detector learns per user.
 import 'acoustic_detection.dart';
 
 class SleepCycleObservation {

@@ -1,3 +1,4 @@
+// Best-effort, opt-in GPS tagging for segments; fails soft so a missing fix never breaks capture.
 import 'package:geolocator/geolocator.dart';
 
 import '../models/geo_tag.dart';

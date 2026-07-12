@@ -1,3 +1,4 @@
+// Voice handler that starts/stops recording through a thin RecorderControl seam over AppController.
 import '../../../models/voice_command.dart';
 import '../voice_command_handler.dart';
 

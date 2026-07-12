@@ -1,3 +1,4 @@
+// VoiceCommandHandler interface plus the VoiceCommandResult returned when executing a command.
 import '../../models/voice_command.dart';
 
 /// Result of attempting to execute a [VoiceCommand].

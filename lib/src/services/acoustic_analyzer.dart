@@ -1,3 +1,4 @@
+// Runs the FFT acoustic pipeline on a background isolate so analysis never blocks the audio-capture path.
 import 'dart:async';
 import 'dart:isolate';
 import 'dart:typed_data';

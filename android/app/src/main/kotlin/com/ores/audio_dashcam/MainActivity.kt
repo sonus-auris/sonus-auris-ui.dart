@@ -1,3 +1,4 @@
+// Flutter host Activity; also serves the audio_dashcam/sleep_sensors method channel, sampling the accelerometer (motion) and light sensor for sleep sensing.
 package com.ores.audio_dashcam
 
 import android.content.Context

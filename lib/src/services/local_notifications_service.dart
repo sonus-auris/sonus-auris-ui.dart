@@ -1,3 +1,4 @@
+// Single owner of the local-notifications plugin, shared by schedule reminders and context-trigger consent prompts.
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:io';
