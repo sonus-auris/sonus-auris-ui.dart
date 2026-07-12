@@ -54,11 +54,9 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
-          script: |
-            adb wait-for-device
-            SMOKE_SCREENSHOT="$PWD/permission-smoke.png" \
-              bash scripts/emulator/permission-smoke.sh \
-              build/app/outputs/flutter-apk/app-debug.apk
+          # Single line: the android-emulator-runner feeds `script` to `sh -c`
+          # line-by-line, so a trailing-backslash continuation breaks it.
+          script: SMOKE_SCREENSHOT="$PWD/permission-smoke.png" bash scripts/emulator/permission-smoke.sh build/app/outputs/flutter-apk/app-debug.apk
 
       - name: Upload evidence screenshot
         if: always()

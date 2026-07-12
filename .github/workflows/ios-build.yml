@@ -29,6 +29,10 @@ permissions:
 jobs:
   ios-build:
     runs-on: macos-14
+    # `secrets` context is not allowed in step `if:` — hoist the "do we have
+    # signing material?" decision into a job-level env the steps can gate on.
+    env:
+      HAS_SIGNING: ${{ secrets.IOS_DIST_CERT_P12_BASE64 != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -46,7 +50,7 @@ jobs:
       # --- Signed IPA only when signing secrets are present ---
       - name: Import signing assets
         id: signing
-        if: ${{ secrets.IOS_DIST_CERT_P12_BASE64 != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
+        if: ${{ env.HAS_SIGNING == 'true' }}
         env:
           CERT_B64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
           CERT_PW: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
@@ -64,7 +68,7 @@ jobs:
           echo "$PROFILE_B64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
 
       - name: Build signed App Store IPA (no upload)
-        if: ${{ secrets.IOS_DIST_CERT_P12_BASE64 != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
+        if: ${{ env.HAS_SIGNING == 'true' }}
         env:
           DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
           SONUS_BACKEND_BASE_URL: ${{ secrets.SONUS_BACKEND_BASE_URL }}
@@ -73,7 +77,7 @@ jobs:
         run: scripts/release/ios-build-ipa.sh
 
       - name: Upload IPA artifact
-        if: ${{ secrets.IOS_DIST_CERT_P12_BASE64 != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
+        if: ${{ env.HAS_SIGNING == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: sonus-auris-ipa
