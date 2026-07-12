@@ -83,3 +83,33 @@ dependencies {
 flutter {
     source = "../.."
 }
+
+// Guard: never ship a DEBUG-SIGNED release. Google Play rejects debug-signed
+// uploads, and an accidental upload would be signed with the wrong (non-upload)
+// key. If key.properties is missing and a release-assembling task is scheduled,
+// fail — unless the developer explicitly opts in for a local, non-store build
+// (`flutter run --release`) via -Pallow_debug_signed_release=true or
+// ALLOW_DEBUG_SIGNED_RELEASE=1. The store scripts never set these, so a mis-keyed
+// AAB/APK can never be produced by CI or `scripts/release/*`.
+gradle.taskGraph.whenReady {
+    val keystoreMissing = !rootProject.file("key.properties").exists()
+    val allowDebugRelease =
+        (project.findProperty("allow_debug_signed_release") as String?)?.toBoolean() == true ||
+        System.getenv("ALLOW_DEBUG_SIGNED_RELEASE") == "1"
+    if (keystoreMissing && !allowDebugRelease) {
+        val releaseTask = allTasks.firstOrNull { t ->
+            val n = t.name
+            (n.contains("Release") && (n.startsWith("assemble") ||
+                n.startsWith("bundle") || n.startsWith("package") || n.startsWith("sign")))
+        }
+        if (releaseTask != null) {
+            throw GradleException(
+                "Refusing to build a DEBUG-SIGNED release ('${releaseTask.path}'): " +
+                "android/key.properties is missing. Create it via " +
+                "scripts/release/android-generate-keystore.sh for a real signed build, " +
+                "or, for a local non-store `flutter run --release`, pass " +
+                "-Pallow_debug_signed_release=true (or ALLOW_DEBUG_SIGNED_RELEASE=1)."
+            )
+        }
+    }
+}
