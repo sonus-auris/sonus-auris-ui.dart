@@ -1,0 +1,45 @@
+name: Build Android emulator image
+
+# Builds ci/android-emulator/Dockerfile on a real amd64 runner and pushes it to
+# GHCR so the cluster (Hetzner/EC2 amd64 nodes) can pull it for the permission
+# test Job. This proves the Dockerfile (SDK install + AVD creation) works, and
+# produces the exact image referenced by
+# ci/android-emulator/k8s/emulator-permission-test.job.yaml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ci/android-emulator/**
+      - scripts/emulator/**
+      - .github/workflows/build-emulator-image.yml
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ci/android-emulator/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/android-emulator:latest
+            ghcr.io/${{ github.repository_owner }}/android-emulator:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
