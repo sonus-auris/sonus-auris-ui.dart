@@ -1,4 +1,3 @@
-// Reads native motion / ambient-light / phone-context sensors (via method channel) as extra sleep-sensing signals.
 import 'package:flutter/services.dart';
 
 class SleepSensorSnapshot {

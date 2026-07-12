@@ -1,4 +1,3 @@
-// Immutable snapshot of everything the UI renders (config, secrets, segments, recorder/playback state, detections), emitted by the AppController.
 import '../models/acoustic_detection.dart';
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';

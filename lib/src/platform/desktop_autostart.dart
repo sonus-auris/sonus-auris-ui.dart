@@ -1,4 +1,3 @@
-// Registers the desktop build as a login item so it starts at login (no-op on mobile).
 import 'dart:io';
 
 import 'package:launch_at_startup/launch_at_startup.dart';

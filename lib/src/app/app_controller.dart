@@ -1,4 +1,3 @@
-// Central app orchestrator: owns every service and drives the capture/encrypt/upload/analysis lifecycle, exposing app state to the UI.
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';

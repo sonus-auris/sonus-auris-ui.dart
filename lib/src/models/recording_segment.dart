@@ -1,4 +1,3 @@
-// Model for one rolling audio segment on disk with its upload status and metadata (timing, sample range, geo tag).
 import 'geo_tag.dart';
 
 enum SegmentUploadStatus {

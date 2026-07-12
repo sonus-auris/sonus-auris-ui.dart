@@ -1,4 +1,3 @@
-// Routes a resolved VoiceCommand to its handler via an intent->handler registry and speaks the confirmation.
 import 'package:rxdart/rxdart.dart';
 
 import '../../models/voice_command.dart';

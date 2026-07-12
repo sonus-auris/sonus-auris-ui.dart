@@ -1,4 +1,3 @@
-// SpectralAnalyzer + SpectralFrame: per-frame frequency-domain features (centroid, flatness, band ratios) computed by FFT that every detector consumes.
 import 'dart:math' as math;
 import 'dart:typed_data';
 

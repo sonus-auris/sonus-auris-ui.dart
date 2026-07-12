@@ -1,4 +1,3 @@
-// Writes a time-aligned FFT spectral-features JSON sidecar next to each finalized WAV segment.
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';

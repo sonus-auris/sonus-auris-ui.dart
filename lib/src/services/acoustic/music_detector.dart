@@ -1,4 +1,3 @@
-// Heuristic FFT music detector: flags loud, pitched, beat-carrying passages as music detections.
 import '../../models/acoustic_detection.dart';
 import 'spectral_features.dart';
 

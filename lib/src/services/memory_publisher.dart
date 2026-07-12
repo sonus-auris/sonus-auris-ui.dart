@@ -1,4 +1,3 @@
-// Adds songs recognised in saved clips to the user's private Spotify 'memories' playlist.
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
 import 'spotify_client.dart';

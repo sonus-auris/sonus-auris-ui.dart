@@ -1,4 +1,3 @@
-// Immutable snapshot of the audio-playback engine state (loaded, playing, position/duration) for the UI.
 class PlaybackSnapshot {
   const PlaybackSnapshot({
     required this.isLoaded,

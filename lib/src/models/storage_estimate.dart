@@ -1,4 +1,3 @@
-// Computes device/cloud storage footprint from bitrate and retention hours, with a human-readable byte formatter.
 class StorageEstimate {
   const StorageEstimate({
     required this.bitRate,

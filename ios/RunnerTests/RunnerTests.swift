@@ -1,4 +1,3 @@
-// Placeholder XCTest target for the iOS Runner app.
 import Flutter
 import UIKit
 import XCTest

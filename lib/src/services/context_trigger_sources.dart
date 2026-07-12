@@ -1,4 +1,3 @@
-// Concrete ContextTriggerSource implementations for connectivity, Wi-Fi, and Bluetooth events.
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';

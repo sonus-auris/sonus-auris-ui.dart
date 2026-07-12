@@ -1,4 +1,3 @@
-// Rule-based (regex) recognizer turning a transcript into a structured VoiceCommand.
 import '../../models/voice_command.dart';
 import 'voice_limits.dart';
 

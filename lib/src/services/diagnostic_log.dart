@@ -1,4 +1,3 @@
-// Small in-memory ring buffer of timestamped diagnostic messages, exposed as a stream for the diagnostics UI.
 import 'package:rxdart/rxdart.dart';
 
 class DiagnosticLog {

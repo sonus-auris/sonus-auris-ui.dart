@@ -1,4 +1,3 @@
-// Backend-mediated upload client for non-S3 providers: registers the device and streams encrypted segments through the Sonus backend.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';

@@ -1,4 +1,3 @@
-// Form-factor / device-role enums and static platform helpers shared across mobile and desktop.
 import 'package:flutter/foundation.dart';
 
 /// Form factor this build is running on. Drives *presentation* only — the

@@ -1,4 +1,3 @@
-// On-device FFT analysis pipeline: fans decimated audio frames out to the snore/sleep/music/speech detectors per the enabled flags.
 import 'dart:typed_data';
 
 import '../../models/acoustic_detection.dart';

@@ -1,4 +1,3 @@
-// On-disk JSON index and file storage for recorded segments (the rolling-buffer catalog).
 import 'dart:convert';
 import 'dart:io';
 

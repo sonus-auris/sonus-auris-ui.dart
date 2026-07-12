@@ -1,4 +1,3 @@
-// PKCE OAuth helper for the music integrations (Spotify/SoundCloud): builds verifier/challenge pairs and exchanges auth codes for tokens.
 import 'dart:convert';
 import 'dart:math';
 

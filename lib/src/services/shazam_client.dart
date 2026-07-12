@@ -1,4 +1,3 @@
-// Dart side of the iOS-only ShazamKit song-identification bridge.
 import 'dart:io';
 
 import 'package:flutter/services.dart';

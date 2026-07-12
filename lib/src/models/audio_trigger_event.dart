@@ -1,4 +1,3 @@
-// An audio-derived trigger (loud commotion, spoken magic phrase, or a manual mark) reported to the backend.
 class AudioTriggerEvent {
   const AudioTriggerEvent({
     required this.type,

@@ -1,4 +1,3 @@
-// Heuristic FFT speech detector: flags loud, voiced-band, syllable-modulated audio as speech detections.
 import '../../models/acoustic_detection.dart';
 import 'spectral_features.dart';
 

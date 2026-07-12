@@ -1,4 +1,3 @@
-// Sonus Auris brand colors and Material theme, mirrored from the marketing site.
 import 'package:flutter/material.dart';
 
 /// Sonus Auris brand palette, mirrored from the marketing site's

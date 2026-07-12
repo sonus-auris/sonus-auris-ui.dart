@@ -1,4 +1,3 @@
-// Immutable snapshot of recorder state (recording flag, active segment, live peak/average dB) for the UI.
 class RecorderSnapshot {
   const RecorderSnapshot({
     required this.isRecording,
