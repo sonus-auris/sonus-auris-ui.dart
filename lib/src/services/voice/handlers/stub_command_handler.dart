@@ -1,3 +1,4 @@
+// Fallback voice handler acknowledging recognized-but-unwired intents so the command surface stays complete.
 import '../../../models/voice_command.dart';
 import '../voice_command_handler.dart';
 

@@ -1,3 +1,4 @@
+// Persists app config, cloud secrets, consent, and sleep profiles across secure storage and shared preferences.
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';

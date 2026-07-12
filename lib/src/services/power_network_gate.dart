@@ -1,3 +1,4 @@
+// Watches battery and network conditions and gates cloud uploads accordingly; capture is never affected.
 import 'dart:async';
 
 import 'package:battery_plus/battery_plus.dart';

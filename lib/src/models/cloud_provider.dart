@@ -1,3 +1,4 @@
+// Enum of supported user-owned cloud destinations (S3, Google Drive, OneDrive, iCloud) with display labels and backend routing.
 enum CloudProvider {
   s3,
   googleDrive,

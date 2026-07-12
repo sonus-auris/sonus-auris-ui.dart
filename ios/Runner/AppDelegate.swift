@@ -1,3 +1,4 @@
+// iOS app delegate: registers plugins/bridges and routes scheduled-recording local notifications through the app so consent taps foreground it.
 import Flutter
 import UIKit
 import UserNotifications

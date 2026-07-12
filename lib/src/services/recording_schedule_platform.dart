@@ -1,3 +1,4 @@
+// SchedulePlatform implementation registering Android exact alarms / iOS local notifications for schedule-window transitions.
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:convert';
