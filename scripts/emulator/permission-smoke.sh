@@ -29,8 +29,9 @@ until [[ "$(adb_ shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 
 done
 adb_ shell input keyevent 82 >/dev/null 2>&1 || true   # dismiss keyguard
 
-echo "== installing $APK =="
-adb_ install -r -g "$APK"   # -g: pre-grant install-time perms; runtime perms tested below
+echo "== installing $APK (clean install; do NOT pre-grant, so the opt-in default is real) =="
+adb_ uninstall "$PKG" >/dev/null 2>&1 || true   # clean slate: clear any persisted grants
+adb_ install -r "$APK"   # no -g: dangerous runtime perms must start DENIED (opt-in)
 
 echo "== requested permissions (must match AndroidManifest) =="
 adb_ shell dumpsys package "$PKG" | sed -n '/requested permissions:/,/install permissions:/p'
