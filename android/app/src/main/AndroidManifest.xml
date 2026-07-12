@@ -22,7 +22,11 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- Context (wake-on-event) triggers, all off by default:
          - Bluetooth connect / nearby BLE scan detection. -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!-- neverForLocation: we scan for nearby BLE devices only to offer a scheduled
+         recording, never to derive the device's physical location (geotagging uses
+         ACCESS_FINE_LOCATION separately). Declaring this narrows Play review scrutiny. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- Legacy Bluetooth perms for pre-Android-12 devices. -->
     <uses-permission android:name="android.permission.BLUETOOTH"
