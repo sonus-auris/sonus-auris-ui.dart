@@ -145,6 +145,13 @@ fi
 assert_ui_text "Create your Sonus Auris account" "$ui_xml"
 assert_ui_text "Sign in" "$ui_xml"
 assert_ui_text "Create account" "$ui_xml"
+if adb_ logcat -d 2>/dev/null | grep -m1 -F "A RenderFlex overflowed"; then
+  echo "  ✗ Flutter reported a visible layout overflow"
+  capture_failure_evidence
+  exit 1
+else
+  echo "  ✓ no Flutter layout overflow was reported"
+fi
 
 echo "== runtime permission model (sensitive context perms must default to DENIED / opt-in) =="
 fail=0
