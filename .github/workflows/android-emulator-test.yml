@@ -92,6 +92,11 @@ jobs:
 
       - run: flutter pub get
 
+      # Warm the Gradle/pub caches (and validate the app builds) so the build
+      # inside `flutter test` below is incremental and doesn't blow the timeout.
+      - name: Build debug APK (warm cache)
+        run: flutter build apk --debug
+
       - name: Run recording integration test on emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
