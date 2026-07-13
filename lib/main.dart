@@ -2976,6 +2976,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
                     _sleepMotionConsent = false;
                     _sleepAmbientLightConsent = false;
                     _sleepPhoneContextConsent = false;
+                    _sleepCloudSyncConsent = false;
                   }
                 });
                 _apply();
