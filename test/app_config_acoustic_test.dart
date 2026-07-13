@@ -60,6 +60,7 @@ void main() {
     expect(config.sleepMotionSensorConsent, isFalse);
     expect(config.sleepAmbientLightConsent, isFalse);
     expect(config.sleepPhoneContextConsent, isFalse);
+    expect(config.sleepCloudSyncConsent, isFalse);
     expect(config.adaptiveQualityEnabled, isFalse);
     // With adaptive quality off, the mic opens at the plain sample rate.
     expect(config.effectiveCaptureSampleRate, config.sampleRate);
