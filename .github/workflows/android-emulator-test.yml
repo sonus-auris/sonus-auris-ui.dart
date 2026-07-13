@@ -114,22 +114,24 @@ jobs:
 
       - name: Start deterministic virtual audio source
         run: |
-          if ! command -v pulseaudio >/dev/null 2>&1; then
+          if ! command -v pulseaudio >/dev/null 2>&1 || \
+            ! command -v arecord >/dev/null 2>&1; then
             sudo apt-get update
-            sudo apt-get install -y pulseaudio pulseaudio-utils
+            sudo apt-get install -y alsa-utils pulseaudio pulseaudio-utils
           fi
           pulseaudio --start --exit-idle-time=-1
           pactl load-module module-null-sink sink_name=sonus_virtual_audio
           pactl set-default-source sonus_virtual_audio.monitor
-          pactl load-module module-native-protocol-tcp \
-            listen=127.0.0.1 port=4713 auth-anonymous=1
-          pulse_server=tcp:127.0.0.1:4713
-          PULSE_SERVER="$pulse_server" pactl info >/dev/null
+          pulse_server="$(pactl info | awk -F': ' '/^Server String:/ { print $2; exit }')"
+          if [[ "$pulse_server" != unix:* ]]; then
+            pulse_server="unix:$pulse_server"
+          fi
+          PULSE_SERVER="$pulse_server" \
+            arecord -D pulse -f S16_LE -r 44100 -c 1 -d 1 -t raw /dev/null
           echo "PULSE_SERVER=$pulse_server" >> "$GITHUB_ENV"
-          echo "QEMU_AUDIO_DRV=pa" >> "$GITHUB_ENV"
-          echo "QEMU_PA_SERVER=$pulse_server" >> "$GITHUB_ENV"
-          echo "QEMU_PA_SINK=sonus_virtual_audio" >> "$GITHUB_ENV"
-          echo "QEMU_PA_SOURCE=sonus_virtual_audio.monitor" >> "$GITHUB_ENV"
+          echo "QEMU_AUDIO_DRV=alsa" >> "$GITHUB_ENV"
+          echo "QEMU_ALSA_DAC_DEV=pulse" >> "$GITHUB_ENV"
+          echo "QEMU_ALSA_ADC_DEV=pulse" >> "$GITHUB_ENV"
           pactl info
 
       - name: Run recording integration test on emulator
@@ -140,9 +142,9 @@ jobs:
           arch: x86_64
           force-avd-creation: false
           # Android Emulator disables host microphone input by default. Explicitly
-          # enable it and route its PulseAudio client to the null-source monitor
-          # prepared above, so deterministic silence still traverses the real
-          # mic/plugin/WAV pipeline without physical runner audio hardware.
+          # enable it and route ALSA through PulseAudio's null-source monitor,
+          # so deterministic silence still traverses the real mic/plugin/WAV
+          # pipeline without physical runner audio hardware.
           emulator-options: -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect -allow-host-audio
           disable-animations: true
           # The harness pre-installs the test APK and verifies RECORD_AUDIO before
