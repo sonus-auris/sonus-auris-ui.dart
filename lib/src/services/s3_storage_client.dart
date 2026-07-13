@@ -24,12 +24,19 @@ class UploadResult {
 }
 
 class S3StorageClient {
-  S3StorageClient({
+  factory S3StorageClient({
     http.Client? httpClient,
-    this.requestTimeout = const Duration(seconds: 45),
+    Duration requestTimeout = const Duration(seconds: 45),
     SegmentEncryptor? encryptor,
-  })  : _httpClient = httpClient ?? http.Client(),
-        _encryptor = encryptor;
+  }) {
+    return S3StorageClient._(
+      httpClient ?? http.Client(),
+      requestTimeout,
+      encryptor,
+    );
+  }
+
+  S3StorageClient._(this._httpClient, this.requestTimeout, this._encryptor);
 
   final http.Client _httpClient;
   final Duration requestTimeout;
@@ -183,8 +190,9 @@ class S3StorageClient {
   }) async {
     try {
       final plaintext = await file.readAsBytes();
-      final bytes =
-          _encryptor == null ? plaintext : await _encryptor.seal(plaintext);
+      final bytes = _encryptor == null
+          ? plaintext
+          : await _encryptor.seal(plaintext);
       final uri = _objectUri(config, key);
       final payloadHash = sha256.convert(bytes).toString();
       final headers = _signedHeaders(
@@ -193,6 +201,9 @@ class S3StorageClient {
         config: config,
         secrets: secrets,
         payloadHash: payloadHash,
+        // Do not add x-amz-server-side-encryption here. Direct uploads are
+        // already encrypted on-device when an encryptor is configured, and R2
+        // rejects the AWS-specific AES256 request header.
         extraHeaders: {'content-type': contentType},
       );
       final response = await _httpClient

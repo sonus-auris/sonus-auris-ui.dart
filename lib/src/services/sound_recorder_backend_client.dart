@@ -207,8 +207,12 @@ class SoundRecorderBackendClient {
       final upload = presignBody['upload'] as Map<String, dynamic>;
       final serverSegment = presignBody['segment'] as Map<String, dynamic>;
       final uploadUri = _signedUploadUri(upload);
+      final transferHeaders = _signedTransferHeaders(
+        upload,
+        expectedContentLength: bytes.length,
+      );
       final uploadResponse = await _httpClient
-          .put(uploadUri, headers: _signedTransferHeaders(upload), body: bytes)
+          .put(uploadUri, headers: transferHeaders, body: bytes)
           .timeout(requestTimeout);
       if (uploadResponse.statusCode < 200 || uploadResponse.statusCode >= 300) {
         return BackendUploadResult.failure(
@@ -734,8 +738,12 @@ class SoundRecorderBackendClient {
     }
   }
 
-  Map<String, String> _signedTransferHeaders(Map<String, dynamic> upload) {
+  Map<String, String> _signedTransferHeaders(
+    Map<String, dynamic> upload, {
+    required int expectedContentLength,
+  }) {
     final headers = <String, String>{};
+    final seenHeaderNames = <String>{};
     for (final header in upload['headers'] as List<dynamic>? ?? const []) {
       final item = header as Map<String, dynamic>;
       final name = (item['name'] as String).trim();
@@ -745,7 +753,6 @@ class SoundRecorderBackendClient {
         'authorization',
         'cookie',
         'host',
-        'content-length',
         'transfer-encoding',
       };
       if (name.isEmpty ||
@@ -756,6 +763,32 @@ class SoundRecorderBackendClient {
           value.contains('\n') ||
           forbiddenHeaders.contains(lowerName)) {
         throw FormatException('Signed upload header is not allowed: $name.');
+      }
+      if (!seenHeaderNames.add(lowerName)) {
+        throw FormatException('Signed upload header is duplicated: $name.');
+      }
+      if (lowerName == 'content-length') {
+        final canonicalValue = value.trim();
+        final signedLength =
+            RegExp(r'^(0|[1-9][0-9]*)$').hasMatch(canonicalValue)
+            ? int.tryParse(canonicalValue)
+            : null;
+        if (signedLength == null) {
+          throw const FormatException(
+            'Signed upload content-length must be a non-negative integer.',
+          );
+        }
+        if (signedLength != expectedContentLength) {
+          throw FormatException(
+            'Signed upload content-length $signedLength does not match '
+            'payload byte count $expectedContentLength.',
+          );
+        }
+        // http.Request derives its transport content length from bodyBytes.
+        // Keeping this identical signed header in the request also satisfies
+        // providers whose presigned signature includes content-length.
+        headers[name] = canonicalValue;
+        continue;
       }
       headers[name] = value;
     }

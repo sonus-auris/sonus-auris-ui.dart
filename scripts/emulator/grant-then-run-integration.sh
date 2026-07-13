@@ -5,8 +5,8 @@
 # grant out-of-band: a background loop watches for the app package and grants
 # RECORD_AUDIO + POST_NOTIFICATIONS as soon as it is installed.
 #
-# `flutter test integration_test` first spends several MINUTES building the
-# instrumentation APK before it installs the app, so the granter must be patient
+# The device integration command first spends several MINUTES building the APK
+# before it installs the app, so the granter must be patient
 # and PERSISTENT — it keeps re-granting for the whole run (flutter may
 # uninstall/reinstall between the app and test APKs) and never gives up early.
 #
@@ -15,21 +15,80 @@ set -euo pipefail
 
 TARGET="${1:?usage: grant-then-run-integration.sh <integration_test target>}"
 PKG=com.ores.audio_dashcam
+APP_BINARY=build/app/outputs/flutter-apk/app-debug.apk
 
 adb wait-for-device
+DEVICE_ID="${ANDROID_SERIAL:-$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')}"
+if [[ -z "$DEVICE_ID" ]]; then
+  echo "recording-integration: no ready Android device found"
+  exit 1
+fi
+if [[ ! -f "$APP_BINARY" ]]; then
+  echo "recording-integration: prebuilt integration APK is missing: $APP_BINARY"
+  exit 1
+fi
+
+# Install the integration-target APK before flutter drive launches it. This
+# gives us a deterministic window to grant and verify RECORD_AUDIO without an
+# Android permission dialog racing the Dart test process.
+adb -s "$DEVICE_ID" install -r "$APP_BINARY" >/dev/null
+adb -s "$DEVICE_ID" shell pm grant "$PKG" android.permission.RECORD_AUDIO
+adb -s "$DEVICE_ID" shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS || true
+if ! adb -s "$DEVICE_ID" shell dumpsys package "$PKG" 2>/dev/null |
+  tr -d '\r' |
+  grep -F 'android.permission.RECORD_AUDIO: granted=true' >/dev/null; then
+  echo "recording-integration: RECORD_AUDIO grant verification failed"
+  exit 1
+fi
+echo "recording-integration: RECORD_AUDIO grant verified before launch"
 
 # Persistent background granter: for the whole run, whenever the package is
 # present, (re)grant the runtime perms. Cheap and idempotent; killed at the end.
 (
   while true; do
-    if adb shell pm list packages 2>/dev/null | tr -d '\r' | grep -q "package:$PKG"; then
-      adb shell pm grant "$PKG" android.permission.RECORD_AUDIO 2>/dev/null || true
-      adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+    if adb -s "$DEVICE_ID" shell pm list packages 2>/dev/null |
+      tr -d '\r' | grep -F "package:$PKG" >/dev/null; then
+      adb -s "$DEVICE_ID" shell pm grant \
+        "$PKG" android.permission.RECORD_AUDIO 2>/dev/null || true
+      adb -s "$DEVICE_ID" shell pm grant \
+        "$PKG" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
     fi
     sleep 2
   done
 ) &
 GRANTER=$!
-trap 'kill "$GRANTER" 2>/dev/null || true' EXIT
+cleanup() {
+  local status=$?
+  kill "$GRANTER" 2>/dev/null || true
+  if [[ "$status" -ne 0 ]]; then
+    echo "recording-integration: device diagnostics after failure"
+    adb -s "$DEVICE_ID" shell dumpsys activity activities 2>/dev/null |
+      awk '/mResumedActivity|mFocusedApp/ { print }'
+    adb -s "$DEVICE_ID" logcat -d 2>/dev/null |
+      awk -v package="$PKG" '
+        index($0, package) || /AndroidRuntime/ || /flutter/ { lines[++count]=$0 }
+        END {
+          start = count > 120 ? count - 119 : 1
+          for (i = start; i <= count; i++) print lines[i]
+        }
+      '
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
 
-flutter test "$TARGET"
+# `flutter test` built and installed the APK on CI but could then wait forever
+# for its device-side test connection. The integration-test driver is the
+# explicit, supported device protocol and gives us a bounded host handshake.
+DRIVE=(
+  flutter drive
+  --driver=test_driver/integration_test.dart
+  --target="$TARGET"
+  --use-application-binary="$APP_BINARY"
+  -d "$DEVICE_ID"
+)
+if command -v timeout >/dev/null 2>&1; then
+  timeout 12m "${DRIVE[@]}"
+else
+  "${DRIVE[@]}"
+fi

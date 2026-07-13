@@ -121,6 +121,9 @@ ThemeData buildSonusTheme() {
     scaffoldBackgroundColor: SonusColors.paper,
     textTheme: textTheme,
     splashFactory: InkSparkle.splashFactory,
+    materialTapTargetSize: MaterialTapTargetSize.padded,
+    visualDensity: VisualDensity.standard,
+    focusColor: SonusColors.green200.withValues(alpha: 0.55),
     appBarTheme: AppBarTheme(
       backgroundColor: SonusColors.paper.withValues(alpha: 0.94),
       surfaceTintColor: Colors.transparent,
@@ -239,6 +242,18 @@ ThemeData buildSonusTheme() {
         ),
       ),
     ),
+    navigationRailTheme: NavigationRailThemeData(
+      backgroundColor: SonusColors.paper2,
+      indicatorColor: SonusColors.green50,
+      selectedIconTheme: const IconThemeData(color: SonusColors.green700),
+      unselectedIconTheme: const IconThemeData(color: SonusColors.inkSoft),
+      selectedLabelTextStyle: textTheme.labelLarge?.copyWith(
+        color: SonusColors.green900,
+      ),
+      unselectedLabelTextStyle: textTheme.labelMedium?.copyWith(
+        color: SonusColors.inkSoft,
+      ),
+    ),
     bannerTheme: const MaterialBannerThemeData(
       backgroundColor: SonusColors.green50,
       contentTextStyle: TextStyle(
@@ -272,8 +287,29 @@ ThemeData buildSonusTheme() {
     progressIndicatorTheme: const ProgressIndicatorThemeData(
       color: SonusColors.green500,
     ),
+    snackBarTheme: SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: SonusColors.green900,
+      contentTextStyle: body(14, Colors.white),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    ),
+    tooltipTheme: TooltipThemeData(
+      decoration: BoxDecoration(
+        color: SonusColors.green900,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      textStyle: body(12.5, Colors.white),
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: SonusColors.paper,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+    ),
     dropdownMenuTheme: const DropdownMenuThemeData(
-      textStyle: TextStyle(fontFamily: kSonusFontFamily, color: SonusColors.ink),
+      textStyle: TextStyle(
+        fontFamily: kSonusFontFamily,
+        color: SonusColors.ink,
+      ),
     ),
   );
 }

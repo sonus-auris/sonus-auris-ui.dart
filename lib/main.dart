@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 // `show DateFormat` so intl's TextDirection enum doesn't shadow dart:ui's.
 import 'package:intl/intl.dart' show DateFormat;
 
@@ -25,38 +24,86 @@ import 'src/models/transfer_gate_status.dart';
 import 'src/models/upload_network_policy.dart';
 import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
+import 'src/widgets/supabase_auth_form.dart';
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
   FlutterForegroundTask.initCommunicationPort();
-  // Exact-alarm scheduling backs the recording schedule's OS-level start/stop.
-  if (Platform.isAndroid) {
-    await AndroidAlarmManager.initialize();
-  }
+  // Native alarm-manager readiness is owned by PluginSchedulePlatform's
+  // bounded gate. Never hold the first Flutter frame behind a plugin channel:
+  // Android services can legitimately lag just after a cold reboot.
   runApp(const AudioDashcamRoot());
 }
 
 class AudioDashcamRoot extends StatefulWidget {
-  const AudioDashcamRoot({super.key});
+  const AudioDashcamRoot({
+    super.key,
+    this.controllerFactory,
+    this.controllerBootstrapDelay = Duration.zero,
+  });
+
+  final AppController Function()? controllerFactory;
+  final Duration controllerBootstrapDelay;
 
   @override
   State<AudioDashcamRoot> createState() => _AudioDashcamRootState();
 }
 
 class _AudioDashcamRootState extends State<AudioDashcamRoot> {
-  late final AppController _controller;
-  late final Future<void> _initFuture;
+  Timer? _controllerBootstrapTimer;
+  AppController? _controller;
+  Future<void>? _initFuture;
+  Object? _startupError;
 
   @override
   void initState() {
     super.initState();
-    _controller = AppController();
-    _initFuture = _controller.init();
+    // Build and submit the branded loading frame before constructing plugin-
+    // backed services. A zero-delay event from a post-frame callback guarantees
+    // this frame can leave the Dart UI isolate first, even when Android is still
+    // bringing native services online after a reboot.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _controllerBootstrapTimer = Timer(
+        widget.controllerBootstrapDelay,
+        _startController,
+      );
+    });
+  }
+
+  void _startController() {
+    if (!mounted || _controller != null) {
+      return;
+    }
+    try {
+      final controller = widget.controllerFactory?.call() ?? AppController();
+      _controller = controller;
+      final initFuture = controller.init();
+      if (!mounted) {
+        unawaited(controller.dispose());
+        return;
+      }
+      setState(() {
+        _initFuture = initFuture;
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _startupError = error;
+        });
+      }
+    }
   }
 
   @override
   void dispose() {
-    unawaited(_controller.dispose());
+    _controllerBootstrapTimer?.cancel();
+    final controller = _controller;
+    if (controller != null) {
+      unawaited(controller.dispose());
+    }
     super.dispose();
   }
 
@@ -67,26 +114,39 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
         title: 'Sonus Auris',
         debugShowCheckedModeBanner: false,
         theme: buildSonusTheme(),
-        home: FutureBuilder<void>(
-          future: _initFuture,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const LoadingPage();
-            }
-            if (snapshot.hasError) {
-              return ErrorPage(error: snapshot.error.toString());
-            }
-            // Gate the app behind onboarding/consent until it's completed for the
-            // current consent version.
-            return ValueListenableBuilder<bool>(
-              valueListenable: _controller.onboardingComplete,
-              builder: (context, complete, _) => complete
-                  ? SettingsPage(controller: _controller)
-                  : OnboardingFlow(controller: _controller),
-            );
-          },
-        ),
+        home: _buildHome(),
       ),
+    );
+  }
+
+  Widget _buildHome() {
+    final startupError = _startupError;
+    if (startupError != null) {
+      return ErrorPage(error: startupError.toString());
+    }
+    final controller = _controller;
+    final initFuture = _initFuture;
+    if (controller == null || initFuture == null) {
+      return const LoadingPage();
+    }
+    return FutureBuilder<void>(
+      future: initFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const LoadingPage();
+        }
+        if (snapshot.hasError) {
+          return ErrorPage(error: snapshot.error.toString());
+        }
+        // Gate the app behind onboarding/consent until it's completed for the
+        // current consent version.
+        return ValueListenableBuilder<bool>(
+          valueListenable: controller.onboardingComplete,
+          builder: (context, complete, _) => complete
+              ? SettingsPage(controller: controller)
+              : OnboardingFlow(controller: controller),
+        );
+      },
     );
   }
 }
@@ -96,31 +156,35 @@ class LoadingPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    return Scaffold(
       backgroundColor: SonusColors.paper,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SonusLogoMark(size: 64),
-            SizedBox(height: 22),
-            Text(
-              'Sonus Auris',
-              style: TextStyle(
-                fontFamily: kSonusFontFamily,
-                color: SonusColors.ink,
-                fontWeight: FontWeight.w800,
-                fontSize: 22,
-                letterSpacing: -0.3,
+      body: Semantics(
+        label: 'Loading Sonus Auris',
+        liveRegion: true,
+        child: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SonusLogoMark(size: 64),
+              SizedBox(height: 22),
+              Text(
+                'Sonus Auris',
+                style: TextStyle(
+                  fontFamily: kSonusFontFamily,
+                  color: SonusColors.ink,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 22,
+                  letterSpacing: -0.3,
+                ),
               ),
-            ),
-            SizedBox(height: 18),
-            SizedBox(
-              width: 26,
-              height: 26,
-              child: CircularProgressIndicator(strokeWidth: 3),
-            ),
-          ],
+              SizedBox(height: 18),
+              SizedBox(
+                width: 26,
+                height: 26,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -139,7 +203,7 @@ class ErrorPage extends StatelessWidget {
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(error, textAlign: TextAlign.center),
+          child: SelectableText(error, textAlign: TextAlign.center),
         ),
       ),
     );
@@ -164,6 +228,9 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   bool _busy = false;
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _supabaseUrlController = TextEditingController();
+  final _supabaseAnonKeyController = TextEditingController();
+  bool _supabaseProjectSeeded = false;
   late final Map<ConsentItem, bool> _grants = {
     for (final item in ConsentItem.values) item: item.required,
   };
@@ -174,6 +241,8 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _supabaseUrlController.dispose();
+    _supabaseAnonKeyController.dispose();
     super.dispose();
   }
 
@@ -199,8 +268,8 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
       platform: Platform.isAndroid
           ? 'android'
           : Platform.isIOS
-              ? 'ios'
-              : Platform.operatingSystem,
+          ? 'ios'
+          : Platform.operatingSystem,
       grants: {for (final e in _grants.entries) e.key.key: e.value},
     );
     await widget.controller.completeOnboarding(record);
@@ -213,6 +282,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
       stream: widget.controller.viewModels,
       builder: (context, snapshot) {
         final vm = snapshot.data;
+        _seedSupabaseProject(vm);
         return Scaffold(
           appBar: AppBar(
             titleSpacing: 16,
@@ -233,11 +303,14 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                       ),
                     ),
                     if (vm?.message != null)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        child: Text(
-                          vm!.message!,
-                          style: const TextStyle(color: SonusColors.inkSoft),
+                      Semantics(
+                        liveRegion: true,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Text(
+                            vm!.message!,
+                            style: const TextStyle(color: SonusColors.inkSoft),
+                          ),
                         ),
                       ),
                     _buildNav(vm),
@@ -289,13 +362,19 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   Widget _accountStep(AppViewModel? vm) {
     final theme = Theme.of(context);
     final signedIn = vm?.isSignedIn ?? false;
-    final configured = vm?.hasSupabaseAuthConfig ?? false;
+    final configured =
+        (vm?.hasSupabaseAuthConfig ?? false) &&
+        validateSupabaseAnonKey(vm?.config.supabaseAnonKey) == null;
     if (signedIn) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 8),
-          const Icon(Icons.verified_user, size: 40, color: SonusColors.orange500),
+          const Icon(
+            Icons.verified_user,
+            size: 40,
+            color: SonusColors.orange500,
+          ),
           const SizedBox(height: 12),
           Text('Signed in', style: theme.textTheme.titleLarge),
           const SizedBox(height: 8),
@@ -318,59 +397,78 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
           style: TextStyle(color: SonusColors.inkSoft),
         ),
         const SizedBox(height: 16),
-        if (!configured)
-          const Text(
-            'Account sign-in is not configured in this build. You can continue '
-            'and connect an account later in Settings.',
-            style: TextStyle(color: SonusColors.inkSoft),
-          )
-        else ...[
-          TextField(
-            controller: _emailController,
-            keyboardType: TextInputType.emailAddress,
-            autocorrect: false,
-            enabled: !_busy,
-            decoration: const InputDecoration(labelText: 'Email'),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _passwordController,
-            obscureText: true,
-            enabled: !_busy,
-            decoration: const InputDecoration(labelText: 'Password'),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton(
-                  onPressed: _busy ? null : () => _auth(_signUp),
-                  child: const Text('Create account'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _busy ? null : () => _auth(_signIn),
-                  child: const Text('Sign in'),
-                ),
-              ),
-            ],
-          ),
-        ],
+        SupabaseAuthForm(
+          emailController: _emailController,
+          passwordController: _passwordController,
+          supabaseUrlController: _supabaseUrlController,
+          supabaseAnonKeyController: _supabaseAnonKeyController,
+          showProjectConfiguration: !configured,
+          enabled: !_busy && vm != null,
+          onSignIn: (email, password) =>
+              _auth(() => _signIn(vm, email, password)),
+          onSignUp: (email, password) =>
+              _auth(() => _signUp(vm, email, password)),
+          onPasswordReset: (email) => _auth(() => _resetPassword(vm, email)),
+        ),
       ],
     );
   }
 
-  Future<void> _signUp() => widget.controller.signUpWithSupabase(
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-      );
+  void _seedSupabaseProject(AppViewModel? viewModel) {
+    if (_supabaseProjectSeeded || viewModel == null) {
+      return;
+    }
+    _supabaseUrlController.text = viewModel.config.supabaseUrl;
+    _supabaseAnonKeyController.text = viewModel.config.supabaseAnonKey;
+    _supabaseProjectSeeded = true;
+  }
 
-  Future<void> _signIn() => widget.controller.signInWithSupabase(
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-      );
+  Future<void> _saveSupabaseProject(AppViewModel viewModel) {
+    return widget.controller.saveConfig(
+      viewModel.config.copyWith(
+        supabaseUrl: _supabaseUrlController.text.trim(),
+        supabaseAnonKey: _supabaseAnonKeyController.text.trim(),
+      ),
+    );
+  }
+
+  Future<void> _signUp(
+    AppViewModel? viewModel,
+    String email,
+    String password,
+  ) async {
+    if (viewModel == null) {
+      return;
+    }
+    await _saveSupabaseProject(viewModel);
+    await widget.controller.signUpWithSupabase(
+      email: email,
+      password: password,
+    );
+  }
+
+  Future<void> _signIn(
+    AppViewModel? viewModel,
+    String email,
+    String password,
+  ) async {
+    if (viewModel == null) {
+      return;
+    }
+    await _saveSupabaseProject(viewModel);
+    await widget.controller.signInWithSupabase(
+      email: email,
+      password: password,
+    );
+  }
+
+  Future<void> _resetPassword(AppViewModel? viewModel, String email) async {
+    if (viewModel == null) {
+      return;
+    }
+    await _saveSupabaseProject(viewModel);
+    await widget.controller.sendSupabasePasswordReset(email: email);
+  }
 
   Widget _consentStep(BuildContext context) {
     final theme = Theme.of(context);
@@ -410,8 +508,9 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
 
   Widget _permissionsStep() {
     final theme = Theme.of(context);
-    final granted =
-        ConsentItem.values.where((i) => _grants[i]!).toList(growable: false);
+    final granted = ConsentItem.values
+        .where((i) => _grants[i]!)
+        .toList(growable: false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -430,8 +529,11 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
               children: [
-                const Icon(Icons.check_circle,
-                    size: 18, color: SonusColors.orange500),
+                const Icon(
+                  Icons.check_circle,
+                  size: 18,
+                  color: SonusColors.orange500,
+                ),
                 const SizedBox(width: 8),
                 Expanded(child: Text(item.title)),
               ],
@@ -446,20 +548,22 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     final onAccountStep = _step == 1;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-      child: Row(
+      child: Wrap(
+        alignment: WrapAlignment.end,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 8,
         children: [
           if (_step > 0)
             TextButton(
               onPressed: _busy ? null : () => setState(() => _step -= 1),
               child: const Text('Back'),
             ),
-          const Spacer(),
           if (onAccountStep && !(vm?.isSignedIn ?? false))
             TextButton(
               onPressed: _busy ? null : () => setState(() => _step += 1),
               child: const Text('Skip for now'),
             ),
-          const SizedBox(width: 8),
           FilledButton(
             onPressed: _busy || (_step == 2 && !_requiredAccepted)
                 ? null
@@ -486,22 +590,29 @@ class _ProgressDots extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          for (var i = 0; i < total; i++)
-            Container(
-              width: i == step ? 22 : 8,
-              height: 8,
-              margin: const EdgeInsets.symmetric(horizontal: 3),
-              decoration: BoxDecoration(
-                color: i <= step ? SonusColors.orange500 : SonusColors.hairline,
-                borderRadius: BorderRadius.circular(999),
-              ),
-            ),
-        ],
+    return Semantics(
+      label: 'Onboarding step ${step + 1} of $total',
+      child: ExcludeSemantics(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var i = 0; i < total; i++)
+                Container(
+                  width: i == step ? 22 : 8,
+                  height: 8,
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  decoration: BoxDecoration(
+                    color: i <= step
+                        ? SonusColors.orange500
+                        : SonusColors.hairline,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -603,6 +714,7 @@ class _SettingsPageState extends State<SettingsPage> {
           return const LoadingPage();
         }
         _syncForm(viewModel);
+        final useNavigationRail = MediaQuery.sizeOf(context).width >= 840;
         return Scaffold(
           appBar: AppBar(
             titleSpacing: 16,
@@ -618,88 +730,104 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
           body: SafeArea(
-            child: Column(
+            child: Row(
               children: [
-                if (viewModel.message != null)
-                  MaterialBanner(
-                    content: Text(viewModel.message!),
-                    leading: const Icon(Icons.info_outline),
-                    actions: [
-                      TextButton(
-                        onPressed: widget.controller.clearMessage,
-                        child: const Text('Dismiss'),
-                      ),
-                    ],
+                if (useNavigationRail)
+                  _TopLevelNavigationRail(
+                    selectedIndex: _selectedIndex,
+                    onDestinationSelected: _selectDestination,
                   ),
-                // Context-trigger consent: a meaningful event fired inside a
-                // scheduled window while idle — ask before recording.
-                if (viewModel.consentRequest != null)
-                  MaterialBanner(
-                    backgroundColor: SonusColors.green50,
-                    content: Text(
-                      '${viewModel.consentRequest!.event.description} during '
-                      'your recording window. Start recording?',
-                    ),
-                    leading: const Icon(
-                      Icons.fiber_manual_record,
-                      color: SonusColors.orange500,
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: widget.controller.dismissContextConsent,
-                        child: const Text('Not now'),
-                      ),
-                      FilledButton(
-                        onPressed: widget.controller.acceptContextConsent,
-                        child: const Text('Start recording'),
-                      ),
-                    ],
-                  ),
-                // Desktop ("recorder on a bigger screen"): same logic, but
-                // centered and width-constrained so it reads as a desktop panel
-                // rather than a stretched phone. See lib/src/platform/form_factor.
                 Expanded(
-                  child: Platforms.isDesktop
-                      ? Center(
+                  child: Column(
+                    children: [
+                      if (viewModel.message != null)
+                        Semantics(
+                          liveRegion: true,
+                          child: MaterialBanner(
+                            content: Text(viewModel.message!),
+                            leading: const Icon(Icons.info_outline),
+                            actions: [
+                              TextButton(
+                                onPressed: widget.controller.clearMessage,
+                                child: const Text('Dismiss'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      // Context-trigger consent: a meaningful event fired inside
+                      // a scheduled window while idle — ask before recording.
+                      if (viewModel.consentRequest != null)
+                        MaterialBanner(
+                          backgroundColor: SonusColors.green50,
+                          content: Text(
+                            '${viewModel.consentRequest!.event.description} during '
+                            'your recording window. Start recording?',
+                          ),
+                          leading: const Icon(
+                            Icons.fiber_manual_record,
+                            color: SonusColors.orange500,
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed:
+                                  widget.controller.dismissContextConsent,
+                              child: const Text('Not now'),
+                            ),
+                            FilledButton(
+                              onPressed: widget.controller.acceptContextConsent,
+                              child: const Text('Start recording'),
+                            ),
+                          ],
+                        ),
+                      Expanded(
+                        child: Center(
                           child: ConstrainedBox(
-                            constraints: const BoxConstraints(
-                              maxWidth: Platforms.desktopContentMaxWidth,
+                            constraints: BoxConstraints(
+                              maxWidth: Platforms.isDesktop
+                                  ? Platforms.desktopContentMaxWidth
+                                  : 1040,
                             ),
                             child: _selectedBody(viewModel),
                           ),
-                        )
-                      : _selectedBody(viewModel),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _selectedIndex,
-            onDestinationSelected: (index) {
-              setState(() => _selectedIndex = index);
-              _persistSelectedTab(index);
-            },
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.dashboard_outlined),
-                selectedIcon: Icon(Icons.dashboard),
-                label: 'Home',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.graphic_eq),
-                selectedIcon: Icon(Icons.graphic_eq),
-                label: 'Playback',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.tune),
-                selectedIcon: Icon(Icons.tune),
-                label: 'Configure',
-              ),
-            ],
-          ),
+          bottomNavigationBar: useNavigationRail
+              ? null
+              : NavigationBar(
+                  selectedIndex: _selectedIndex,
+                  onDestinationSelected: _selectDestination,
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.dashboard_outlined),
+                      selectedIcon: Icon(Icons.dashboard),
+                      label: 'Home',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.graphic_eq_outlined),
+                      selectedIcon: Icon(Icons.graphic_eq),
+                      label: 'Playback',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.tune_outlined),
+                      selectedIcon: Icon(Icons.tune),
+                      label: 'Configure',
+                    ),
+                  ],
+                ),
         );
       },
     );
+  }
+
+  void _selectDestination(int index) {
+    setState(() => _selectedIndex = index);
+    _persistSelectedTab(index);
   }
 
   Widget _selectedBody(AppViewModel viewModel) {
@@ -892,6 +1020,55 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 }
 
+class _TopLevelNavigationRail extends StatelessWidget {
+  const _TopLevelNavigationRail({
+    required this.selectedIndex,
+    required this.onDestinationSelected,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onDestinationSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        border: Border(
+          right: BorderSide(
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
+        ),
+      ),
+      child: NavigationRail(
+        backgroundColor: Colors.transparent,
+        selectedIndex: selectedIndex,
+        onDestinationSelected: onDestinationSelected,
+        labelType: NavigationRailLabelType.all,
+        groupAlignment: -0.72,
+        useIndicator: true,
+        destinations: const [
+          NavigationRailDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard),
+            label: Text('Home'),
+          ),
+          NavigationRailDestination(
+            icon: Icon(Icons.graphic_eq_outlined),
+            selectedIcon: Icon(Icons.graphic_eq),
+            label: Text('Playback'),
+          ),
+          NavigationRailDestination(
+            icon: Icon(Icons.tune_outlined),
+            selectedIcon: Icon(Icons.tune),
+            label: Text('Configure'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _HomeView extends StatelessWidget {
   const _HomeView({
     required this.viewModel,
@@ -916,6 +1093,14 @@ class _HomeView extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
       children: [
+        const _PageHeader(
+          eyebrow: 'Overview',
+          title: 'Your audio timeline',
+          description:
+              'Monitor capture health, local retention, and cloud transfer at a glance.',
+          icon: Icons.dashboard_outlined,
+        ),
+        const SizedBox(height: 16),
         if (!viewModel.isSignedIn) ...[
           const _SignInNotice(),
           const SizedBox(height: 12),
@@ -1123,8 +1308,16 @@ class _PlaybackViewState extends State<_PlaybackView> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
       children: [
+        const _PageHeader(
+          eyebrow: 'Review',
+          title: 'Playback & saves',
+          description:
+              'Listen across the rolling window and preserve important ranges.',
+          icon: Icons.graphic_eq_outlined,
+        ),
+        const SizedBox(height: 16),
         _Section(
-          title: 'Playback',
+          title: 'Player',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1756,8 +1949,18 @@ class _SettingsTabbedPaneState extends State<_SettingsTabbedPane> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: _PageHeader(
+            eyebrow: 'Settings',
+            title: 'Configure Sonus Auris',
+            description:
+                'Manage your account, capture policy, automation, storage, and intelligence.',
+            icon: Icons.tune_outlined,
+          ),
+        ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: _SettingsTabStrip(
             tabs: widget.tabs,
             selectedIndex: _selectedIndex,
@@ -1795,7 +1998,7 @@ class _SettingsTabStrip extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: SingleChildScrollView(
@@ -1840,9 +2043,9 @@ class _SettingsTabButton extends StatelessWidget {
       selected: selected,
       child: Material(
         color: selected ? theme.colorScheme.surface : Colors.transparent,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(12),
         child: InkWell(
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(12),
           onTap: onTap,
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 44, minWidth: 118),
@@ -1949,7 +2152,7 @@ class _AccountSection extends StatefulWidget {
   final Future<void> Function(String email, String password) onSignIn;
   final Future<void> Function(String email, String password) onSignUp;
   final Future<void> Function(String email) onPasswordReset;
-  final VoidCallback onSignOut;
+  final Future<void> Function() onSignOut;
   final Future<void> Function() onDeleteAccount;
 
   @override
@@ -1966,34 +2169,6 @@ class _AccountSectionState extends State<_AccountSection> {
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
-  }
-
-  Future<void> _run(Future<void> Function(String, String) action) async {
-    if (_busy) {
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      await action(_emailController.text.trim(), _passwordController.text);
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  Future<void> _runEmail(Future<void> Function(String) action) async {
-    if (_busy) {
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      await action(_emailController.text.trim());
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
   }
 
   Future<void> _runAccountAction(Future<void> Function() action) async {
@@ -2040,7 +2215,7 @@ class _AccountSectionState extends State<_AccountSection> {
     final theme = Theme.of(context);
     final hasBundledSupabaseConfig =
         AppConfig.defaultSupabaseUrl.trim().isNotEmpty &&
-        AppConfig.defaultSupabaseAnonKey.trim().isNotEmpty;
+        validateSupabaseAnonKey(AppConfig.defaultSupabaseAnonKey) == null;
     if (widget.isSignedIn) {
       final status = widget.isDeviceRegistered
           ? 'Device registered.'
@@ -2073,9 +2248,16 @@ class _AccountSectionState extends State<_AccountSection> {
               runSpacing: 8,
               children: [
                 OutlinedButton.icon(
-                  onPressed: _busy ? null : widget.onSignOut,
-                  icon: const Icon(Icons.logout),
-                  label: const Text('Sign out'),
+                  onPressed: _busy
+                      ? null
+                      : () => _runAccountAction(widget.onSignOut),
+                  icon: _busy
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.logout),
+                  label: Text(_busy ? 'Working…' : 'Sign out'),
                 ),
                 OutlinedButton.icon(
                   onPressed: _busy ? null : _confirmDeleteAccount,
@@ -2101,78 +2283,17 @@ class _AccountSectionState extends State<_AccountSection> {
             'Sign in to record under your account and back up to cloud storage.',
             style: theme.textTheme.bodySmall,
           ),
-          if (!hasBundledSupabaseConfig) ...[
-            const SizedBox(height: 12),
-            TextField(
-              controller: widget.supabaseUrlController,
-              decoration: const InputDecoration(
-                labelText: 'Supabase URL',
-                hintText: 'https://YOUR-PROJECT.supabase.co',
-              ),
-              autocorrect: false,
-              enableSuggestions: false,
-              keyboardType: TextInputType.url,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: widget.supabaseAnonKeyController,
-              decoration: const InputDecoration(labelText: 'Supabase anon key'),
-              obscureText: true,
-              autocorrect: false,
-              enableSuggestions: false,
-              keyboardType: TextInputType.visiblePassword,
-            ),
-          ],
           const SizedBox(height: 12),
-          TextField(
-            controller: _emailController,
-            decoration: const InputDecoration(labelText: 'Email'),
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.emailAddress,
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _passwordController,
-            decoration: const InputDecoration(labelText: 'Password'),
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            onSubmitted: (_) => _run(widget.onSignIn),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _busy ? null : () => _run(widget.onSignIn),
-                  icon: _busy
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.login),
-                  label: const Text('Sign in'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _busy ? null : () => _run(widget.onSignUp),
-                  child: const Text('Create account'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: _busy ? null : () => _runEmail(widget.onPasswordReset),
-              icon: const Icon(Icons.lock_reset),
-              label: const Text('Reset password'),
-            ),
+          SupabaseAuthForm(
+            emailController: _emailController,
+            passwordController: _passwordController,
+            supabaseUrlController: widget.supabaseUrlController,
+            supabaseAnonKeyController: widget.supabaseAnonKeyController,
+            showProjectConfiguration: !hasBundledSupabaseConfig,
+            enabled: !_busy,
+            onSignIn: widget.onSignIn,
+            onSignUp: widget.onSignUp,
+            onPasswordReset: widget.onPasswordReset,
           ),
         ],
       ),
@@ -3747,14 +3868,19 @@ class _CloudSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return _Section(
-      title: 'Cloud',
+      title: 'Cloud storage',
       icon: Icons.cloud_outlined,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           DropdownButtonFormField<CloudProvider>(
             initialValue: selectedProvider,
-            decoration: const InputDecoration(labelText: 'Provider'),
+            decoration: const InputDecoration(
+              labelText: 'Storage destination',
+              prefixIcon: Icon(Icons.storage_outlined),
+            ),
             items: CloudProvider.values
                 .map(
                   (provider) => DropdownMenuItem(
@@ -3769,86 +3895,188 @@ class _CloudSection extends StatelessWidget {
               }
             },
           ),
+          const SizedBox(height: 18),
+          Text('Sonus backend', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text(
+            selectedProvider.requiresBackend
+                ? '${selectedProvider.label} transfers through your Sonus backend.'
+                : 'Optional for S3-compatible storage; direct signed uploads are used as a fallback.',
+            style: theme.textTheme.bodySmall,
+          ),
           const SizedBox(height: 12),
-          if (selectedProvider.requiresBackend)
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'This provider uploads through the sound recorder backend.',
-              ),
-            ),
-          if (selectedProvider.requiresBackend) const SizedBox(height: 12),
           TextFormField(
             controller: backendUrlController,
-            decoration: const InputDecoration(labelText: 'Backend URL'),
+            decoration: const InputDecoration(
+              labelText: 'Backend URL',
+              hintText: 'https://api.example.com',
+              prefixIcon: Icon(Icons.dns_outlined),
+            ),
             autocorrect: false,
             enableSuggestions: false,
             keyboardType: TextInputType.url,
+            validator: _validateOptionalHttpsUrl,
           ),
           const SizedBox(height: 12),
-          TextFormField(
+          _SecretTextField(
             controller: backendDeviceTokenController,
-            decoration: const InputDecoration(
-              labelText: 'Backend device token',
+            label: 'Backend device token',
+            hint: 'Usually issued automatically after sign-in',
+          ),
+          if (selectedProvider == CloudProvider.s3) ...[
+            const SizedBox(height: 18),
+            const Divider(),
+            const SizedBox(height: 18),
+            Text(
+              'Direct S3-compatible fallback',
+              style: theme.textTheme.titleSmall,
             ),
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.visiblePassword,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3BucketController,
-            decoration: const InputDecoration(labelText: 'S3 bucket'),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3RegionController,
-            decoration: const InputDecoration(labelText: 'S3 region'),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3PrefixController,
-            decoration: const InputDecoration(labelText: 'S3 prefix'),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3EndpointController,
-            decoration: const InputDecoration(
-              labelText: 'S3-compatible endpoint',
+            const SizedBox(height: 4),
+            Text(
+              'For AWS S3, leave the endpoint empty and use its region. For '
+              'Cloudflare R2, use region “auto” and the account endpoint '
+              'https://<account-id>.r2.cloudflarestorage.com. R2 credentials '
+              'must allow object read, write, and delete for this bucket.',
+              style: theme.textTheme.bodySmall,
             ),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3AccessKeyController,
-            decoration: const InputDecoration(labelText: 'S3 access key ID'),
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.visiblePassword,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3SecretKeyController,
-            decoration: const InputDecoration(
-              labelText: 'S3 secret access key',
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: s3BucketController,
+              decoration: const InputDecoration(
+                labelText: 'Bucket',
+                prefixIcon: Icon(Icons.inventory_2_outlined),
+              ),
+              validator: (value) {
+                if ((value ?? '').contains('/')) {
+                  return 'Enter the bucket name without slashes.';
+                }
+                return null;
+              },
             ),
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.visiblePassword,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3SessionTokenController,
-            decoration: const InputDecoration(labelText: 'S3 session token'),
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.visiblePassword,
-            maxLines: 1,
-          ),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: s3RegionController,
+                    decoration: const InputDecoration(
+                      labelText: 'Region',
+                      hintText: 'auto for R2',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    controller: s3PrefixController,
+                    decoration: const InputDecoration(
+                      labelText: 'Object prefix',
+                      hintText: 'audio-dashcam',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: s3EndpointController,
+              decoration: const InputDecoration(
+                labelText: 'Custom endpoint',
+                hintText: 'Required for Cloudflare R2',
+                prefixIcon: Icon(Icons.link),
+              ),
+              autocorrect: false,
+              enableSuggestions: false,
+              keyboardType: TextInputType.url,
+              validator: _validateOptionalHttpsUrl,
+            ),
+            const SizedBox(height: 12),
+            _SecretTextField(
+              controller: s3AccessKeyController,
+              label: 'Access key ID',
+              initiallyObscured: false,
+            ),
+            const SizedBox(height: 12),
+            _SecretTextField(
+              controller: s3SecretKeyController,
+              label: 'Secret access key',
+            ),
+            const SizedBox(height: 12),
+            _SecretTextField(
+              controller: s3SessionTokenController,
+              label: 'Session token (optional)',
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+  String? _validateOptionalHttpsUrl(String? value) {
+    final raw = value?.trim() ?? '';
+    if (raw.isEmpty) {
+      return null;
+    }
+    final uri = Uri.tryParse(raw);
+    if (uri == null || uri.host.isEmpty || !uri.hasScheme) {
+      return 'Enter a complete URL.';
+    }
+    final local = uri.host == 'localhost' || uri.host == '127.0.0.1';
+    if (uri.scheme != 'https' && !(local && uri.scheme == 'http')) {
+      return 'Use HTTPS (HTTP is allowed only for localhost).';
+    }
+    return null;
+  }
+}
+
+class _SecretTextField extends StatefulWidget {
+  const _SecretTextField({
+    required this.controller,
+    required this.label,
+    this.hint,
+    this.initiallyObscured = true,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String? hint;
+  final bool initiallyObscured;
+
+  @override
+  State<_SecretTextField> createState() => _SecretTextFieldState();
+}
+
+class _SecretTextFieldState extends State<_SecretTextField> {
+  late bool _obscured = widget.initiallyObscured;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      controller: widget.controller,
+      decoration: InputDecoration(
+        labelText: widget.label,
+        hintText: widget.hint,
+        prefixIcon: const Icon(Icons.key_outlined),
+        suffixIcon: widget.initiallyObscured
+            ? IconButton(
+                tooltip: _obscured
+                    ? 'Show ${widget.label}'
+                    : 'Hide ${widget.label}',
+                onPressed: () => setState(() => _obscured = !_obscured),
+                icon: Icon(
+                  _obscured
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                ),
+              )
+            : null,
+      ),
+      obscureText: _obscured,
+      autocorrect: false,
+      enableSuggestions: false,
+      keyboardType: TextInputType.visiblePassword,
+      maxLines: 1,
     );
   }
 }
@@ -3867,7 +4095,7 @@ class _DiagnosticsSection extends StatelessWidget {
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         border: Border.all(color: theme.colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: ExpansionTile(
         shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
@@ -3963,7 +4191,7 @@ class _SegmentListItem extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: Row(
@@ -4020,7 +4248,7 @@ class _InlineState extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: Row(
@@ -4722,6 +4950,61 @@ class _ContextTriggersSection extends StatelessWidget {
   }
 }
 
+class _PageHeader extends StatelessWidget {
+  const _PageHeader({
+    required this.eyebrow,
+    required this.title,
+    required this.description,
+    required this.icon,
+  });
+
+  final String eyebrow;
+  final String title;
+  final String description;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Semantics(
+      header: true,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              gradient: SonusColors.markGradient,
+              borderRadius: BorderRadius.circular(15),
+              boxShadow: kSonusShadowSm,
+            ),
+            child: Icon(icon, color: Colors.white, size: 24),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SonusEyebrow(eyebrow),
+                const SizedBox(height: 7),
+                Text(title, style: theme.textTheme.headlineSmall),
+                const SizedBox(height: 3),
+                Text(
+                  description,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _Section extends StatelessWidget {
   const _Section({required this.title, required this.child, this.icon});
 
@@ -4736,11 +5019,11 @@ class _Section extends StatelessWidget {
       color: theme.colorScheme.surface,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(20),
         side: BorderSide(color: theme.colorScheme.outlineVariant),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -4761,7 +5044,7 @@ class _Section extends StatelessWidget {
                     height: 32,
                     decoration: BoxDecoration(
                       color: theme.colorScheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
                       icon,
@@ -4843,7 +5126,7 @@ class _MetricChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: theme.colorScheme.surfaceContainerLowest,
           border: Border.all(color: theme.colorScheme.outlineVariant),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,

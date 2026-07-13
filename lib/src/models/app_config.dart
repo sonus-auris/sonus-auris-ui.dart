@@ -64,6 +64,7 @@ class AppConfig {
     this.sleepMotionSensorConsent = false,
     this.sleepAmbientLightConsent = false,
     this.sleepPhoneContextConsent = false,
+    this.sleepCloudSyncConsent = false,
     this.musicDetectionEnabled = true,
     this.speechDetectionEnabled = true,
     this.shazamEnabled = false,

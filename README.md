@@ -164,6 +164,26 @@ Being on the same Wi-Fi is not enough by itself; Android requires ADB authorizat
 
 Android SDK/JDK are configured on this machine. iOS still needs full Xcode plus CocoaPods before local iOS builds can be verified.
 
+### CLI flags
+
+[`flags-2-env`](https://github.com/ORESoftware/flags-2-env) validates the public
+backend, Supabase, and OAuth build settings before invoking Flutter tooling:
+
+```sh
+scripts/with-flags help
+scripts/with-flags audit
+scripts/with-flags \
+  --backend-base-url=https://api.example.test \
+  --supabase-url=https://project.supabase.co \
+  --supabase-anon-key=sb_publishable_example \
+  -- scripts/release/android-build-aab.sh
+```
+
+The release scripts already translate these environment values into
+`--dart-define` arguments. Only public client configuration belongs here; never
+pass a Supabase service-role key. The wrapper uses the monorepo's pinned native
+source or the executable named by `FLAGS2ENV_BIN`.
+
 ## Desktop builds (macOS / Windows / Linux)
 
 This same codebase is also a **Flutter desktop app** — Flutter compiles to native

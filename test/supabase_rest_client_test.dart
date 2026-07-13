@@ -92,4 +92,29 @@ void main() {
     );
     expect(called, isFalse);
   });
+
+  test('refuses a service-role key without sending it', () async {
+    var called = false;
+    final client = SupabaseRestClient(
+      httpClient: MockClient((_) async {
+        called = true;
+        return http.Response('', 201);
+      }),
+    );
+    const unsafe = AppConfig(
+      deviceId: 'device-xyz',
+      supabaseUrl: 'https://proj.supabase.co',
+      supabaseAnonKey: 'sb_secret_never-ship',
+    );
+
+    final error = await client.insertDetections(
+      config: unsafe,
+      secrets: secrets,
+      detections: [detection],
+    );
+
+    expect(error, contains('never a secret or service-role key'));
+    expect(error, isNot(contains('sb_secret_never-ship')));
+    expect(called, isFalse);
+  });
 }

@@ -128,6 +128,124 @@ void main() {
     client.close();
   });
 
+  test('uses the exact signed content length for the upload PUT', () async {
+    var sawPresign = false;
+    var sawUpload = false;
+    var sawComplete = false;
+    final client = SoundRecorderBackendClient(
+      httpClient: MockClient((request) async {
+        if (request.method == 'POST' && request.url.path.endsWith('/presign')) {
+          sawPresign = true;
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          expect(body['byteCount'], 4);
+          return http.Response(
+            jsonEncode({
+              'upload': {
+                'method': 'PUT',
+                'url': 'https://uploads.example/segment.wav',
+                'headers': [
+                  {'name': 'Content-Length', 'value': '4'},
+                  {'name': 'Content-Type', 'value': 'audio/wav'},
+                ],
+              },
+              'segment': {
+                'id': 'server-segment-1',
+                'storageKey': 'audio-dashcam/device-a/segment.wav',
+              },
+            }),
+            200,
+            headers: const {'content-type': 'application/json'},
+          );
+        }
+        if (request.method == 'PUT' && request.url.host == 'uploads.example') {
+          sawUpload = true;
+          expect(request.headers['content-length'], '4');
+          expect(request.headers['content-type'], 'audio/wav');
+          expect(request.contentLength, 4);
+          expect(request.bodyBytes, const [0, 0, 1, 0]);
+          return http.Response('', 200, headers: const {'etag': 'etag-1'});
+        }
+        if (request.method == 'POST' &&
+            request.url.path.endsWith('/complete')) {
+          sawComplete = true;
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          expect(body['byteCount'], 4);
+          expect(body['etag'], 'etag-1');
+          return http.Response(
+            jsonEncode({
+              'segment': {
+                'id': 'server-segment-1',
+                'storageKey': 'audio-dashcam/device-a/segment.wav',
+              },
+            }),
+            200,
+            headers: const {'content-type': 'application/json'},
+          );
+        }
+        fail('unexpected request: ${request.method} ${request.url}');
+      }),
+    );
+
+    final result = await client.uploadSegment(
+      config: config,
+      secrets: secrets,
+      session: session,
+      segment: segment,
+      file: segmentFile,
+    );
+
+    expect(result.isSuccess, isTrue);
+    expect(result.remoteKey, 'audio-dashcam/device-a/segment.wav');
+    expect(sawPresign, isTrue);
+    expect(sawUpload, isTrue);
+    expect(sawComplete, isTrue);
+    client.close();
+  });
+
+  test('rejects a signed content length that mismatches the payload', () async {
+    var uploadAttempted = false;
+    final client = SoundRecorderBackendClient(
+      httpClient: MockClient((request) async {
+        if (request.method == 'POST' && request.url.path.endsWith('/presign')) {
+          return http.Response(
+            jsonEncode({
+              'upload': {
+                'method': 'PUT',
+                'url': 'https://uploads.example/segment.wav',
+                'headers': [
+                  {'name': 'Content-Length', 'value': '5'},
+                ],
+              },
+              'segment': {
+                'id': 'server-segment-1',
+                'storageKey': 'audio-dashcam/device-a/segment.wav',
+              },
+            }),
+            200,
+            headers: const {'content-type': 'application/json'},
+          );
+        }
+        if (request.method == 'PUT') {
+          uploadAttempted = true;
+        }
+        fail('unexpected request: ${request.method} ${request.url}');
+      }),
+    );
+
+    final result = await client.uploadSegment(
+      config: config,
+      secrets: secrets,
+      session: session,
+      segment: segment,
+      file: segmentFile,
+    );
+
+    expect(result.isSuccess, isFalse);
+    expect(result.error, contains('does not match payload byte count 4'));
+    expect(uploadAttempted, isFalse);
+    client.close();
+  });
+
   test('returns an alert error for unsafe backend URLs', () async {
     final client = SoundRecorderBackendClient(
       httpClient: MockClient((_) async {

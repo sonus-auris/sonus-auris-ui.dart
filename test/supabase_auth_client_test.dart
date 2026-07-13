@@ -208,4 +208,111 @@ void main() {
       throwsA(isA<FormatException>()),
     );
   });
+
+  test('rejects malformed credentials without making a request', () async {
+    var called = false;
+    final client = SupabaseAuthClient(
+      httpClient: MockClient((request) async {
+        called = true;
+        return http.Response('{}', 200);
+      }),
+    );
+
+    await expectLater(
+      client.signInWithPassword(
+        config: config,
+        email: 'not-an-email',
+        password: '',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      client.signUp(
+        config: config,
+        email: 'user@example.com',
+        password: 'short',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(called, isFalse);
+  });
+
+  test('rejects a service-role project key before making a request', () async {
+    var called = false;
+    final client = SupabaseAuthClient(
+      httpClient: MockClient((request) async {
+        called = true;
+        return http.Response('{}', 200);
+      }),
+    );
+    const unsafe = AppConfig(
+      deviceId: 'device-a',
+      supabaseUrl: 'https://project.supabase.co',
+      supabaseAnonKey: 'sb_secret_never-ship',
+    );
+
+    await expectLater(
+      client.signInWithPassword(
+        config: unsafe,
+        email: 'user@example.com',
+        password: 'hunter2',
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('never a secret or service-role key'),
+        ),
+      ),
+    );
+    expect(called, isFalse);
+  });
+
+  test('uses a stable fallback for a non-JSON server error', () async {
+    final client = SupabaseAuthClient(
+      httpClient: MockClient(
+        (request) async => http.Response('<html>bad gateway</html>', 502),
+      ),
+    );
+
+    await expectLater(
+      client.signInWithPassword(
+        config: config,
+        email: 'user@example.com',
+        password: 'hunter2',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'Supabase sign-in failed.',
+        ),
+      ),
+    );
+  });
+
+  test('turns request timeouts into a user-facing error', () async {
+    final client = SupabaseAuthClient(
+      requestTimeout: const Duration(milliseconds: 1),
+      httpClient: MockClient((request) async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        return http.Response('{}', 200);
+      }),
+    );
+
+    await expectLater(
+      client.signInWithPassword(
+        config: config,
+        email: 'user@example.com',
+        password: 'hunter2',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('did not respond in time'),
+        ),
+      ),
+    );
+  });
 }
