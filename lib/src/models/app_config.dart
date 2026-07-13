@@ -205,6 +205,12 @@ class AppConfig {
   final bool sleepMotionSensorConsent;
   final bool sleepAmbientLightConsent;
   final bool sleepPhoneContextConsent;
+
+  /// Opt-in cloud sync of sleep-cycle detections. These rows carry enriched
+  /// sensor/context fields (motion stillness, ambient lux, charging, bedtime
+  /// score, sleep probability), so without this consent they stay on-device
+  /// even when Supabase sync is otherwise configured.
+  final bool sleepCloudSyncConsent;
   final bool musicDetectionEnabled;
   final bool speechDetectionEnabled;
 
