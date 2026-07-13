@@ -121,14 +121,9 @@ jobs:
           pulseaudio --start --exit-idle-time=-1
           pactl load-module module-null-sink sink_name=sonus_virtual_audio
           pactl set-default-source sonus_virtual_audio.monitor
-          pulse_server="$(pactl info | awk -F': ' '/^Server String:/ { print $2; exit }')"
-          if [[ -z "$pulse_server" ]]; then
-            echo "PulseAudio did not report a server address"
-            exit 1
-          fi
-          if [[ "$pulse_server" == /* ]]; then
-            pulse_server="unix:$pulse_server"
-          fi
+          pactl load-module module-native-protocol-tcp \
+            listen=127.0.0.1 port=4713 auth-anonymous=1
+          pulse_server=tcp:127.0.0.1:4713
           PULSE_SERVER="$pulse_server" pactl info >/dev/null
           echo "PULSE_SERVER=$pulse_server" >> "$GITHUB_ENV"
           echo "QEMU_AUDIO_DRV=pa" >> "$GITHUB_ENV"
