@@ -16,6 +16,7 @@ void main() {
       sleepMotionSensorConsent: true,
       sleepAmbientLightConsent: true,
       sleepPhoneContextConsent: true,
+      sleepCloudSyncConsent: true,
       musicDetectionEnabled: false,
       speechDetectionEnabled: true,
       shazamEnabled: true,
