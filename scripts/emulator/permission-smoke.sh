@@ -93,13 +93,51 @@ print((points[0] + points[2]) // 2, (points[1] + points[3]) // 2)
   adb_ shell input tap "$x" "$y"
 }
 
+wait_for_ui_text() {
+  local label="$1"
+  local timeout_seconds="$2"
+  local deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < deadline )); do
+    ui_xml="$(dump_ui 2>/dev/null || true)"
+    if grep -Fq "text=\"$label\"" <<< "$ui_xml"; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+capture_failure_evidence() {
+  if [[ -n "${SMOKE_SCREENSHOT:-}" ]]; then
+    adb_ exec-out screencap -p > "$SMOKE_SCREENSHOT" 2>/dev/null || true
+  fi
+  echo "  visible hierarchy:"
+  printf '%s\n' "$ui_xml"
+  echo "  recent app logcat:"
+  adb_ logcat -d 2>/dev/null | awk -v package="$PKG" '
+    index($0, package) || /AndroidRuntime/ || /flutter/ { lines[++count]=$0 }
+    END {
+      start = count > 80 ? count - 79 : 1
+      for (i = start; i <= count; i++) print lines[i]
+    }
+  '
+}
+
 echo "== account UI smoke-test =="
-ui_xml="$(dump_ui)"
+ui_xml=""
+if ! wait_for_ui_text "Welcome to Sonus Auris" 40; then
+  echo "  ✗ welcome screen did not become ready within 40 seconds"
+  capture_failure_evidence
+  exit 1
+fi
 assert_ui_text "Welcome to Sonus Auris" "$ui_xml"
 assert_ui_text "Continue" "$ui_xml"
 tap_ui_text "Continue" "$ui_xml"
-sleep 2
-ui_xml="$(dump_ui)"
+if ! wait_for_ui_text "Create your Sonus Auris account" 20; then
+  echo "  ✗ account screen did not become ready within 20 seconds"
+  capture_failure_evidence
+  exit 1
+fi
 assert_ui_text "Create your Sonus Auris account" "$ui_xml"
 assert_ui_text "Sign in" "$ui_xml"
 assert_ui_text "Create account" "$ui_xml"
