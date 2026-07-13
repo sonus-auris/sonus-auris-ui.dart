@@ -100,7 +100,7 @@ void main() {
 
       // A .wav segment must exist and be a real, non-trivial RIFF/WAVE file.
       final wavs = dir
-          .listSync()
+          .listSync(recursive: true)
           .whereType<File>()
           .where((f) => f.path.toLowerCase().endsWith('.wav'))
           .toList();
