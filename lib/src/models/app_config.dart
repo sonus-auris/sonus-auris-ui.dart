@@ -471,6 +471,8 @@ class AppConfig {
           sleepAmbientLightConsent ?? this.sleepAmbientLightConsent,
       sleepPhoneContextConsent:
           sleepPhoneContextConsent ?? this.sleepPhoneContextConsent,
+      sleepCloudSyncConsent:
+          sleepCloudSyncConsent ?? this.sleepCloudSyncConsent,
       musicDetectionEnabled:
           musicDetectionEnabled ?? this.musicDetectionEnabled,
       speechDetectionEnabled:
