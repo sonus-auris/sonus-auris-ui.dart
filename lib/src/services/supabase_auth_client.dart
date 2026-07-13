@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/app_config.dart';
 import '../models/supabase_session.dart';
+import 'supabase_key_policy.dart';
 
 /// Thin client for Supabase's GoTrue REST auth API. Implemented over plain
 /// `http` (no native plugin) so it is fully testable and adds no dependency.
@@ -26,6 +27,8 @@ class SupabaseAuthClient {
     required String email,
     required String password,
   }) async {
+    _validateEmail(email);
+    _validatePassword(password);
     final uri = _authUri(config, 'token', query: {'grant_type': 'password'});
     return _session(config, uri, {
       'email': email.trim(),
@@ -40,6 +43,8 @@ class SupabaseAuthClient {
     required String email,
     required String password,
   }) async {
+    _validateEmail(email);
+    _validatePassword(password, creatingAccount: true);
     final uri = _authUri(config, 'signup');
     final decoded = await _post(config, uri, {
       'email': email.trim(),
@@ -56,6 +61,9 @@ class SupabaseAuthClient {
     required AppConfig config,
     required String refreshToken,
   }) async {
+    if (refreshToken.trim().isEmpty) {
+      throw const FormatException('Supabase refresh token is missing.');
+    }
     final uri = _authUri(
       config,
       'token',
@@ -72,6 +80,7 @@ class SupabaseAuthClient {
     required AppConfig config,
     required String email,
   }) async {
+    _validateEmail(email);
     final uri = _authUri(config, 'recover');
     await _post(config, uri, {
       'email': email.trim(),
@@ -117,9 +126,18 @@ class SupabaseAuthClient {
     Map<String, Object?> body,
     String fallbackError,
   ) async {
-    final response = await _httpClient
-        .post(uri, headers: _headers(config), body: jsonEncode(body))
-        .timeout(requestTimeout);
+    late final http.Response response;
+    try {
+      response = await _httpClient
+          .post(uri, headers: _headers(config), body: jsonEncode(body))
+          .timeout(requestTimeout);
+    } on TimeoutException {
+      throw StateError('Supabase did not respond in time. Try again.');
+    } on http.ClientException {
+      throw StateError(
+        'Could not reach Supabase. Check your connection and try again.',
+      );
+    }
     final decoded = _decode(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(_errorMessage(decoded, fallbackError));
@@ -135,6 +153,7 @@ class SupabaseAuthClient {
     if (config.supabaseAnonKey.trim().isEmpty) {
       throw const FormatException('Supabase anon key is not configured.');
     }
+    requireSafeSupabaseClientKey(config.supabaseAnonKey);
     final base = Uri.parse(raw);
     if (base.host.trim().isEmpty) {
       throw const FormatException('Supabase URL must include a host.');
@@ -144,6 +163,11 @@ class SupabaseAuthClient {
         base.host != '127.0.0.1') {
       throw const FormatException(
         'Supabase URL must use HTTPS except localhost development.',
+      );
+    }
+    if (base.userInfo.isNotEmpty) {
+      throw const FormatException(
+        'Supabase URL must not contain embedded credentials.',
       );
     }
     final baseSegments = base.pathSegments.where((part) => part.isNotEmpty);
@@ -168,8 +192,12 @@ class SupabaseAuthClient {
     if (response.body.trim().isEmpty) {
       return const {};
     }
-    final value = jsonDecode(response.body);
-    return value is Map<String, dynamic> ? value : const {};
+    try {
+      final value = jsonDecode(response.body);
+      return value is Map<String, dynamic> ? value : const {};
+    } on FormatException {
+      return const {};
+    }
   }
 
   String _errorMessage(Map<String, dynamic> body, String fallback) {
@@ -179,6 +207,28 @@ class SupabaseAuthClient {
         body['message'] ??
         body['error'];
     return message?.toString() ?? fallback;
+  }
+
+  void _validateEmail(String email) {
+    final normalized = email.trim();
+    final at = normalized.indexOf('@');
+    if (at <= 0 ||
+        at != normalized.lastIndexOf('@') ||
+        at == normalized.length - 1 ||
+        normalized.contains(' ')) {
+      throw const FormatException('Enter a valid email address.');
+    }
+  }
+
+  void _validatePassword(String password, {bool creatingAccount = false}) {
+    if (password.isEmpty) {
+      throw const FormatException('Enter your password.');
+    }
+    if (creatingAccount && password.length < 6) {
+      throw const FormatException(
+        'Use at least 6 characters when creating an account.',
+      );
+    }
   }
 
   void close() {

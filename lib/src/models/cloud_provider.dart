@@ -8,7 +8,7 @@ enum CloudProvider {
   String get label {
     switch (this) {
       case CloudProvider.s3:
-        return 'AWS S3';
+        return 'S3 / Cloudflare R2';
       case CloudProvider.googleDrive:
         return 'Google Drive';
       case CloudProvider.oneDrive:

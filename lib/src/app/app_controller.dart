@@ -64,13 +64,13 @@ const String kConsentVersion = 'audio-dashcam-consent-v1';
 
 /// App-level Supabase project, injected at build time so the onboarding
 /// login/sign-up works out of the box:
-/// `--dart-define=SUPABASE_URL=… --dart-define=SUPABASE_ANON_KEY=…`.
+/// `--dart-define=SONUS_SUPABASE_URL=…`
+/// `--dart-define=SONUS_SUPABASE_ANON_KEY=…`.
 /// Both are public client values (the anon key is safe to embed); the
 /// service_role key must never reach the device. When unset, the user can still
 /// configure their own Supabase project in the Configure tab.
-const String kDefaultSupabaseUrl = String.fromEnvironment('SUPABASE_URL');
-const String kDefaultSupabaseAnonKey =
-    String.fromEnvironment('SUPABASE_ANON_KEY');
+const String kDefaultSupabaseUrl = AppConfig.defaultSupabaseUrl;
+const String kDefaultSupabaseAnonKey = AppConfig.defaultSupabaseAnonKey;
 
 class AppController {
   factory AppController({
@@ -529,12 +529,14 @@ class AppController {
   }
 
   /// Called by [_scheduler] when an in-app timer reaches a window barrier.
-  void _onScheduleTransition(bool shouldRecord) {
+  void _onScheduleTransition(bool _) {
     final config = _config.valueOrNull;
     if (config == null || !config.recordingSchedule.enabled) {
       return;
     }
-    unawaited(_applyScheduleState(shouldRecord));
+    // The timer's captured transition may have raced a settings edit. Re-read
+    // the authoritative current schedule and wall clock before changing capture.
+    unawaited(_reconcileWithSchedule(config.recordingSchedule));
   }
 
   /// Brings capture in line with what the schedule says should be happening
@@ -898,8 +900,10 @@ class AppController {
       }
       if (record.granted(ConsentItem.bluetooth)) {
         if (Platform.isAndroid) {
-          await [Permission.bluetoothScan, Permission.bluetoothConnect]
-              .request();
+          await [
+            Permission.bluetoothScan,
+            Permission.bluetoothConnect,
+          ].request();
         } else if (Platform.isIOS) {
           await Permission.bluetooth.request();
         }

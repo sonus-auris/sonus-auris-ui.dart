@@ -77,6 +77,45 @@ void main() {
     client.close();
   });
 
+  test('Cloudflare R2 uses path-style addressing and region auto', () async {
+    late http.Request captured;
+    final client = S3StorageClient(
+      httpClient: MockClient((request) async {
+        captured = request;
+        return http.Response('', 200);
+      }),
+    );
+
+    final result = await client.uploadSegment(
+      config: const AppConfig(
+        deviceId: 'device-a',
+        s3Bucket: 'sonus-audio',
+        s3Region: 'auto',
+        s3Endpoint: 'https://account-id.r2.cloudflarestorage.com',
+      ),
+      secrets: const CloudSecrets(
+        s3AccessKeyId: 'r2-access',
+        s3SecretAccessKey: 'r2-secret',
+      ),
+      segment: segment,
+      file: segmentFile,
+    );
+
+    expect(result.isSuccess, isTrue);
+    expect(captured.url.host, 'account-id.r2.cloudflarestorage.com');
+    expect(
+      captured.url.path,
+      '/sonus-audio/audio-dashcam/device-a/2026/01/02/03/2026-01-02T03-04-05-000z.m4a',
+    );
+    expect(captured.headers, isNot(contains('x-amz-server-side-encryption')));
+    expect(
+      captured.headers['authorization'],
+      contains('/auto/s3/aws4_request'),
+    );
+    expect(captured.headers['host'], 'account-id.r2.cloudflarestorage.com');
+    client.close();
+  });
+
   test('copies cloud-only segments into the permanent S3 prefix', () async {
     final cloudOnly = segment.copyWith(
       localPath: null,

@@ -8,6 +8,7 @@ import '../models/acoustic_detection.dart';
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
 import '../models/consent.dart';
+import 'supabase_key_policy.dart';
 
 /// Thin PostgREST client for writing user data into Supabase. Only the signed-in
 /// user's access token is used (never a service key), so row-level-security
@@ -69,8 +70,9 @@ class SupabaseRestClient {
     } on FormatException catch (error) {
       return error.message;
     }
-    final rows =
-        detections.map((d) => d.toSupabaseRow(config.deviceId)).toList();
+    final rows = detections
+        .map((d) => d.toSupabaseRow(config.deviceId))
+        .toList();
     try {
       final response = await _httpClient
           .post(uri, headers: _headers(config, secrets), body: jsonEncode(rows))
@@ -124,6 +126,7 @@ class SupabaseRestClient {
   }
 
   Uri _restUri(AppConfig config, String table) {
+    requireSafeSupabaseClientKey(config.supabaseAnonKey);
     final base = Uri.parse(config.supabaseUrl.trim());
     if (base.host.trim().isEmpty) {
       throw const FormatException('Supabase URL must include a host.');
@@ -136,9 +139,9 @@ class SupabaseRestClient {
       );
     }
     final baseSegments = base.pathSegments.where((p) => p.isNotEmpty);
-    return base.replace(
-      pathSegments: [...baseSegments, 'rest', 'v1', table],
-    ).removeFragment();
+    return base
+        .replace(pathSegments: [...baseSegments, 'rest', 'v1', table])
+        .removeFragment();
   }
 
   Map<String, String> _headers(AppConfig config, CloudSecrets secrets) {
