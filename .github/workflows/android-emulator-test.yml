@@ -1,8 +1,9 @@
-name: Android emulator permission test
+name: Android emulator account and permission test
 
 # Boots a headless Android emulator and runs the permission smoke-test
-# (scripts/emulator/permission-smoke.sh): sensitive context permissions must
-# default to opt-in, mic/notifications grant cleanly, and the app must not crash.
+# (scripts/emulator/permission-smoke.sh): the login/sign-up screen must render,
+# sensitive context permissions must default to opt-in, mic/notifications grant
+# cleanly, and the app must not crash.
 # GitHub's ubuntu-latest runners expose /dev/kvm, so the emulator is hardware
 # accelerated here (the same test also runs on the cluster via
 # ci/android-emulator/, for KVM-capable Hetzner/EC2 nodes).
@@ -44,7 +45,10 @@ jobs:
       - run: flutter pub get
 
       - name: Build debug APK
-        run: flutter build apk --debug
+        run: >-
+          flutter build apk --debug
+          --dart-define=SONUS_SUPABASE_URL=https://emulator-test.supabase.co
+          --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_emulator_test
 
       - name: Run permission smoke-test on emulator
         uses: reactivecircus/android-emulator-runner@v2
@@ -77,7 +81,7 @@ jobs:
     # a HEADLESS emulator is unreliable (the virtual mic can stall past the Dart
     # timeout). Kept for signal; make it gating once we feed the emulator a
     # deterministic virtual audio input (`-audio-input <wav>`). The permission
-    # smoke-test + 218 unit tests (incl. the acoustic/FFT pipeline) are the gate.
+    # smoke-test + unit suite (including the acoustic/FFT pipeline) are the gate.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

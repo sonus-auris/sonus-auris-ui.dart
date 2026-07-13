@@ -34,7 +34,11 @@ adb_ uninstall "$PKG" >/dev/null 2>&1 || true   # clean slate: clear any persist
 adb_ install -r "$APK"   # no -g: dangerous runtime perms must start DENIED (opt-in)
 
 echo "== requested permissions (must match AndroidManifest) =="
-adb_ shell dumpsys package "$PKG" | sed -n '/requested permissions:/,/install permissions:/p'
+adb_ shell dumpsys package "$PKG" | awk '
+  /requested permissions:/ { show=1 }
+  show { print }
+  /install permissions:/ { exit }
+'
 
 echo "== launch =="
 adb_ logcat -c
@@ -43,12 +47,71 @@ adb_ shell am start -W -n "$ACTIVITY" -a android.intent.action.MAIN -c android.i
 # Give the Flutter engine time to draw the first frame.
 sleep 8
 
+dump_ui() {
+  adb_ shell uiautomator dump /sdcard/sonus-window.xml >/dev/null
+  adb_ exec-out cat /sdcard/sonus-window.xml | tr -d '\r'
+}
+
+assert_ui_text() {
+  local label="$1"
+  local xml="$2"
+  if grep -Fq "text=\"$label\"" <<< "$xml"; then
+    echo "  ✓ visible: $label"
+  else
+    echo "  ✗ missing UI text: $label"
+    return 1
+  fi
+}
+
+tap_ui_text() {
+  local label="$1"
+  local xml="$2"
+  local center
+  center="$(LABEL="$label" python3 -c '
+import os
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+root = ET.fromstring(sys.stdin.read())
+label = os.environ["LABEL"]
+node = next(
+    (
+        item
+        for item in root.iter("node")
+        if item.attrib.get("text") == label
+        or item.attrib.get("content-desc") == label
+    ),
+    None,
+)
+if node is None:
+    raise SystemExit(1)
+points = [int(value) for value in re.findall(r"\d+", node.attrib["bounds"])]
+print((points[0] + points[2]) // 2, (points[1] + points[3]) // 2)
+' <<< "$xml")"
+  read -r x y <<< "$center"
+  adb_ shell input tap "$x" "$y"
+}
+
+echo "== account UI smoke-test =="
+ui_xml="$(dump_ui)"
+assert_ui_text "Welcome to Sonus Auris" "$ui_xml"
+assert_ui_text "Continue" "$ui_xml"
+tap_ui_text "Continue" "$ui_xml"
+sleep 2
+ui_xml="$(dump_ui)"
+assert_ui_text "Create your Sonus Auris account" "$ui_xml"
+assert_ui_text "Sign in" "$ui_xml"
+assert_ui_text "Create account" "$ui_xml"
+
 echo "== runtime permission model (sensitive context perms must default to DENIED / opt-in) =="
 fail=0
 check_denied() {
   local perm="$1"
   local line
-  line="$(adb_ shell dumpsys package "$PKG" | grep "android.permission.$perm:" | head -1 | tr -d '\r')"
+  line="$(adb_ shell dumpsys package "$PKG" | awk -v permission="android.permission.$perm:" '
+    index($0, permission) { print; exit }
+  ' | tr -d '\r')"
   if echo "$line" | grep -q "granted=true"; then
     echo "  ✗ $perm is granted by default (expected opt-in / denied): $line"
     fail=1

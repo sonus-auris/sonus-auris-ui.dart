@@ -25,6 +25,7 @@ import 'src/models/transfer_gate_status.dart';
 import 'src/models/upload_network_policy.dart';
 import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
+import 'src/widgets/supabase_auth_panel.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -162,34 +163,14 @@ class OnboardingFlow extends StatefulWidget {
 class _OnboardingFlowState extends State<OnboardingFlow> {
   int _step = 0;
   bool _busy = false;
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
   late final Map<ConsentItem, bool> _grants = {
     for (final item in ConsentItem.values) item: item.required,
   };
 
   static const int _lastStep = 3;
 
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
-  }
-
   bool get _requiredAccepted =>
       ConsentItem.values.where((i) => i.required).every((i) => _grants[i]!);
-
-  Future<void> _auth(Future<void> Function() run) async {
-    setState(() => _busy = true);
-    try {
-      await run();
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
 
   Future<void> _finish() async {
     setState(() => _busy = true);
@@ -199,8 +180,8 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
       platform: Platform.isAndroid
           ? 'android'
           : Platform.isIOS
-              ? 'ios'
-              : Platform.operatingSystem,
+          ? 'ios'
+          : Platform.operatingSystem,
       grants: {for (final e in _grants.entries) e.key.key: e.value},
     );
     await widget.controller.completeOnboarding(record);
@@ -295,7 +276,11 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 8),
-          const Icon(Icons.verified_user, size: 40, color: SonusColors.orange500),
+          const Icon(
+            Icons.verified_user,
+            size: 40,
+            color: SonusColors.orange500,
+          ),
           const SizedBox(height: 12),
           Text('Signed in', style: theme.textTheme.titleLarge),
           const SizedBox(height: 8),
@@ -307,70 +292,30 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         ],
       );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 8),
-        Text('Create your account', style: theme.textTheme.titleLarge),
-        const SizedBox(height: 8),
-        const Text(
-          'Sign up or sign in to securely store your settings and consent.',
-          style: TextStyle(color: SonusColors.inkSoft),
-        ),
-        const SizedBox(height: 16),
-        if (!configured)
-          const Text(
-            'Account sign-in is not configured in this build. You can continue '
-            'and connect an account later in Settings.',
-            style: TextStyle(color: SonusColors.inkSoft),
-          )
-        else ...[
-          TextField(
-            controller: _emailController,
-            keyboardType: TextInputType.emailAddress,
-            autocorrect: false,
-            enabled: !_busy,
-            decoration: const InputDecoration(labelText: 'Email'),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _passwordController,
-            obscureText: true,
-            enabled: !_busy,
-            decoration: const InputDecoration(labelText: 'Password'),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton(
-                  onPressed: _busy ? null : () => _auth(_signUp),
-                  child: const Text('Create account'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _busy ? null : () => _auth(_signIn),
-                  child: const Text('Sign in'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ],
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: SupabaseAuthPanel(
+        enabled: configured,
+        initialMode: SupabaseAuthMode.signUp,
+        title: 'Create your Sonus Auris account',
+        description:
+            'Sync your consent and settings securely across mobile, desktop, and web.',
+        onBusyChanged: (busy) {
+          if (mounted) {
+            setState(() => _busy = busy);
+          }
+        },
+        onSignUp: _signUp,
+        onSignIn: _signIn,
+      ),
     );
   }
 
-  Future<void> _signUp() => widget.controller.signUpWithSupabase(
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-      );
+  Future<void> _signUp(String email, String password) =>
+      widget.controller.signUpWithSupabase(email: email, password: password);
 
-  Future<void> _signIn() => widget.controller.signInWithSupabase(
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-      );
+  Future<void> _signIn(String email, String password) =>
+      widget.controller.signInWithSupabase(email: email, password: password);
 
   Widget _consentStep(BuildContext context) {
     final theme = Theme.of(context);
@@ -410,8 +355,9 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
 
   Widget _permissionsStep() {
     final theme = Theme.of(context);
-    final granted =
-        ConsentItem.values.where((i) => _grants[i]!).toList(growable: false);
+    final granted = ConsentItem.values
+        .where((i) => _grants[i]!)
+        .toList(growable: false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -430,8 +376,11 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
               children: [
-                const Icon(Icons.check_circle,
-                    size: 18, color: SonusColors.orange500),
+                const Icon(
+                  Icons.check_circle,
+                  size: 18,
+                  color: SonusColors.orange500,
+                ),
                 const SizedBox(width: 8),
                 Expanded(child: Text(item.title)),
               ],
@@ -461,7 +410,10 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
             ),
           const SizedBox(width: 8),
           FilledButton(
-            onPressed: _busy || (_step == 2 && !_requiredAccepted)
+            onPressed:
+                _busy ||
+                    (_step == 2 && !_requiredAccepted) ||
+                    (onAccountStep && !(vm?.isSignedIn ?? false))
                 ? null
                 : () {
                     if (isLast) {
@@ -1949,7 +1901,7 @@ class _AccountSection extends StatefulWidget {
   final Future<void> Function(String email, String password) onSignIn;
   final Future<void> Function(String email, String password) onSignUp;
   final Future<void> Function(String email) onPasswordReset;
-  final VoidCallback onSignOut;
+  final Future<void> Function() onSignOut;
   final Future<void> Function() onDeleteAccount;
 
   @override
@@ -1957,44 +1909,7 @@ class _AccountSection extends StatefulWidget {
 }
 
 class _AccountSectionState extends State<_AccountSection> {
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
   bool _busy = false;
-
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _run(Future<void> Function(String, String) action) async {
-    if (_busy) {
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      await action(_emailController.text.trim(), _passwordController.text);
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  Future<void> _runEmail(Future<void> Function(String) action) async {
-    if (_busy) {
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      await action(_emailController.text.trim());
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
 
   Future<void> _runAccountAction(Future<void> Function() action) async {
     if (_busy) {
@@ -2073,7 +1988,9 @@ class _AccountSectionState extends State<_AccountSection> {
               runSpacing: 8,
               children: [
                 OutlinedButton.icon(
-                  onPressed: _busy ? null : widget.onSignOut,
+                  onPressed: _busy
+                      ? null
+                      : () => _runAccountAction(widget.onSignOut),
                   icon: const Icon(Icons.logout),
                   label: const Text('Sign out'),
                 ),
@@ -2097,82 +2014,56 @@ class _AccountSectionState extends State<_AccountSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Sign in to record under your account and back up to cloud storage.',
-            style: theme.textTheme.bodySmall,
-          ),
           if (!hasBundledSupabaseConfig) ...[
-            const SizedBox(height: 12),
-            TextField(
-              controller: widget.supabaseUrlController,
-              decoration: const InputDecoration(
-                labelText: 'Supabase URL',
-                hintText: 'https://YOUR-PROJECT.supabase.co',
+            ExpansionTile(
+              initiallyExpanded: widget.supabaseUrlController.text
+                  .trim()
+                  .isEmpty,
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(bottom: 16),
+              leading: const Icon(Icons.dns_outlined),
+              title: const Text('Supabase project connection'),
+              subtitle: const Text(
+                'Advanced setup for development and self-hosted builds',
               ),
-              autocorrect: false,
-              enableSuggestions: false,
-              keyboardType: TextInputType.url,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: widget.supabaseAnonKeyController,
-              decoration: const InputDecoration(labelText: 'Supabase anon key'),
-              obscureText: true,
-              autocorrect: false,
-              enableSuggestions: false,
-              keyboardType: TextInputType.visiblePassword,
+              children: [
+                TextField(
+                  controller: widget.supabaseUrlController,
+                  decoration: const InputDecoration(
+                    labelText: 'Supabase URL',
+                    hintText: 'https://YOUR-PROJECT.supabase.co',
+                  ),
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  keyboardType: TextInputType.url,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: widget.supabaseAnonKeyController,
+                  decoration: const InputDecoration(
+                    labelText: 'Supabase publishable or anon key',
+                  ),
+                  obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  keyboardType: TextInputType.visiblePassword,
+                ),
+              ],
             ),
           ],
-          const SizedBox(height: 12),
-          TextField(
-            controller: _emailController,
-            decoration: const InputDecoration(labelText: 'Email'),
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.emailAddress,
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _passwordController,
-            decoration: const InputDecoration(labelText: 'Password'),
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            onSubmitted: (_) => _run(widget.onSignIn),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _busy ? null : () => _run(widget.onSignIn),
-                  icon: _busy
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.login),
-                  label: const Text('Sign in'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _busy ? null : () => _run(widget.onSignUp),
-                  child: const Text('Create account'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: _busy ? null : () => _runEmail(widget.onPasswordReset),
-              icon: const Icon(Icons.lock_reset),
-              label: const Text('Reset password'),
-            ),
+          const SizedBox(height: 16),
+          SupabaseAuthPanel(
+            title: 'Access your recordings',
+            description:
+                'Sign in to register this device and reach your private cloud-backed data.',
+            onBusyChanged: (busy) {
+              if (mounted) {
+                setState(() => _busy = busy);
+              }
+            },
+            onSignIn: widget.onSignIn,
+            onSignUp: widget.onSignUp,
+            onPasswordReset: widget.onPasswordReset,
           ),
         ],
       ),
@@ -3751,10 +3642,17 @@ class _CloudSection extends StatelessWidget {
       title: 'Cloud',
       icon: Icons.cloud_outlined,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const _InlineState(
+            icon: Icons.shield_outlined,
+            text:
+                'Signed-in devices use the backend when connected, so storage credentials stay off the device. Direct S3-compatible credentials are an optional fallback.',
+          ),
+          const SizedBox(height: 16),
           DropdownButtonFormField<CloudProvider>(
             initialValue: selectedProvider,
-            decoration: const InputDecoration(labelText: 'Provider'),
+            decoration: const InputDecoration(labelText: 'Storage provider'),
             items: CloudProvider.values
                 .map(
                   (provider) => DropdownMenuItem(
@@ -3769,84 +3667,154 @@ class _CloudSection extends StatelessWidget {
               }
             },
           ),
+          const SizedBox(height: 20),
+          Text(
+            'Secure backend connection',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            selectedProvider.requiresBackend
+                ? 'Required for ${selectedProvider.label} uploads.'
+                : 'Recommended for account-scoped uploads and short-lived presigned URLs.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
           const SizedBox(height: 12),
-          if (selectedProvider.requiresBackend)
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'This provider uploads through the sound recorder backend.',
-              ),
-            ),
-          if (selectedProvider.requiresBackend) const SizedBox(height: 12),
           TextFormField(
             controller: backendUrlController,
-            decoration: const InputDecoration(labelText: 'Backend URL'),
+            decoration: const InputDecoration(
+              labelText: 'Backend URL',
+              hintText: 'https://api.sonusauris.app',
+              prefixIcon: Icon(Icons.hub_outlined),
+            ),
             autocorrect: false,
             enableSuggestions: false,
             keyboardType: TextInputType.url,
           ),
           const SizedBox(height: 12),
-          TextFormField(
-            controller: backendDeviceTokenController,
-            decoration: const InputDecoration(
-              labelText: 'Backend device token',
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(bottom: 12),
+            leading: const Icon(Icons.key_outlined),
+            title: const Text('Advanced device credential'),
+            subtitle: const Text('Normally provisioned after account sign-in'),
+            children: [
+              TextFormField(
+                controller: backendDeviceTokenController,
+                decoration: const InputDecoration(
+                  labelText: 'Backend device token',
+                ),
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                keyboardType: TextInputType.visiblePassword,
+              ),
+            ],
+          ),
+          if (selectedProvider == CloudProvider.s3) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'S3-compatible storage target',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: () => s3RegionController.text = 'auto',
+                  icon: const Icon(Icons.cloud_outlined),
+                  label: const Text('Use R2 defaults'),
+                ),
+              ],
             ),
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.visiblePassword,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3BucketController,
-            decoration: const InputDecoration(labelText: 'S3 bucket'),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3RegionController,
-            decoration: const InputDecoration(labelText: 'S3 region'),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3PrefixController,
-            decoration: const InputDecoration(labelText: 'S3 prefix'),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3EndpointController,
-            decoration: const InputDecoration(
-              labelText: 'S3-compatible endpoint',
+            const SizedBox(height: 4),
+            const Text(
+              'Cloudflare R2 uses region “auto” and an account endpoint ending in r2.cloudflarestorage.com.',
             ),
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3AccessKeyController,
-            decoration: const InputDecoration(labelText: 'S3 access key ID'),
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.visiblePassword,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3SecretKeyController,
-            decoration: const InputDecoration(
-              labelText: 'S3 secret access key',
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: s3BucketController,
+              decoration: const InputDecoration(
+                labelText: 'Bucket',
+                prefixIcon: Icon(Icons.inventory_2_outlined),
+              ),
             ),
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.visiblePassword,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: s3SessionTokenController,
-            decoration: const InputDecoration(labelText: 'S3 session token'),
-            obscureText: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.visiblePassword,
-            maxLines: 1,
-          ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: s3RegionController,
+                    decoration: const InputDecoration(labelText: 'Region'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    controller: s3PrefixController,
+                    decoration: const InputDecoration(
+                      labelText: 'Object prefix',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: s3EndpointController,
+              decoration: const InputDecoration(
+                labelText: 'S3-compatible endpoint',
+                hintText: 'https://ACCOUNT_ID.r2.cloudflarestorage.com',
+              ),
+              autocorrect: false,
+              enableSuggestions: false,
+              keyboardType: TextInputType.url,
+            ),
+            const SizedBox(height: 8),
+            ExpansionTile(
+              initiallyExpanded:
+                  backendUrlController.text.trim().isEmpty &&
+                  s3AccessKeyController.text.trim().isEmpty,
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(bottom: 12),
+              leading: const Icon(Icons.vpn_key_outlined),
+              title: const Text('Direct-upload fallback'),
+              subtitle: const Text('Keep closed when the backend is connected'),
+              children: [
+                TextFormField(
+                  controller: s3AccessKeyController,
+                  decoration: const InputDecoration(labelText: 'Access key ID'),
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  keyboardType: TextInputType.visiblePassword,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: s3SecretKeyController,
+                  decoration: const InputDecoration(
+                    labelText: 'Secret access key',
+                  ),
+                  obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  keyboardType: TextInputType.visiblePassword,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: s3SessionTokenController,
+                  decoration: const InputDecoration(
+                    labelText: 'Session token (optional)',
+                  ),
+                  obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  keyboardType: TextInputType.visiblePassword,
+                  maxLines: 1,
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

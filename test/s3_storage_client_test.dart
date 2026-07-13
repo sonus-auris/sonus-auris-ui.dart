@@ -77,6 +77,50 @@ void main() {
     client.close();
   });
 
+  test(
+    'uploads to Cloudflare R2 with path-style SigV4 and region auto',
+    () async {
+      final client = S3StorageClient(
+        httpClient: MockClient((request) async {
+          expect(request.method, 'PUT');
+          expect(request.url.host, '0123456789abcdef.r2.cloudflarestorage.com');
+          expect(
+            request.url.path,
+            '/sonus-audio/audio-dashcam/device-a/2026/01/02/03/2026-01-02T03-04-05-000z.m4a',
+          );
+          expect(
+            request.headers['authorization'],
+            contains('/auto/s3/aws4_request'),
+          );
+          expect(
+            request.headers,
+            isNot(contains('x-amz-server-side-encryption')),
+          );
+          expect(request.bodyBytes, const [1, 2, 3, 4]);
+          return http.Response('', 200);
+        }),
+      );
+
+      final result = await client.uploadSegment(
+        config: const AppConfig(
+          deviceId: 'device-a',
+          s3Bucket: 'sonus-audio',
+          s3Region: 'auto',
+          s3Endpoint: 'https://0123456789abcdef.r2.cloudflarestorage.com',
+        ),
+        secrets: const CloudSecrets(
+          s3AccessKeyId: 'r2-access',
+          s3SecretAccessKey: 'r2-secret',
+        ),
+        segment: segment,
+        file: segmentFile,
+      );
+
+      expect(result.isSuccess, isTrue);
+      client.close();
+    },
+  );
+
   test('copies cloud-only segments into the permanent S3 prefix', () async {
     final cloudOnly = segment.copyWith(
       localPath: null,

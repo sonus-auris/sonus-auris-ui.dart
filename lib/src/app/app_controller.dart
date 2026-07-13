@@ -64,13 +64,11 @@ const String kConsentVersion = 'audio-dashcam-consent-v1';
 
 /// App-level Supabase project, injected at build time so the onboarding
 /// login/sign-up works out of the box:
-/// `--dart-define=SUPABASE_URL=… --dart-define=SUPABASE_ANON_KEY=…`.
+/// `--dart-define=SONUS_SUPABASE_URL=…`
+/// `--dart-define=SONUS_SUPABASE_ANON_KEY=…`.
 /// Both are public client values (the anon key is safe to embed); the
 /// service_role key must never reach the device. When unset, the user can still
 /// configure their own Supabase project in the Configure tab.
-const String kDefaultSupabaseUrl = String.fromEnvironment('SUPABASE_URL');
-const String kDefaultSupabaseAnonKey =
-    String.fromEnvironment('SUPABASE_ANON_KEY');
 
 class AppController {
   factory AppController({
@@ -844,10 +842,10 @@ class AppController {
 
   AppConfig _seedSupabaseDefaults(AppConfig config) {
     final url = config.supabaseUrl.trim().isEmpty
-        ? kDefaultSupabaseUrl.trim()
+        ? AppConfig.defaultSupabaseUrl.trim()
         : config.supabaseUrl;
     final key = config.supabaseAnonKey.trim().isEmpty
-        ? kDefaultSupabaseAnonKey.trim()
+        ? AppConfig.defaultSupabaseAnonKey.trim()
         : config.supabaseAnonKey;
     if (url == config.supabaseUrl && key == config.supabaseAnonKey) {
       return config;
@@ -898,8 +896,10 @@ class AppController {
       }
       if (record.granted(ConsentItem.bluetooth)) {
         if (Platform.isAndroid) {
-          await [Permission.bluetoothScan, Permission.bluetoothConnect]
-              .request();
+          await [
+            Permission.bluetoothScan,
+            Permission.bluetoothConnect,
+          ].request();
         } else if (Platform.isIOS) {
           await Permission.bluetooth.request();
         }
