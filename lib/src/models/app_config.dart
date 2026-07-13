@@ -393,6 +393,7 @@ class AppConfig {
     bool? sleepMotionSensorConsent,
     bool? sleepAmbientLightConsent,
     bool? sleepPhoneContextConsent,
+    bool? sleepCloudSyncConsent,
     bool? musicDetectionEnabled,
     bool? speechDetectionEnabled,
     bool? shazamEnabled,
