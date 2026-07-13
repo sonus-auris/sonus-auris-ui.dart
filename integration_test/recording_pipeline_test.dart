@@ -68,6 +68,15 @@ void main() {
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(seconds: 6)),
         );
+        final recent = recorder.recentAudio(window: const Duration(seconds: 6));
+        final activeSnapshot = recorder.snapshots.value;
+        // ignore: avoid_print
+        print(
+          'recording-integration: before stop '
+          'pcmBytes=${recent?.bytes.length ?? 0} '
+          'activeSegment=${activeSnapshot.activeSegmentPath ?? "none"} '
+          'snapshotRecording=${activeSnapshot.isRecording}',
+        );
 
         await recorder.stop(); // finalizes the active (partial) segment
         await tester.runAsync(

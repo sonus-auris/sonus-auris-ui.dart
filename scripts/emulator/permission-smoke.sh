@@ -34,7 +34,11 @@ adb_ uninstall "$PKG" >/dev/null 2>&1 || true   # clean slate: clear any persist
 adb_ install -r "$APK"   # no -g: dangerous runtime perms must start DENIED (opt-in)
 
 echo "== requested permissions (must match AndroidManifest) =="
-adb_ shell dumpsys package "$PKG" | sed -n '/requested permissions:/,/install permissions:/p'
+adb_ shell dumpsys package "$PKG" | awk '
+  /requested permissions:/ { show=1 }
+  show { print }
+  /install permissions:/ { exit }
+'
 
 echo "== launch =="
 adb_ logcat -c
@@ -43,12 +47,120 @@ adb_ shell am start -W -n "$ACTIVITY" -a android.intent.action.MAIN -c android.i
 # Give the Flutter engine time to draw the first frame.
 sleep 8
 
+dump_ui() {
+  adb_ shell uiautomator dump /sdcard/sonus-window.xml >/dev/null
+  adb_ exec-out cat /sdcard/sonus-window.xml | tr -d '\r'
+}
+
+assert_ui_text() {
+  local label="$1"
+  local xml="$2"
+  # Flutter may expose a visible Text widget either as the node's `text` or
+  # inside a merged `content-desc` semantics label. The UI hierarchy contains
+  # visible nodes only, so matching the label in either representation is the
+  # reliable cross-emulator assertion.
+  if grep -Fq "$label" <<< "$xml"; then
+    echo "  ✓ visible: $label"
+  else
+    echo "  ✗ missing UI text: $label"
+    return 1
+  fi
+}
+
+tap_ui_text() {
+  local label="$1"
+  local xml="$2"
+  local center
+  center="$(LABEL="$label" python3 -c '
+import os
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+root = ET.fromstring(sys.stdin.read())
+label = os.environ["LABEL"]
+node = next(
+    (
+        item
+        for item in root.iter("node")
+        if item.attrib.get("text") == label
+        or item.attrib.get("content-desc") == label
+    ),
+    None,
+)
+if node is None:
+    raise SystemExit(1)
+points = [int(value) for value in re.findall(r"\d+", node.attrib["bounds"])]
+print((points[0] + points[2]) // 2, (points[1] + points[3]) // 2)
+' <<< "$xml")"
+  read -r x y <<< "$center"
+  adb_ shell input tap "$x" "$y"
+}
+
+wait_for_ui_text() {
+  local label="$1"
+  local timeout_seconds="$2"
+  local deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < deadline )); do
+    ui_xml="$(dump_ui 2>/dev/null || true)"
+    if grep -Fq "$label" <<< "$ui_xml"; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+capture_failure_evidence() {
+  if [[ -n "${SMOKE_SCREENSHOT:-}" ]]; then
+    adb_ exec-out screencap -p > "$SMOKE_SCREENSHOT" 2>/dev/null || true
+  fi
+  echo "  visible hierarchy:"
+  printf '%s\n' "$ui_xml"
+  echo "  recent app logcat:"
+  adb_ logcat -d 2>/dev/null | awk -v package="$PKG" '
+    index($0, package) || /AndroidRuntime/ || /flutter/ { lines[++count]=$0 }
+    END {
+      start = count > 80 ? count - 79 : 1
+      for (i = start; i <= count; i++) print lines[i]
+    }
+  '
+}
+
+echo "== account UI smoke-test =="
+ui_xml=""
+if ! wait_for_ui_text "Welcome to Sonus Auris" 40; then
+  echo "  ✗ welcome screen did not become ready within 40 seconds"
+  capture_failure_evidence
+  exit 1
+fi
+assert_ui_text "Welcome to Sonus Auris" "$ui_xml"
+assert_ui_text "Continue" "$ui_xml"
+tap_ui_text "Continue" "$ui_xml"
+if ! wait_for_ui_text "Create your Sonus Auris account" 20; then
+  echo "  ✗ account screen did not become ready within 20 seconds"
+  capture_failure_evidence
+  exit 1
+fi
+assert_ui_text "Create your Sonus Auris account" "$ui_xml"
+assert_ui_text "Sign in" "$ui_xml"
+assert_ui_text "Create account" "$ui_xml"
+if adb_ logcat -d 2>/dev/null | grep -m1 -F "A RenderFlex overflowed"; then
+  echo "  ✗ Flutter reported a visible layout overflow"
+  capture_failure_evidence
+  exit 1
+else
+  echo "  ✓ no Flutter layout overflow was reported"
+fi
+
 echo "== runtime permission model (sensitive context perms must default to DENIED / opt-in) =="
 fail=0
 check_denied() {
   local perm="$1"
   local line
-  line="$(adb_ shell dumpsys package "$PKG" | grep "android.permission.$perm:" | head -1 | tr -d '\r')"
+  line="$(adb_ shell dumpsys package "$PKG" | awk -v permission="android.permission.$perm:" '
+    index($0, permission) { print; exit }
+  ' | tr -d '\r')"
   if echo "$line" | grep -q "granted=true"; then
     echo "  ✗ $perm is granted by default (expected opt-in / denied): $line"
     fail=1

@@ -1,8 +1,9 @@
-name: Android emulator permission test
+name: Android emulator account and permission test
 
 # Boots a headless Android emulator and runs the permission smoke-test
-# (scripts/emulator/permission-smoke.sh): sensitive context permissions must
-# default to opt-in, mic/notifications grant cleanly, and the app must not crash.
+# (scripts/emulator/permission-smoke.sh): the login/sign-up screen must render,
+# sensitive context permissions must default to opt-in, mic/notifications grant
+# cleanly, and the app must not crash.
 # GitHub's ubuntu-latest runners expose /dev/kvm, so the emulator is hardware
 # accelerated here (the same test also runs on the cluster via
 # ci/android-emulator/, for KVM-capable Hetzner/EC2 nodes).
@@ -22,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Enable KVM
         run: |
@@ -31,7 +32,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -44,7 +45,10 @@ jobs:
       - run: flutter pub get
 
       - name: Build debug APK
-        run: flutter build apk --debug
+        run: >-
+          flutter build apk --debug
+          --dart-define=SONUS_SUPABASE_URL=https://emulator-test.supabase.co
+          --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_emulator_test
 
       - name: Run permission smoke-test on emulator
         uses: reactivecircus/android-emulator-runner@v2
@@ -61,7 +65,7 @@ jobs:
 
       - name: Upload evidence screenshot
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: permission-smoke-screenshot
           path: permission-smoke.png
@@ -73,14 +77,8 @@ jobs:
     runs-on: ubuntu-latest
     # Hard cap so a stuck emulator/mic can never hang the job for hours.
     timeout-minutes: 25
-    # WIP / non-gating: driving the REAL device mic through the `record` plugin on
-    # a HEADLESS emulator is unreliable (the virtual mic can stall past the Dart
-    # timeout). Kept for signal; make it gating once we feed the emulator a
-    # deterministic virtual audio input (`-audio-input <wav>`). The permission
-    # smoke-test + 218 unit tests (incl. the acoustic/FFT pipeline) are the gate.
-    continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Enable KVM
         run: |
@@ -89,7 +87,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -101,24 +99,33 @@ jobs:
 
       - run: flutter pub get
 
-      # Warm the Gradle/pub caches (and validate the app builds) so the build
-      # inside `flutter test` below is incremental and doesn't blow the timeout.
-      - name: Build debug APK (warm cache)
-        run: flutter build apk --debug
+      # Build the integration entrypoint once. The harness pre-installs this
+      # exact APK, verifies RECORD_AUDIO, then asks flutter drive to reuse it.
+      - name: Build recording integration APK
+        run: >-
+          flutter build apk --debug
+          --target=integration_test/recording_pipeline_test.dart
 
       - name: Run recording integration test on emulator
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          # This always-compiled QEMU driver uses the virtual clock to emit
+          # zeroed PCM input frames. It gives AudioRecord deterministic silence
+          # while exercising the real guest mic/plugin/WAV pipeline.
+          QEMU_AUDIO_DRV: none
         with:
           api-level: 34
           target: google_apis
           arch: x86_64
           force-avd-creation: false
-          # NOTE: no `-no-audio` here — this test records from the mic, so the
-          # emulator audio subsystem must be enabled (it streams silence on a
-          # headless runner, which is fine: still real PCM through the pipeline).
-          emulator-options: -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect
+          # Android Emulator disables host microphone input by default. Explicitly
+          # enable the guest capture path; the timer-backed QEMU driver above
+          # supplies its deterministic input without physical runner hardware.
+          emulator-options: -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect -allow-host-audio
           disable-animations: true
-          # An integration_test cannot dismiss the OS mic-permission dialog, so a
-          # background loop grants RECORD_AUDIO the moment the app package appears
-          # (well before the test reaches recorder.start()). Then run the test.
-          script: bash scripts/emulator/grant-then-run-integration.sh integration_test/recording_pipeline_test.dart
+          # The harness pre-installs the test APK and verifies RECORD_AUDIO before
+          # launch; a background loop also preserves the grant across reinstalls.
+          script: >-
+            adb emu avd hostmicon &&
+            bash scripts/emulator/grant-then-run-integration.sh
+            integration_test/recording_pipeline_test.dart

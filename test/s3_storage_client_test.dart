@@ -82,6 +82,7 @@ void main() {
     final client = S3StorageClient(
       httpClient: MockClient((request) async {
         captured = request;
+        expect(request.bodyBytes, const [1, 2, 3, 4]);
         return http.Response('', 200);
       }),
     );
