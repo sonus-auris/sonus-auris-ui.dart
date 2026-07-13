@@ -2872,6 +2872,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
     _sleepMotionConsent = config.sleepMotionSensorConsent;
     _sleepAmbientLightConsent = config.sleepAmbientLightConsent;
     _sleepPhoneContextConsent = config.sleepPhoneContextConsent;
+    _sleepCloudSyncConsent = config.sleepCloudSyncConsent;
     _sleepCycleMinutes = config.sleepCycleMinutesByIndex.isEmpty
         ? 90.0
         : config.sleepCycleMinutesByIndex.first;
