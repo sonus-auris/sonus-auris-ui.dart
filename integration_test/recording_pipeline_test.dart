@@ -37,7 +37,17 @@ void main() {
         if (s.isRecording) sawActiveSnapshot = true;
       });
 
-      await recorder.start(config);
+      // ignore: avoid_print
+      print('recording-integration: calling recorder.start()');
+      // Fail fast with a clear message if start() ever blocks, instead of
+      // burning the whole test timeout.
+      await recorder.start(config).timeout(
+        const Duration(seconds: 45),
+        onTimeout: () => fail('recorder.start() did not complete in 45s '
+            '(mic device likely unavailable — is emulator audio enabled?)'),
+      );
+      // ignore: avoid_print
+      print('recording-integration: started, isRecording=${recorder.isRecording}');
       expect(recorder.isRecording, isTrue, reason: 'recorder did not start');
 
       // Capture ~6s of the emulator's virtual mic (silence is fine — it is still
@@ -70,6 +80,6 @@ void main() {
       await snapSub.cancel();
       await recorder.dispose();
     },
-    timeout: const Timeout(Duration(minutes: 2)),
+    timeout: const Timeout(Duration(minutes: 4)),
   );
 }

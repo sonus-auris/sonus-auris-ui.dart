@@ -38,3 +38,11 @@ env = "SOUNDCLOUD_CLIENT_ID"
 aliases = ["soundcloud-client-id"]
 type = "string"
 help = "Public SoundCloud OAuth client id compiled into the Flutter client."
+
+[flags.disable_interruption_resume]
+env = "SONUS_DISABLE_INTERRUPTION_RESUME"
+aliases = ["disable-interruption-resume"]
+type = "bool"
+true_aliases = ["1", "t"]
+false_aliases = ["0", "f"]
+help = "Disable automatic capture resume after an audio interruption."
