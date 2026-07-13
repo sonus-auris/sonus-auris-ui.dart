@@ -3,7 +3,6 @@ import 'package:rxdart/rxdart.dart';
 import '../../models/voice_command.dart';
 import 'handlers/note_command_handler.dart';
 import 'handlers/recording_command_handler.dart';
-import 'handlers/stub_command_handler.dart';
 import 'handlers/timer_command_handler.dart';
 import 'intent_resolver.dart';
 import 'voice_command_handler.dart';
@@ -18,10 +17,9 @@ typedef SpeakCallback = Future<void> Function(String phrase);
 /// handler → execute → speak confirmation → emit result.
 ///
 /// The dispatcher owns the intent→handler registry. Three handlers are wired to
-/// real behavior today (timer, note/task capture, recording control); the rest
-/// of the recognized intents fall through to [StubCommandHandler] so every
-/// supported phrase gets a coherent spoken response. Results are also published
-/// on [results] for the UI (a command log / toast).
+/// real behavior today (timer, note/task capture, recording control). Additional
+/// application/platform capabilities are supplied as real handlers. Recognized
+/// intents without an executor are reported as unavailable and never as handled.
 ///
 /// Nothing here throws: handlers are contractually fail-soft, and the dispatch
 /// path catches anything they miss.
@@ -32,25 +30,28 @@ class VoiceCommandDispatcher {
     required List<TimerCommandHandler> timerHandlers,
     SpeakCallback? speak,
     double minConfidence = 0.5,
-  })  : _resolver = resolver,
-        _registry = registry,
-        _timerHandlers = timerHandlers,
-        _speak = speak,
-        _minConfidence = minConfidence;
+  }) : _resolver = resolver,
+       _registry = registry,
+       _timerHandlers = timerHandlers,
+       _speak = speak,
+       _minConfidence = minConfidence;
 
   /// Builds a dispatcher with the default registry.
   ///
   /// [resolver] maps transcript → [VoiceCommand]; defaults to the on-device
   /// rule-based parser. Pass an [LlmIntentResolver] (or a [FallbackIntentResolver]
   /// wrapping it) to route recognition through Vapi / an LLM instead.
-  /// [noteSink] receives captured notes/tasks (defaults to in-memory).
+  /// [noteSink] receives captured notes/tasks. Notes are enabled only when a
+  /// persistent sink is supplied; the dispatcher never silently stores them in
+  /// process memory.
   /// [recorderControl] wires the recording-control intents to the real engine;
-  /// when omitted those intents fall back to a stub. [onTimerElapsed] fires when
-  /// a voice timer completes. [speak] is the TTS bridge for confirmations.
+  /// when omitted those intents remain unavailable. [additionalHandlers] wires
+  /// real platform/app executors for the other recognized intents.
   factory VoiceCommandDispatcher({
     IntentResolver? resolver,
     NoteSink? noteSink,
     RecorderControl? recorderControl,
+    Iterable<VoiceCommandHandler> additionalHandlers = const [],
     void Function(VoiceTimer timer)? onTimerElapsed,
     SpeakCallback? speak,
     double minConfidence = 0.5,
@@ -58,33 +59,27 @@ class VoiceCommandDispatcher {
     final timerHandler = TimerCommandHandler(
       onElapsed: onTimerElapsed ?? (_) {},
     );
-    final noteHandler = NoteCommandHandler(sink: noteSink ?? InMemoryNoteSink());
 
     final handlers = <VoiceCommandHandler>[
       timerHandler,
-      noteHandler,
+      if (noteSink != null) NoteCommandHandler(sink: noteSink),
       if (recorderControl != null)
         RecordingCommandHandler(control: recorderControl),
+      ...additionalHandlers,
     ];
 
     final registry = <VoiceIntent, VoiceCommandHandler>{};
     for (final handler in handlers) {
       for (final intent in handler.intents) {
+        if (intent == VoiceIntent.unknown) {
+          throw ArgumentError('Handlers cannot execute the unknown intent.');
+        }
+        if (registry.containsKey(intent)) {
+          throw ArgumentError(
+            'Multiple handlers registered for ${intent.name}.',
+          );
+        }
         registry[intent] = handler;
-      }
-    }
-
-    // Every remaining recognized intent gets the stub handler so coverage is
-    // complete and the user always gets a sensible spoken reply.
-    final stubbed = <VoiceIntent>{
-      for (final intent in VoiceIntent.values)
-        if (intent != VoiceIntent.unknown && !registry.containsKey(intent))
-          intent,
-    };
-    if (stubbed.isNotEmpty) {
-      final stub = StubCommandHandler(stubbed);
-      for (final intent in stubbed) {
-        registry[intent] = stub;
       }
     }
 

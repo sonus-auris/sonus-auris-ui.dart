@@ -3,9 +3,8 @@ import '../../models/voice_command.dart';
 /// Result of attempting to execute a [VoiceCommand].
 ///
 /// [spokenResponse] is the short phrase the dispatcher hands to TTS so the user
-/// gets hands-free confirmation. [handled] distinguishes "I ran this" from
-/// "I recognized it but the capability isn't wired yet" (a stub), which the UI
-/// can surface differently from an outright parse failure.
+/// gets hands-free confirmation. [handled] distinguishes a command that reached
+/// a real executor from one that was recognized but is unavailable.
 class VoiceCommandResult {
   const VoiceCommandResult({
     required this.command,
@@ -20,21 +19,20 @@ class VoiceCommandResult {
     VoiceCommand command,
     String spokenResponse, {
     Map<String, Object?> data = const {},
-  }) =>
-      VoiceCommandResult(
-        command: command,
-        handled: true,
-        success: true,
-        spokenResponse: spokenResponse,
-        data: data,
-      );
+  }) => VoiceCommandResult(
+    command: command,
+    handled: true,
+    success: true,
+    spokenResponse: spokenResponse,
+    data: data,
+  );
 
-  /// Recognized, but the handler is still scaffolding. Counts as handled
-  /// (we routed it) but not successful (nothing happened).
+  /// Recognized, but no real executor was registered. This is deliberately not
+  /// marked handled: callers must never mistake recognition for side effects.
   factory VoiceCommandResult.notImplemented(VoiceCommand command) =>
       VoiceCommandResult(
         command: command,
-        handled: true,
+        handled: false,
         success: false,
         spokenResponse: "I can't do that yet, but I understood you.",
       );
@@ -43,13 +41,12 @@ class VoiceCommandResult {
   factory VoiceCommandResult.failure(
     VoiceCommand command,
     String spokenResponse,
-  ) =>
-      VoiceCommandResult(
-        command: command,
-        handled: true,
-        success: false,
-        spokenResponse: spokenResponse,
-      );
+  ) => VoiceCommandResult(
+    command: command,
+    handled: true,
+    success: false,
+    spokenResponse: spokenResponse,
+  );
 
   /// Nothing matched the transcript.
   factory VoiceCommandResult.unrecognized(VoiceCommand command) =>
@@ -77,3 +74,38 @@ abstract class VoiceCommandHandler {
 
   Future<VoiceCommandResult> handle(VoiceCommand command);
 }
+
+/// Adapts one or more real application/platform callbacks to the handler
+/// registry without requiring every integration to define a wrapper class.
+class CallbackCommandHandler implements VoiceCommandHandler {
+  CallbackCommandHandler(Map<VoiceIntent, VoiceCommandExecutor> executors)
+    : _executors = Map.unmodifiable(executors) {
+    if (_executors.isEmpty || _executors.containsKey(VoiceIntent.unknown)) {
+      throw ArgumentError('Provide at least one recognized intent executor.');
+    }
+  }
+
+  final Map<VoiceIntent, VoiceCommandExecutor> _executors;
+
+  @override
+  Set<VoiceIntent> get intents => Set.unmodifiable(_executors.keys);
+
+  @override
+  Future<VoiceCommandResult> handle(VoiceCommand command) async {
+    final executor = _executors[command.intent];
+    if (executor == null) {
+      return VoiceCommandResult.notImplemented(command);
+    }
+    try {
+      return await executor(command);
+    } catch (_) {
+      return VoiceCommandResult.failure(
+        command,
+        'Something went wrong running that command.',
+      );
+    }
+  }
+}
+
+typedef VoiceCommandExecutor =
+    Future<VoiceCommandResult> Function(VoiceCommand command);

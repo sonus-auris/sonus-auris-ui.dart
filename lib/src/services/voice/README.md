@@ -31,14 +31,16 @@ Two concerns are kept separate so each can be upgraded independently:
 
 ## What's wired today
 
-Three handlers run for real; everything else is recognized and answered by
-`StubCommandHandler` so the surface is complete:
+The dispatcher registers only real executors. Unsupported intents remain
+recognized, but return `handled: false`; recognition is never presented as a
+completed side effect. Application/platform integrations can be added through
+`additionalHandlers` (or `CallbackCommandHandler` for direct callbacks):
 
 | Intent | Handler | Behavior |
 | --- | --- | --- |
 | `setTimer`, `startFocusSession` | `TimerCommandHandler` | real `Timer`, fires `onElapsed` |
-| `takeNote`, `createTask`, `recordVoiceMemo` | `NoteCommandHandler` | persists via `NoteSink` |
-| `startRecording`, `stopRecording` | `RecordingCommandHandler` | drives `AppController` start/stop |
+| `takeNote`, `createTask`, `recordVoiceMemo` | `NoteCommandHandler` | persists via the explicitly supplied `NoteSink` |
+| `startRecording`, `stopRecording` | `RecordingCommandHandler` | drives the explicitly supplied recorder controller |
 
 Tests: [voice_command_parser_test.dart](../../../../test/voice_command_parser_test.dart),
 [voice_command_dispatcher_test.dart](../../../../test/voice_command_dispatcher_test.dart).

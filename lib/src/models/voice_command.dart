@@ -4,13 +4,12 @@
 /// by the parser, then routed to a handler by the dispatcher. Most of the
 /// surface area here is deliberate *scaffolding*: every intent we want to
 /// eventually support has a stable enum value and category so the parser,
-/// dispatcher, UI, and analytics can all refer to it, even while the handler
-/// is still a stub.
+/// dispatcher, UI, and analytics can all refer to it. Execution is enabled only
+/// after the application registers a real handler for that intent.
 ///
-/// "Fully wired" today: [VoiceIntent.setTimer], [VoiceIntent.takeNote], and the
-/// recording-control intents ([VoiceIntent.startRecording] /
-/// [VoiceIntent.stopRecording]) — the rest fail soft with a spoken
-/// "not supported yet" until their handler lands.
+/// The timer is always wired. Note/task and recording control are wired when
+/// their persistent sink and controller are supplied to the dispatcher; other
+/// capabilities use registered application/platform handlers.
 library;
 
 /// Broad grouping used for UI sectioning and to decide which capability /
@@ -31,8 +30,7 @@ enum VoiceCommandCategory {
 
 /// Every voice intent the app knows how to *recognize*. Recognition (parsing)
 /// and execution (handling) are separate concerns: an intent can be parsed long
-/// before it can be handled, which is exactly the scaffolding state most of
-/// these are in.
+/// before its application/platform executor is available.
 enum VoiceIntent {
   // --- Productivity ---
   setTimer(VoiceCommandCategory.productivity),
@@ -141,12 +139,12 @@ class VoiceCommand {
   }
 
   Map<String, dynamic> toJson() => {
-        'intent': intent.name,
-        'category': intent.category.name,
-        'transcript': transcript,
-        'slots': slots,
-        'confidence': confidence,
-      };
+    'intent': intent.name,
+    'category': intent.category.name,
+    'transcript': transcript,
+    'slots': slots,
+    'confidence': confidence,
+  };
 
   @override
   String toString() =>
