@@ -543,6 +543,7 @@ class AppConfig {
       'sleepMotionSensorConsent': sleepMotionSensorConsent,
       'sleepAmbientLightConsent': sleepAmbientLightConsent,
       'sleepPhoneContextConsent': sleepPhoneContextConsent,
+      'sleepCloudSyncConsent': sleepCloudSyncConsent,
       'musicDetectionEnabled': musicDetectionEnabled,
       'speechDetectionEnabled': speechDetectionEnabled,
       'shazamEnabled': shazamEnabled,
