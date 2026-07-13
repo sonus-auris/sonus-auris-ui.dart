@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Enable KVM
         run: |
@@ -32,7 +32,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -65,7 +65,7 @@ jobs:
 
       - name: Upload evidence screenshot
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: permission-smoke-screenshot
           path: permission-smoke.png
@@ -77,12 +77,8 @@ jobs:
     runs-on: ubuntu-latest
     # Hard cap so a stuck emulator/mic can never hang the job for hours.
     timeout-minutes: 25
-    # Keep this lane non-gating only until the timer-backed input below has
-    # produced a valid WAV in CI. The permission smoke-test and acoustic/FFT unit
-    # suite remain the release gates during that one-run verification window.
-    continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Enable KVM
         run: |
@@ -91,7 +87,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
