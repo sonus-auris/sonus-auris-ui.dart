@@ -1,3 +1,4 @@
+// Mirrors encrypted segments the backend cannot push into the user's iCloud Drive via the native iCloud bridge.
 import 'dart:async';
 
 import 'package:flutter/services.dart';

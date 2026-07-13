@@ -1,3 +1,4 @@
+// User-tunable app configuration: retention windows, segment/codec settings, cloud provider, schedule, detectors, and upload policy.
 // ignore_for_file: prefer_initializing_formals
 
 import 'cloud_provider.dart';

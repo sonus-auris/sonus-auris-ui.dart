@@ -1,3 +1,4 @@
+// Configures and drives the Android foreground-service notification that keeps audio capture alive in the background.
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:io';

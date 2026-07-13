@@ -1,3 +1,4 @@
+// Heuristic, non-diagnostic sleep-cycle detector: estimates personal cycle length from FFT/snore/quiet/arousal cues and can fire cycle alarms.
 import 'dart:math' as math;
 
 import '../../models/acoustic_detection.dart';

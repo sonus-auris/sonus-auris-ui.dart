@@ -1,3 +1,4 @@
+// Pure-Dart timer logic that arms/disarms capture at schedule-window boundaries, plus the SchedulePlatform seam for OS wake-ups.
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';

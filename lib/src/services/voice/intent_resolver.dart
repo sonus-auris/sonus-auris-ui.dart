@@ -1,3 +1,4 @@
+// The transcript -> structured VoiceCommand seam, with rule-based, LLM, and fallback resolver strategies.
 import 'dart:async';
 import 'dart:convert';
 

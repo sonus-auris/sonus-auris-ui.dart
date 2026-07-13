@@ -1,3 +1,4 @@
+// Builds a Day of My Life: compresses a day's audio, adds on-device activity notes, and publishes/prunes it as a private SoundCloud track.
 import 'dart:typed_data';
 
 import 'package:intl/intl.dart';

@@ -1,3 +1,4 @@
+// The Sonus Auris logo mark widget (green square, ear glyph, orange dot).
 import 'package:flutter/material.dart';
 
 import 'sonus_theme.dart';

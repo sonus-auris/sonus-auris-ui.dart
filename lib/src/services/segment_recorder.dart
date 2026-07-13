@@ -1,3 +1,4 @@
+// Core rolling-buffer recorder: captures mic audio into overlapping WAV segments, feeds the acoustic pipeline, and emits recorder state and trigger events.
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';

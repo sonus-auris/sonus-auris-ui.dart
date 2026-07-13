@@ -1,3 +1,4 @@
+// Thin http client for Supabase GoTrue auth (anon key only): sign-in/up and token refresh.
 import 'dart:async';
 import 'dart:convert';
 

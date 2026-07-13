@@ -1,3 +1,4 @@
+// Pure decision function for whether uploads are allowed given power/network conditions and the configured policy.
 import '../models/app_config.dart';
 import '../models/transfer_gate_status.dart';
 import '../models/upload_network_policy.dart';

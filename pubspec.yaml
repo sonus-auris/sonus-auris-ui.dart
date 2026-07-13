@@ -82,6 +82,11 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
 
+  # On-device end-to-end tests (real mic -> WAV segment pipeline), run on an
+  # emulator in CI. See integration_test/ and .github/workflows.
+  integration_test:
+    sdk: flutter
+
   # Deterministic virtual time for scheduler timer tests.
   fake_async: ^1.3.1
 

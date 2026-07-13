@@ -1,3 +1,4 @@
+// App-wide OAuth redirect config and the browser leg of the music OAuth flow.
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 /// App-wide OAuth redirect settings. Client ids are injected at build time

@@ -3,6 +3,7 @@ import 'package:audio_dashcam/src/services/voice/handlers/note_command_handler.d
 import 'package:audio_dashcam/src/services/voice/handlers/recording_command_handler.dart';
 import 'package:audio_dashcam/src/services/voice/handlers/timer_command_handler.dart';
 import 'package:audio_dashcam/src/services/voice/voice_command_dispatcher.dart';
+import 'package:audio_dashcam/src/services/voice/voice_command_handler.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -47,8 +48,9 @@ void main() {
       final dispatcher = VoiceCommandDispatcher(noteSink: sink);
       addTearDown(dispatcher.dispose);
 
-      final result =
-          await dispatcher.dispatch('Take a note: buy milk and eggs');
+      final result = await dispatcher.dispatch(
+        'Take a note: buy milk and eggs',
+      );
       expect(result.success, isTrue);
       expect(sink.notes, hasLength(1));
       expect(sink.notes.first.text, 'buy milk and eggs');
@@ -102,15 +104,34 @@ void main() {
     });
   });
 
-  group('scaffolding & fallbacks', () {
-    test('recognized-but-unwired intent returns a stub response', () async {
+  group('capability registration & fallbacks', () {
+    test('recognized-but-unwired intent is not reported as handled', () async {
       final dispatcher = VoiceCommandDispatcher();
       addTearDown(dispatcher.dispose);
 
       final result = await dispatcher.dispatch('Navigate to the airport');
-      expect(result.handled, isTrue);
+      expect(result.handled, isFalse);
       expect(result.success, isFalse);
-      expect(result.spokenResponse, contains('Navigation'));
+      expect(result.spokenResponse, contains("can't do that yet"));
+    });
+
+    test('registered platform executor performs the command', () async {
+      String? openedDestination;
+      final platformHandler = CallbackCommandHandler({
+        VoiceIntent.navigateTo: (command) async {
+          openedDestination = command.slot('destination');
+          return VoiceCommandResult.ok(command, 'Opening directions.');
+        },
+      });
+      final dispatcher = VoiceCommandDispatcher(
+        additionalHandlers: [platformHandler],
+      );
+      addTearDown(dispatcher.dispose);
+
+      final result = await dispatcher.dispatch('Navigate to the airport');
+      expect(result.handled, isTrue);
+      expect(result.success, isTrue);
+      expect(openedDestination, 'the airport');
     });
 
     test('unrecognized speech is not handled', () async {

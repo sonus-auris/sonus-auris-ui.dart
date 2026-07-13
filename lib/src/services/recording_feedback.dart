@@ -1,3 +1,4 @@
+// Speaks short spoken cues (TTS) confirming capture state for eyes-free use.
 import 'package:flutter_tts/flutter_tts.dart';
 
 /// Speaks short verbal cues ("recording", "stopped", "saved") so the user can

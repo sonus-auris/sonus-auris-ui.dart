@@ -1,3 +1,4 @@
+// On-device heuristic that turns a day's acoustic + GPS signals into human-readable activity notes for a Day of My Life.
 import '../models/acoustic_detection.dart';
 import '../models/day_of_life.dart';
 import '../models/geo_tag.dart';
