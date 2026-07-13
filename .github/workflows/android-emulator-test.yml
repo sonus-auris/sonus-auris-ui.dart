@@ -77,11 +77,9 @@ jobs:
     runs-on: ubuntu-latest
     # Hard cap so a stuck emulator/mic can never hang the job for hours.
     timeout-minutes: 25
-    # WIP / non-gating: driving the REAL device mic through the `record` plugin on
-    # a HEADLESS emulator is unreliable (the virtual mic can stall past the Dart
-    # timeout). Kept for signal; make it gating once we feed the emulator a
-    # deterministic virtual audio input (`-audio-input <wav>`). The permission
-    # smoke-test + unit suite (including the acoustic/FFT pipeline) are the gate.
+    # Keep this lane non-gating only until the timer-backed input below has
+    # produced a valid WAV in CI. The permission smoke-test and acoustic/FFT unit
+    # suite remain the release gates during that one-run verification window.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -112,39 +110,21 @@ jobs:
           flutter build apk --debug
           --target=integration_test/recording_pipeline_test.dart
 
-      - name: Start deterministic virtual audio source
-        run: |
-          if ! command -v pulseaudio >/dev/null 2>&1 || \
-            ! command -v arecord >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y alsa-utils pulseaudio pulseaudio-utils
-          fi
-          pulseaudio --start --exit-idle-time=-1
-          pactl load-module module-null-sink sink_name=sonus_virtual_audio
-          pactl set-default-source sonus_virtual_audio.monitor
-          pulse_server="$(pactl info | awk -F': ' '/^Server String:/ { print $2; exit }')"
-          if [[ "$pulse_server" != unix:* ]]; then
-            pulse_server="unix:$pulse_server"
-          fi
-          PULSE_SERVER="$pulse_server" \
-            arecord -D pulse -f S16_LE -r 44100 -c 1 -d 1 -t raw /dev/null
-          echo "PULSE_SERVER=$pulse_server" >> "$GITHUB_ENV"
-          echo "QEMU_AUDIO_DRV=alsa" >> "$GITHUB_ENV"
-          echo "QEMU_ALSA_DAC_DEV=pulse" >> "$GITHUB_ENV"
-          echo "QEMU_ALSA_ADC_DEV=pulse" >> "$GITHUB_ENV"
-          pactl info
-
       - name: Run recording integration test on emulator
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          # This always-compiled QEMU driver uses the virtual clock to emit
+          # zeroed PCM input frames. It gives AudioRecord deterministic silence
+          # while exercising the real guest mic/plugin/WAV pipeline.
+          QEMU_AUDIO_DRV: none
         with:
           api-level: 34
           target: google_apis
           arch: x86_64
           force-avd-creation: false
           # Android Emulator disables host microphone input by default. Explicitly
-          # enable it and route ALSA through PulseAudio's null-source monitor,
-          # so deterministic silence still traverses the real mic/plugin/WAV
-          # pipeline without physical runner audio hardware.
+          # enable the guest capture path; the timer-backed QEMU driver above
+          # supplies its deterministic input without physical runner hardware.
           emulator-options: -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect -allow-host-audio
           disable-animations: true
           # The harness pre-installs the test APK and verifies RECORD_AUDIO before
