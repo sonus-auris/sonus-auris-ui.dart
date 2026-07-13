@@ -645,6 +645,7 @@ class AppConfig {
           json['sleepAmbientLightConsent'] as bool? ?? false,
       sleepPhoneContextConsent:
           json['sleepPhoneContextConsent'] as bool? ?? false,
+      sleepCloudSyncConsent: json['sleepCloudSyncConsent'] as bool? ?? false,
       musicDetectionEnabled: json['musicDetectionEnabled'] as bool? ?? true,
       speechDetectionEnabled: json['speechDetectionEnabled'] as bool? ?? true,
       shazamEnabled: json['shazamEnabled'] as bool? ?? false,
