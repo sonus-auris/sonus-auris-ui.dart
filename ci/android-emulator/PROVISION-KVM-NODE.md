@@ -15,22 +15,39 @@ a KVM node.
 
 ## Option A — AWS EC2 bare-metal node (nested virt / KVM)
 
-Only `*.metal` instances expose KVM. Cheapest sensible choices:
+This IS the AWS answer: the cluster already runs on AWS EC2, and regular EC2
+instances run on the Nitro hypervisor which does **not** expose nested
+virtualization. On AWS, KVM is available **only on `*.metal` instances** — for
+EKS or self-managed k8s alike (a metal node simply joins as a bare-metal node
+group). There is no non-metal AWS shortcut.
 
-| Instance   | vCPU | RAM   | ~On-demand (us-east-1) |
-|------------|------|-------|------------------------|
-| `c5.metal` | 96   | 192 GB| ~$4.08/hr              |
-| `c6i.metal`| 128  | 256 GB| ~$5.44/hr              |
-| `m5.metal` | 96   | 384 GB| ~$4.60/hr              |
+**Prefer ARM/Graviton metal + an arm64 Android image** — it runs *natively* with
+KVM (no cross-arch penalty) and is far cheaper than x86 metal:
 
-These are large/expensive — run the node **on demand for a test run and tear it
-down**, or use a **spot** metal instance (~60–70% cheaper) for CI bursts. There
-is no small/cheap KVM EC2 option; bare-metal is the floor.
+| Instance    | Arch | vCPU | RAM   | ~On-demand | Notes |
+|-------------|------|------|-------|------------|-------|
+| `a1.metal`  | ARM  | 16   | 32 GB | **~$0.41/hr** | cheapest KVM EC2; check region availability |
+| `c6g.metal` | ARM  | 64   | 128 GB| ~$2.18/hr  | Graviton2, widely available |
+| `c7g.metal` | ARM  | 64   | 128 GB| ~$2.90/hr  | Graviton3 |
+| `c5.metal`  | x86  | 96   | 192 GB| ~$4.08/hr  | only if you specifically need x86 images |
+
+For ARM nodes, build the image for arm64 and create the AVD from an **arm64-v8a**
+system image:
+```bash
+docker buildx build --platform linux/arm64 \
+  --build-arg ANDROID_ARCH=arm64-v8a \
+  -f ci/android-emulator/Dockerfile -t ghcr.io/sonus-auris/android-emulator:arm64 .
+```
+(The Dockerfile derives JAVA_HOME from TARGETARCH, and the image build workflow
+can add `linux/arm64` to `platforms`.)
+
+Run the node **on demand for a test and tear it down**, or use a **spot** metal
+instance (~60–70% cheaper) for CI bursts.
 
 Steps:
-1. Launch a `c5.metal` (spot recommended) in the cluster's VPC/subnet, same AMI
-   as the existing node, and join it to the k8s cluster (the cluster's
-   `remote/ec2` / `remote/terraform` join flow).
+1. Launch an `a1.metal` (or `c6g.metal`; spot recommended) in the cluster's
+   VPC/subnet and join it to the k8s cluster (the cluster's `remote/ec2` /
+   `remote/terraform` join flow).
 2. Confirm KVM: `ssh` in, `ls -l /dev/kvm` (present on metal).
 3. Label + taint so only emulator Jobs land there:
    ```bash
