@@ -65,3 +65,43 @@ jobs:
           name: permission-smoke-screenshot
           path: permission-smoke.png
           if-no-files-found: ignore
+
+  # Functional end-to-end: drive the REAL capture pipeline (device mic -> WAV
+  # segment on disk) via a Flutter integration_test on the emulator.
+  recording-integration-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+
+      - run: flutter pub get
+
+      - name: Run recording integration test on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: false
+          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: true
+          # An integration_test cannot dismiss the OS mic-permission dialog, so a
+          # background loop grants RECORD_AUDIO the moment the app package appears
+          # (well before the test reaches recorder.start()). Then run the test.
+          script: bash scripts/emulator/grant-then-run-integration.sh integration_test/recording_pipeline_test.dart
