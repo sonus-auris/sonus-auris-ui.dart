@@ -2850,6 +2850,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
   late bool _sleepMotionConsent;
   late bool _sleepAmbientLightConsent;
   late bool _sleepPhoneContextConsent;
+  late bool _sleepCloudSyncConsent;
   late double _sleepCycleMinutes;
   late bool _music;
   late bool _speech;
