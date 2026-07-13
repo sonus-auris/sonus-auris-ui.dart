@@ -1,3 +1,4 @@
+// In-memory holder for per-provider cloud credentials plus Supabase/STT/music tokens; persisted only in secure storage.
 class CloudSecrets {
   const CloudSecrets({
     this.s3AccessKeyId = '',

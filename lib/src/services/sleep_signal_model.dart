@@ -1,3 +1,4 @@
+// Value types for multi-signal sleep sensing: user consent flags and a combined sensor+audio sample.
 class SleepSignalConsent {
   const SleepSignalConsent({
     this.audio = true,

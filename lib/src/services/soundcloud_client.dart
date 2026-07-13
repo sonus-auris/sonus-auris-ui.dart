@@ -1,3 +1,4 @@
+// Uploads saved clips to the user's own SoundCloud as private tracks.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';

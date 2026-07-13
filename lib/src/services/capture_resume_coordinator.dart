@@ -1,3 +1,4 @@
+// Pure, clock-injected policy deciding when an interrupted or stalled capture stream should restart so long unattended recordings survive.
 import 'package:rxdart/rxdart.dart';
 
 /// Decides when an interrupted or stalled capture stream should be restarted so

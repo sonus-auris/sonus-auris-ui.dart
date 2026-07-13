@@ -1,3 +1,4 @@
+// Adds Shazam-identified songs to a private 'memories' playlist on the user's Spotify.
 import 'dart:async';
 import 'dart:convert';
 

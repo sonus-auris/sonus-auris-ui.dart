@@ -1,3 +1,4 @@
+// Streams PCM samples into a growable WAV file and patches the RIFF/data header sizes on finalize.
 import 'dart:io';
 import 'dart:typed_data';
 

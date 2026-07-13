@@ -1,3 +1,4 @@
+// Dart side of the on-device (offline) speech-recognition bridge, keeping transcription inside the local plaintext window.
 import 'dart:io';
 
 import 'package:flutter/services.dart';

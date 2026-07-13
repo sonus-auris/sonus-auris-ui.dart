@@ -1,3 +1,4 @@
+// Uploads encrypted segments directly to the user's own S3 bucket (SigV4-signed), with no backend in the path.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';

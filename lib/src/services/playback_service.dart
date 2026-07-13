@@ -1,3 +1,4 @@
+// Wraps just_audio to play back local segments and streams a PlaybackSnapshot of the player state.
 import 'dart:async';
 
 import 'package:audio_session/audio_session.dart';

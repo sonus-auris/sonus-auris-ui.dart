@@ -1,3 +1,4 @@
+// Mobile entrypoint: boots Flutter, wires up the AppController and services, and runs the Sonus Auris app UI.
 import 'dart:async';
 import 'dart:io';
 
