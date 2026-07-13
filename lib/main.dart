@@ -393,6 +393,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   Widget _buildNav(AppViewModel? vm) {
     final isLast = _step == _lastStep;
     final onAccountStep = _step == 1;
+    final awaitingAccountChoice = onAccountStep && !(vm?.isSignedIn ?? false);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
       child: Row(
@@ -403,27 +404,26 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
               child: const Text('Back'),
             ),
           const Spacer(),
-          if (onAccountStep && !(vm?.isSignedIn ?? false))
+          if (awaitingAccountChoice)
             TextButton(
               onPressed: _busy ? null : () => setState(() => _step += 1),
               child: const Text('Skip for now'),
             ),
-          const SizedBox(width: 8),
-          FilledButton(
-            onPressed:
-                _busy ||
-                    (_step == 2 && !_requiredAccepted) ||
-                    (onAccountStep && !(vm?.isSignedIn ?? false))
-                ? null
-                : () {
-                    if (isLast) {
-                      _finish();
-                    } else {
-                      setState(() => _step += 1);
-                    }
-                  },
-            child: Text(isLast ? 'Finish' : 'Continue'),
-          ),
+          if (!awaitingAccountChoice) ...[
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: _busy || (_step == 2 && !_requiredAccepted)
+                  ? null
+                  : () {
+                      if (isLast) {
+                        _finish();
+                      } else {
+                        setState(() => _step += 1);
+                      }
+                    },
+              child: Text(isLast ? 'Finish' : 'Continue'),
+            ),
+          ],
         ],
       ),
     );
