@@ -2,9 +2,13 @@
 # Run a Flutter integration_test on a booted emulator, granting the app the
 # runtime permissions it needs BEFORE the test reaches the code that requires
 # them. An integration_test process can't tap the OS permission dialog, so we
-# grant out-of-band: a background loop watches for the app package to be
-# installed (flutter test installs it) and grants RECORD_AUDIO + POST_NOTIFICATIONS
-# the instant it appears — well before recorder.start() runs.
+# grant out-of-band: a background loop watches for the app package and grants
+# RECORD_AUDIO + POST_NOTIFICATIONS as soon as it is installed.
+#
+# `flutter test integration_test` first spends several MINUTES building the
+# instrumentation APK before it installs the app, so the granter must be patient
+# and PERSISTENT — it keeps re-granting for the whole run (flutter may
+# uninstall/reinstall between the app and test APKs) and never gives up early.
 #
 # Usage: grant-then-run-integration.sh <integration_test/target_test.dart>
 set -euo pipefail
@@ -14,28 +18,18 @@ PKG=com.ores.audio_dashcam
 
 adb wait-for-device
 
-# Background granter: keep trying until the package exists and grants succeed.
+# Persistent background granter: for the whole run, whenever the package is
+# present, (re)grant the runtime perms. Cheap and idempotent; killed at the end.
 (
-  for _ in $(seq 1 180); do
+  while true; do
     if adb shell pm list packages 2>/dev/null | tr -d '\r' | grep -q "package:$PKG"; then
       adb shell pm grant "$PKG" android.permission.RECORD_AUDIO 2>/dev/null || true
       adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
-      # Confirm the mic grant actually stuck before exiting.
-      if adb shell dumpsys package "$PKG" 2>/dev/null | tr -d '\r' \
-           | grep -q "android.permission.RECORD_AUDIO: granted=true"; then
-        echo "[granter] RECORD_AUDIO granted to $PKG"
-        exit 0
-      fi
     fi
-    sleep 1
+    sleep 2
   done
-  echo "[granter] gave up waiting for $PKG"
 ) &
 GRANTER=$!
+trap 'kill "$GRANTER" 2>/dev/null || true' EXIT
 
-# Re-grant on every reinstall flutter might do, harmless if already granted.
 flutter test "$TARGET"
-STATUS=$?
-
-kill "$GRANTER" 2>/dev/null || true
-exit $STATUS
