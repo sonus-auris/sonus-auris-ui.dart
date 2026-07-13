@@ -9,10 +9,9 @@ import '../models/geo_tag.dart';
 /// never break recording. Tagging is opt-in (gated by the caller's config flag).
 class LocationService {
   LocationService({
-    Duration fixTimeout = const Duration(seconds: 8),
-    LocationAccuracy accuracy = LocationAccuracy.best,
-  })  : _fixTimeout = fixTimeout,
-        _accuracy = accuracy;
+    this._fixTimeout = const Duration(seconds: 8),
+    this._accuracy = LocationAccuracy.best,
+  });
 
   final Duration _fixTimeout;
   final LocationAccuracy _accuracy;

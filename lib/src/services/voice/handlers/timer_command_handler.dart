@@ -12,8 +12,8 @@ class VoiceTimer {
     required this.id,
     required this.duration,
     required this.startedAt,
-    required Timer timer,
-  }) : _timer = timer;
+    required this._timer,
+  });
 
   final String id;
   final Duration duration;
@@ -49,8 +49,10 @@ class TimerCommandHandler implements VoiceCommandHandler {
   List<VoiceTimer> get activeTimers => _active.values.toList(growable: false);
 
   @override
-  Set<VoiceIntent> get intents =>
-      {VoiceIntent.setTimer, VoiceIntent.startFocusSession};
+  Set<VoiceIntent> get intents => {
+    VoiceIntent.setTimer,
+    VoiceIntent.startFocusSession,
+  };
 
   @override
   Future<VoiceCommandResult> handle(VoiceCommand command) async {

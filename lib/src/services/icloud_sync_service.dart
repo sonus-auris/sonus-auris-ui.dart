@@ -33,10 +33,9 @@ class IcloudSyncService {
     MethodChannel? channel,
     http.Client? httpClient,
     this.downloadTimeout = const Duration(seconds: 45),
-    SegmentEncryptor? encryptor,
-  })  : _channel = channel ?? const MethodChannel('audio_dashcam/icloud'),
-        _httpClient = httpClient ?? http.Client(),
-        _encryptor = encryptor;
+    this._encryptor,
+  }) : _channel = channel ?? const MethodChannel('audio_dashcam/icloud'),
+       _httpClient = httpClient ?? http.Client();
 
   final MethodChannel _channel;
   final http.Client _httpClient;

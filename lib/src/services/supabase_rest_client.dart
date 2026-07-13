@@ -3,10 +3,13 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
+    as interfaces;
 
 import '../models/acoustic_detection.dart';
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
+import '../models/cloud_provider.dart';
 import '../models/consent.dart';
 import 'supabase_key_policy.dart';
 
@@ -43,6 +46,178 @@ class SupabaseRestClient {
   ///   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
   /// ```
   static const String userConsentsTable = 'user_consents';
+
+  /// Loads the account-level settings row. A missing row is not an error: the
+  /// first authenticated save will create it with `auth.uid()` as owner.
+  Future<({interfaces.UserSettings? settings, String? error})>
+  fetchUserSettings({
+    required AppConfig config,
+    required CloudSecrets secrets,
+  }) async {
+    if (!canInsert(config, secrets)) {
+      return (
+        settings: null,
+        error: 'Supabase URL, anon key, and a signed-in session are required.',
+      );
+    }
+    final Uri uri;
+    try {
+      uri = _restUri(
+        config,
+        interfaces.userSettingsTable,
+      ).replace(queryParameters: const {'select': '*', 'limit': '1'});
+    } on FormatException catch (error) {
+      return (settings: null, error: error.message);
+    }
+    try {
+      final response = await _httpClient
+          .get(uri, headers: _headers(config, secrets))
+          .timeout(requestTimeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return (
+          settings: null,
+          error:
+              'Supabase settings read failed (${response.statusCode}): ${_shortBody(response.body)}',
+        );
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! List) {
+        return (
+          settings: null,
+          error: 'Supabase settings read returned an invalid response.',
+        );
+      }
+      if (decoded.isEmpty) {
+        return (settings: null, error: null);
+      }
+      final row = decoded.single;
+      if (row is! Map) {
+        return (
+          settings: null,
+          error: 'Supabase settings read returned an invalid row.',
+        );
+      }
+      return (
+        settings: interfaces.UserSettings.fromJson(row.cast<String, Object?>()),
+        error: null,
+      );
+    } catch (error) {
+      return (settings: null, error: 'Supabase settings read error: $error');
+    }
+  }
+
+  /// Upserts only the portable subset of [AppConfig]. Device IDs, secrets,
+  /// permissions, schedules, sensor choices, and network/battery policy never
+  /// enter this row.
+  Future<String?> upsertUserSettings({
+    required AppConfig config,
+    required CloudSecrets secrets,
+  }) async {
+    if (!canInsert(config, secrets)) {
+      return 'Supabase URL, anon key, and a signed-in session are required.';
+    }
+    final Uri uri;
+    try {
+      uri = _restUri(
+        config,
+        interfaces.userSettingsTable,
+      ).replace(queryParameters: const {'on_conflict': 'user_id'});
+    } on FormatException catch (error) {
+      return error.message;
+    }
+    final headers = _headers(config, secrets)
+      ..['prefer'] =
+          'resolution=merge-duplicates,missing=default,return=minimal';
+    try {
+      final response = await _httpClient
+          .post(
+            uri,
+            headers: headers,
+            body: jsonEncode([userSettingsForUpsert(config).toInsertJson()]),
+          )
+          .timeout(requestTimeout);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return 'Supabase settings update failed (${response.statusCode}): '
+          '${_shortBody(response.body)}';
+    } catch (error) {
+      return 'Supabase settings update error: $error';
+    }
+  }
+
+  interfaces.UserSettings userSettingsForUpsert(AppConfig config) {
+    return interfaces.UserSettings(
+      userId: '',
+      preferredUseCase: config.useCase,
+      deviceRetentionHours: config.deviceRetentionHours,
+      cloudRetentionHours: config.cloudRetentionHours,
+      segmentMinutes: config.segmentMinutes,
+      overlapSeconds: config.overlapSeconds,
+      bitRate: config.bitRate,
+      sampleRate: config.sampleRate,
+      channels: config.channels,
+      uploadEnabled: config.uploadEnabled,
+      cloudProvider: config.cloudProvider.name,
+      micSensitivity: config.micSensitivity,
+      noiseTriggerSensitivity: config.noiseTriggerSensitivity,
+      bassGainDb: config.bassGainDb,
+      midGainDb: config.midGainDb,
+      trebleGainDb: config.trebleGainDb,
+      autoGain: config.autoGain,
+      noiseSuppress: config.noiseSuppress,
+      acousticAnalysisEnabled: config.acousticAnalysisEnabled,
+      analysisActivationDb: config.analysisActivationDb,
+      analysisSustainSeconds: config.analysisSustainSeconds,
+      analysisHoldSeconds: config.analysisHoldSeconds,
+      snoreDetectionEnabled: config.snoreDetectionEnabled,
+      sleepAnalysisEnabled: config.sleepAnalysisEnabled,
+      musicDetectionEnabled: config.musicDetectionEnabled,
+      speechDetectionEnabled: config.speechDetectionEnabled,
+      adaptiveQualityEnabled: config.adaptiveQualityEnabled,
+      captureSampleRate: config.captureSampleRate,
+      quietSampleRate: config.quietSampleRate,
+      adaptiveLoudnessDb: config.adaptiveLoudnessDb,
+      updatedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+  }
+
+  AppConfig mergeUserSettings(
+    AppConfig local,
+    interfaces.UserSettings settings,
+  ) {
+    return local.copyWith(
+      deviceRetentionHours: settings.deviceRetentionHours,
+      cloudRetentionHours: settings.cloudRetentionHours,
+      segmentMinutes: settings.segmentMinutes,
+      overlapSeconds: settings.overlapSeconds,
+      bitRate: settings.bitRate,
+      sampleRate: settings.sampleRate,
+      channels: settings.channels,
+      uploadEnabled: settings.uploadEnabled,
+      cloudProvider: CloudProvider.fromName(settings.cloudProvider),
+      useCase: settings.preferredUseCase,
+      micSensitivity: settings.micSensitivity,
+      noiseTriggerSensitivity: settings.noiseTriggerSensitivity,
+      bassGainDb: settings.bassGainDb,
+      midGainDb: settings.midGainDb,
+      trebleGainDb: settings.trebleGainDb,
+      autoGain: settings.autoGain,
+      noiseSuppress: settings.noiseSuppress,
+      acousticAnalysisEnabled: settings.acousticAnalysisEnabled,
+      analysisActivationDb: settings.analysisActivationDb,
+      analysisSustainSeconds: settings.analysisSustainSeconds,
+      analysisHoldSeconds: settings.analysisHoldSeconds,
+      snoreDetectionEnabled: settings.snoreDetectionEnabled,
+      sleepAnalysisEnabled: settings.sleepAnalysisEnabled,
+      musicDetectionEnabled: settings.musicDetectionEnabled,
+      speechDetectionEnabled: settings.speechDetectionEnabled,
+      adaptiveQualityEnabled: settings.adaptiveQualityEnabled,
+      captureSampleRate: settings.captureSampleRate,
+      quietSampleRate: settings.quietSampleRate,
+      adaptiveLoudnessDb: settings.adaptiveLoudnessDb,
+    );
+  }
 
   /// Whether an insert can even be attempted with the current config/secrets.
   bool canInsert(AppConfig config, CloudSecrets secrets) {

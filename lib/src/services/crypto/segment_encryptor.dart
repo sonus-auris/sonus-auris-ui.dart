@@ -9,14 +9,12 @@ import 'segment_cipher.dart';
 /// before it leaves the device, and opens containers coming back from the cloud.
 class SegmentEncryptor {
   SegmentEncryptor({
-    required KeyManager keyManager,
+    required this._keyManager,
     SegmentCipher? cipher,
     AccountRecipient? accountRecipient,
-    Uint8List? accountPublicKey,
-  })  : _keyManager = keyManager,
-        _cipher = cipher ?? SegmentCipher(),
-        _accountRecipient = accountRecipient ?? AccountRecipient(),
-        _accountPublicKey = accountPublicKey;
+    this._accountPublicKey,
+  }) : _cipher = cipher ?? SegmentCipher(),
+       _accountRecipient = accountRecipient ?? AccountRecipient();
 
   final KeyManager _keyManager;
   final SegmentCipher _cipher;
@@ -44,9 +42,9 @@ class SegmentEncryptor {
       wrapForAccount: accountKey == null
           ? null
           : (dek) async => _accountRecipient.seal(
-                publicKey: accountKey,
-                dekBytes: await dek.extractBytes(),
-              ),
+              publicKey: accountKey,
+              dekBytes: await dek.extractBytes(),
+            ),
     );
   }
 
