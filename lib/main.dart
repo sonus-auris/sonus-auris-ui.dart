@@ -3035,6 +3035,18 @@ class _AcousticSectionState extends State<_AcousticSection> {
                   _apply();
                 },
               ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Sync sleep cycles to cloud'),
+                subtitle: const Text(
+                  'Off: sleep detections stay on this device',
+                ),
+                value: _sleepCloudSyncConsent,
+                onChanged: (v) {
+                  setState(() => _sleepCloudSyncConsent = v);
+                  _apply();
+                },
+              ),
             ],
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
