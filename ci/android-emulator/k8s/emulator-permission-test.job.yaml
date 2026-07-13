@@ -1,0 +1,69 @@
+# Headless Android emulator permission test as a Kubernetes Job.
+#
+# Runs the Sonus Auris permission smoke-test on a real Android emulator inside
+# the cluster (Hetzner / AWS EC2). The emulator REQUIRES hardware virtualization
+# (/dev/kvm), which only exists on KVM-capable nodes:
+#   - AWS: *.metal instances (e.g. c5.metal, m5.metal) — regular EC2 vCPUs do
+#     NOT expose nested virt.
+#   - Hetzner: dedicated / root servers (Hetzner Cloud shared vCPUs cannot do it).
+# Label such a node `sonus-auris.dev/kvm=true` and schedule this Job onto it.
+#
+# Exposing /dev/kvm — two options:
+#   (A) KVM device plugin (preferred, unprivileged): install e.g.
+#       smarter-device-manager or kubevirt's kvm device plugin so the node
+#       advertises `devices.kubevirt.io/kvm`, then request it (shown below).
+#   (B) Privileged + hostPath /dev/kvm (simpler, less safe): comment out the
+#       resources.limits kvm line and uncomment the hostPath volume + the
+#       securityContext.privileged block.
+#
+# The APK under test is pulled from an initContainer or baked into the image.
+# Here we expect it baked in at $APK_PATH; for a bind approach mount a volume.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sonus-emulator-permission-test
+  namespace: sonus-auris
+  labels:
+    app.kubernetes.io/name: sonus-emulator-permission-test
+    app.kubernetes.io/part-of: sonus-auris
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sonus-emulator-permission-test
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        sonus-auris.dev/kvm: "true"
+      containers:
+        - name: emulator
+          # Build & push from ci/android-emulator/Dockerfile; pin by digest in prod.
+          image: ghcr.io/sonus-auris/android-emulator:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: APK_PATH
+              value: /work/app-release.apk
+            - name: SMOKE_SCREENSHOT
+              value: /work/permission-smoke.png
+          resources:
+            requests:
+              cpu: "4"
+              memory: 6Gi
+            limits:
+              # (A) KVM device plugin — advertises one kvm device per node.
+              devices.kubevirt.io/kvm: "1"
+              cpu: "6"
+              memory: 8Gi
+          # (B) Privileged fallback — uncomment if not using the device plugin:
+          # securityContext:
+          #   privileged: true
+          # volumeMounts:
+          #   - name: kvm
+          #     mountPath: /dev/kvm
+      # volumes:
+      #   - name: kvm
+      #     hostPath:
+      #       path: /dev/kvm
+      #       type: CharDevice
