@@ -126,8 +126,15 @@ jobs:
             echo "PulseAudio did not report a server address"
             exit 1
           fi
+          if [[ "$pulse_server" == /* ]]; then
+            pulse_server="unix:$pulse_server"
+          fi
+          PULSE_SERVER="$pulse_server" pactl info >/dev/null
           echo "PULSE_SERVER=$pulse_server" >> "$GITHUB_ENV"
           echo "QEMU_AUDIO_DRV=pa" >> "$GITHUB_ENV"
+          echo "QEMU_PA_SERVER=$pulse_server" >> "$GITHUB_ENV"
+          echo "QEMU_PA_SINK=sonus_virtual_audio" >> "$GITHUB_ENV"
+          echo "QEMU_PA_SOURCE=sonus_virtual_audio.monitor" >> "$GITHUB_ENV"
           pactl info
 
       - name: Run recording integration test on emulator
