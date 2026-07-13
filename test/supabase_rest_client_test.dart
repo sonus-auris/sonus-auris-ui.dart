@@ -93,6 +93,64 @@ void main() {
     expect(called, isFalse);
   });
 
+  test('withholds sleep-cycle detections without cloud-sync consent', () async {
+    final requests = <http.Request>[];
+    final client = SupabaseRestClient(
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return http.Response('', 201);
+      }),
+    );
+    final sleepCycle = AcousticDetection(
+      kind: AcousticDetectionKind.sleepCycle,
+      startedAtUtc: DateTime.utc(2026, 1, 1, 2, 0, 0),
+      endedAtUtc: DateTime.utc(2026, 1, 1, 3, 30, 0),
+      confidence: 0.8,
+      details: const {'motionStillnessScore': 0.9, 'ambientLux': 1.0},
+    );
+    final sleepAlarm = AcousticDetection(
+      kind: AcousticDetectionKind.sleepCycleAlarm,
+      startedAtUtc: DateTime.utc(2026, 1, 1, 7, 0, 0),
+      endedAtUtc: DateTime.utc(2026, 1, 1, 7, 0, 1),
+      confidence: 0.8,
+    );
+
+    // Default config: consent is off, so only the non-sleep row is posted.
+    final mixedError = await client.insertDetections(
+      config: config,
+      secrets: secrets,
+      detections: [sleepCycle, detection, sleepAlarm],
+    );
+    expect(mixedError, isNull);
+    expect(requests, hasLength(1));
+    final mixedBody = jsonDecode(requests.single.body) as List;
+    expect(mixedBody, hasLength(1));
+    expect((mixedBody.single as Map)['kind'], 'snore');
+
+    // Only sleep rows: nothing leaves the device at all.
+    requests.clear();
+    final sleepOnlyError = await client.insertDetections(
+      config: config,
+      secrets: secrets,
+      detections: [sleepCycle, sleepAlarm],
+    );
+    expect(sleepOnlyError, isNull);
+    expect(requests, isEmpty);
+
+    // With the opt-in flag, sleep rows sync like any other detection.
+    final consented = config.copyWith(sleepCloudSyncConsent: true);
+    final consentedError = await client.insertDetections(
+      config: consented,
+      secrets: secrets,
+      detections: [sleepCycle, sleepAlarm],
+    );
+    expect(consentedError, isNull);
+    expect(requests, hasLength(1));
+    final consentedBody = jsonDecode(requests.single.body) as List;
+    expect(consentedBody, hasLength(2));
+    expect((consentedBody.first as Map)['kind'], 'sleepCycle');
+  });
+
   test('refuses a service-role key without sending it', () async {
     var called = false;
     final client = SupabaseRestClient(
