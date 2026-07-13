@@ -55,7 +55,11 @@ dump_ui() {
 assert_ui_text() {
   local label="$1"
   local xml="$2"
-  if grep -Fq "text=\"$label\"" <<< "$xml"; then
+  # Flutter may expose a visible Text widget either as the node's `text` or
+  # inside a merged `content-desc` semantics label. The UI hierarchy contains
+  # visible nodes only, so matching the label in either representation is the
+  # reliable cross-emulator assertion.
+  if grep -Fq "$label" <<< "$xml"; then
     echo "  ✓ visible: $label"
   else
     echo "  ✗ missing UI text: $label"
@@ -99,7 +103,7 @@ wait_for_ui_text() {
   local deadline=$((SECONDS + timeout_seconds))
   while (( SECONDS < deadline )); do
     ui_xml="$(dump_ui 2>/dev/null || true)"
-    if grep -Fq "text=\"$label\"" <<< "$ui_xml"; then
+    if grep -Fq "$label" <<< "$ui_xml"; then
       return 0
     fi
     sleep 2
