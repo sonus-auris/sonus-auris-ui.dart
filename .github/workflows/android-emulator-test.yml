@@ -104,7 +104,10 @@ jobs:
           target: google_apis
           arch: x86_64
           force-avd-creation: false
-          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect
+          # NOTE: no `-no-audio` here — this test records from the mic, so the
+          # emulator audio subsystem must be enabled (it streams silence on a
+          # headless runner, which is fine: still real PCM through the pipeline).
+          emulator-options: -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
           # An integration_test cannot dismiss the OS mic-permission dialog, so a
           # background loop grants RECORD_AUDIO the moment the app package appears
