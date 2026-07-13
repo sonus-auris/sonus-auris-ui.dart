@@ -121,6 +121,14 @@ jobs:
           pulseaudio --start --exit-idle-time=-1
           pactl load-module module-null-sink sink_name=sonus_virtual_audio
           pactl set-default-source sonus_virtual_audio.monitor
+          pulse_server="$(pactl info | awk -F': ' '/^Server String:/ { print $2; exit }')"
+          if [[ -z "$pulse_server" ]]; then
+            echo "PulseAudio did not report a server address"
+            exit 1
+          fi
+          echo "PULSE_SERVER=$pulse_server" >> "$GITHUB_ENV"
+          echo "QEMU_AUDIO_DRV=pa" >> "$GITHUB_ENV"
+          pactl info
 
       - name: Run recording integration test on emulator
         uses: reactivecircus/android-emulator-runner@v2
@@ -129,10 +137,11 @@ jobs:
           target: google_apis
           arch: x86_64
           force-avd-creation: false
-          # NOTE: no `-no-audio` here. PulseAudio's null-source monitor supplies
-          # deterministic silence, which still traverses the real mic/plugin/WAV
-          # pipeline without depending on physical runner audio hardware.
-          emulator-options: -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect
+          # Android Emulator disables host microphone input by default. Explicitly
+          # enable it and route its PulseAudio client to the null-source monitor
+          # prepared above, so deterministic silence still traverses the real
+          # mic/plugin/WAV pipeline without physical runner audio hardware.
+          emulator-options: -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect -allow-host-audio
           disable-animations: true
           # The harness pre-installs the test APK and verifies RECORD_AUDIO before
           # launch; a background loop also preserves the grant across reinstalls.
