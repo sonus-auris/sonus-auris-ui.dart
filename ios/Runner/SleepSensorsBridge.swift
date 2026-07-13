@@ -1,3 +1,4 @@
+// Native side of the audio_dashcam/sleep_sensors MethodChannel (iOS): samples CoreMotion / ambient-light signals for sleep sensing.
 import Flutter
 import UIKit
 

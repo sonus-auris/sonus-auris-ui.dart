@@ -1,3 +1,4 @@
+// Cloud speech-to-text client used to scan transcripts for magic-phrase keywords.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';

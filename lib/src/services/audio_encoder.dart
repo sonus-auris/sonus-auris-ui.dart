@@ -1,3 +1,4 @@
+// Dart side of the native on-device audio-compression bridge (WAV -> AAC/M4A) used before publishing a Day of My Life.
 import 'package:flutter/services.dart';
 
 /// Compressed audio plus the metadata an upload needs.

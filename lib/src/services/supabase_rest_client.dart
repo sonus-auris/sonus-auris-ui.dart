@@ -1,3 +1,4 @@
+// Thin PostgREST client that writes user rows into Supabase using only the signed-in user's token (RLS-scoped).
 import 'dart:async';
 import 'dart:convert';
 

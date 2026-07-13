@@ -1,3 +1,4 @@
+// Heuristic FFT snore detector: flags low, tonal, rhythmic bursts as snore episodes and watches for apnea-like gaps.
 import 'dart:math' as math;
 
 import '../../models/acoustic_detection.dart';

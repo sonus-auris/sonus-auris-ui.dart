@@ -1,3 +1,4 @@
+// Opt-in reverse-geocoder turning coordinates into a short place name for Day-of-My-Life notes.
 import 'package:geocoding/geocoding.dart';
 
 /// Reverse-geocodes coordinates to a short place name ("Santa Cruz") for the
