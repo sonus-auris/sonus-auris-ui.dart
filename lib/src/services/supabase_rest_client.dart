@@ -58,7 +58,13 @@ class SupabaseRestClient {
     required CloudSecrets secrets,
     required List<AcousticDetection> detections,
   }) async {
-    if (detections.isEmpty) {
+    // Sleep-cycle rows carry enriched sensor/context fields and only leave the
+    // device with their own explicit consent — fail closed and keep them local
+    // otherwise. Filtered here so every caller inherits the gate.
+    final uploadable = config.sleepCloudSyncConsent
+        ? detections
+        : detections.where((d) => !_isSleepCycleKind(d.kind)).toList();
+    if (uploadable.isEmpty) {
       return null;
     }
     if (!canInsert(config, secrets)) {
@@ -70,7 +76,7 @@ class SupabaseRestClient {
     } on FormatException catch (error) {
       return error.message;
     }
-    final rows = detections
+    final rows = uploadable
         .map((d) => d.toSupabaseRow(config.deviceId))
         .toList();
     try {
