@@ -15,6 +15,7 @@ set -euo pipefail
 
 TARGET="${1:?usage: grant-then-run-integration.sh <integration_test target>}"
 PKG=com.ores.audio_dashcam
+APP_BINARY=build/app/outputs/flutter-apk/app-debug.apk
 
 adb wait-for-device
 DEVICE_ID="${ANDROID_SERIAL:-$(adb devices | awk 'NR > 1 && $2 == "device" { print $1; exit }')}"
@@ -22,14 +23,34 @@ if [[ -z "$DEVICE_ID" ]]; then
   echo "recording-integration: no ready Android device found"
   exit 1
 fi
+if [[ ! -f "$APP_BINARY" ]]; then
+  echo "recording-integration: prebuilt integration APK is missing: $APP_BINARY"
+  exit 1
+fi
+
+# Install the integration-target APK before flutter drive launches it. This
+# gives us a deterministic window to grant and verify RECORD_AUDIO without an
+# Android permission dialog racing the Dart test process.
+adb -s "$DEVICE_ID" install -r "$APP_BINARY" >/dev/null
+adb -s "$DEVICE_ID" shell pm grant "$PKG" android.permission.RECORD_AUDIO
+adb -s "$DEVICE_ID" shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS || true
+if ! adb -s "$DEVICE_ID" shell dumpsys package "$PKG" 2>/dev/null |
+  tr -d '\r' | grep -q 'android.permission.RECORD_AUDIO: granted=true'; then
+  echo "recording-integration: RECORD_AUDIO grant verification failed"
+  exit 1
+fi
+echo "recording-integration: RECORD_AUDIO grant verified before launch"
 
 # Persistent background granter: for the whole run, whenever the package is
 # present, (re)grant the runtime perms. Cheap and idempotent; killed at the end.
 (
   while true; do
-    if adb shell pm list packages 2>/dev/null | tr -d '\r' | grep -q "package:$PKG"; then
-      adb shell pm grant "$PKG" android.permission.RECORD_AUDIO 2>/dev/null || true
-      adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+    if adb -s "$DEVICE_ID" shell pm list packages 2>/dev/null |
+      tr -d '\r' | grep -q "package:$PKG"; then
+      adb -s "$DEVICE_ID" shell pm grant \
+        "$PKG" android.permission.RECORD_AUDIO 2>/dev/null || true
+      adb -s "$DEVICE_ID" shell pm grant \
+        "$PKG" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
     fi
     sleep 2
   done
@@ -62,6 +83,7 @@ DRIVE=(
   flutter drive
   --driver=test_driver/integration_test.dart
   --target="$TARGET"
+  --use-application-binary="$APP_BINARY"
   -d "$DEVICE_ID"
 )
 if command -v timeout >/dev/null 2>&1; then

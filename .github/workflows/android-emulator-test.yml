@@ -105,10 +105,22 @@ jobs:
 
       - run: flutter pub get
 
-      # Warm the Gradle/pub caches (and validate the app builds) so the build
-      # inside `flutter test` below is incremental and doesn't blow the timeout.
-      - name: Build debug APK (warm cache)
-        run: flutter build apk --debug
+      # Build the integration entrypoint once. The harness pre-installs this
+      # exact APK, verifies RECORD_AUDIO, then asks flutter drive to reuse it.
+      - name: Build recording integration APK
+        run: >-
+          flutter build apk --debug
+          --target=integration_test/recording_pipeline_test.dart
+
+      - name: Start deterministic virtual audio source
+        run: |
+          if ! command -v pulseaudio >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y pulseaudio pulseaudio-utils
+          fi
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=sonus_virtual_audio
+          pactl set-default-source sonus_virtual_audio.monitor
 
       - name: Run recording integration test on emulator
         uses: reactivecircus/android-emulator-runner@v2
@@ -117,12 +129,11 @@ jobs:
           target: google_apis
           arch: x86_64
           force-avd-creation: false
-          # NOTE: no `-no-audio` here — this test records from the mic, so the
-          # emulator audio subsystem must be enabled (it streams silence on a
-          # headless runner, which is fine: still real PCM through the pipeline).
+          # NOTE: no `-no-audio` here. PulseAudio's null-source monitor supplies
+          # deterministic silence, which still traverses the real mic/plugin/WAV
+          # pipeline without depending on physical runner audio hardware.
           emulator-options: -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
-          # An integration_test cannot dismiss the OS mic-permission dialog, so a
-          # background loop grants RECORD_AUDIO the moment the app package appears
-          # (well before the test reaches recorder.start()). Then run the test.
+          # The harness pre-installs the test APK and verifies RECORD_AUDIO before
+          # launch; a background loop also preserves the grant across reinstalls.
           script: bash scripts/emulator/grant-then-run-integration.sh integration_test/recording_pipeline_test.dart
