@@ -2913,6 +2913,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
         sleepMotionSensorConsent: _sleepMotionConsent,
         sleepAmbientLightConsent: _sleepAmbientLightConsent,
         sleepPhoneContextConsent: _sleepPhoneContextConsent,
+        sleepCloudSyncConsent: _sleepCloudSyncConsent,
         musicDetectionEnabled: _music,
         speechDetectionEnabled: _speech,
         shazamEnabled: _shazam,
