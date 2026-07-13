@@ -35,7 +35,8 @@ adb -s "$DEVICE_ID" install -r "$APP_BINARY" >/dev/null
 adb -s "$DEVICE_ID" shell pm grant "$PKG" android.permission.RECORD_AUDIO
 adb -s "$DEVICE_ID" shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS || true
 if ! adb -s "$DEVICE_ID" shell dumpsys package "$PKG" 2>/dev/null |
-  tr -d '\r' | grep -q 'android.permission.RECORD_AUDIO: granted=true'; then
+  tr -d '\r' |
+  grep -F 'android.permission.RECORD_AUDIO: granted=true' >/dev/null; then
   echo "recording-integration: RECORD_AUDIO grant verification failed"
   exit 1
 fi
@@ -46,7 +47,7 @@ echo "recording-integration: RECORD_AUDIO grant verified before launch"
 (
   while true; do
     if adb -s "$DEVICE_ID" shell pm list packages 2>/dev/null |
-      tr -d '\r' | grep -q "package:$PKG"; then
+      tr -d '\r' | grep -F "package:$PKG" >/dev/null; then
       adb -s "$DEVICE_ID" shell pm grant \
         "$PKG" android.permission.RECORD_AUDIO 2>/dev/null || true
       adb -s "$DEVICE_ID" shell pm grant \
