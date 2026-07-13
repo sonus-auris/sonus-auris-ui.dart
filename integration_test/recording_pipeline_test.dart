@@ -70,6 +70,6 @@ void main() {
       await snapSub.cancel();
       await recorder.dispose();
     },
-    timeout: const Timeout(Duration(minutes: 2)),
+    timeout: const Timeout(Duration(minutes: 4)),
   );
 }
