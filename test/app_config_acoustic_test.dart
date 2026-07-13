@@ -39,6 +39,7 @@ void main() {
     expect(restored.sleepMotionSensorConsent, isTrue);
     expect(restored.sleepAmbientLightConsent, isTrue);
     expect(restored.sleepPhoneContextConsent, isTrue);
+    expect(restored.sleepCloudSyncConsent, isTrue);
     expect(restored.musicDetectionEnabled, isFalse);
     expect(restored.shazamEnabled, isTrue);
     expect(restored.keywords, ['help', 'fire']);
