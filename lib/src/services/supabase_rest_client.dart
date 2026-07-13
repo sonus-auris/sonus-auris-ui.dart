@@ -131,6 +131,11 @@ class SupabaseRestClient {
     _httpClient.close();
   }
 
+  static bool _isSleepCycleKind(AcousticDetectionKind kind) {
+    return kind == AcousticDetectionKind.sleepCycle ||
+        kind == AcousticDetectionKind.sleepCycleAlarm;
+  }
+
   Uri _restUri(AppConfig config, String table) {
     requireSafeSupabaseClientKey(config.supabaseAnonKey);
     final base = Uri.parse(config.supabaseUrl.trim());
