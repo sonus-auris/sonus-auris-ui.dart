@@ -129,4 +129,7 @@ jobs:
           disable-animations: true
           # The harness pre-installs the test APK and verifies RECORD_AUDIO before
           # launch; a background loop also preserves the grant across reinstalls.
-          script: bash scripts/emulator/grant-then-run-integration.sh integration_test/recording_pipeline_test.dart
+          script: >-
+            adb emu avd hostmicon &&
+            bash scripts/emulator/grant-then-run-integration.sh
+            integration_test/recording_pipeline_test.dart
