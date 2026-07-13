@@ -1,0 +1,37 @@
+# flags-2-env config for the Sonus Auris Flutter app.
+#
+# Flutter reads build config via compile-time --dart-define, not runtime env, so
+# there is no in-process flags2env client here. This file is the declarative
+# CONTRACT for those keys; a build wrapper can use the flags2env bash/dart client
+# to turn `--backend-base-url=…` into env, then pass them through as dart-defines:
+#   flutter build apk --dart-define=SONUS_BACKEND_BASE_URL=$SONUS_BACKEND_BASE_URL …
+[help]
+url = "https://github.com/sonus-auris/sonus-auris-ui.dart"
+columns = ["options", "env", "type", "description"]
+
+[flags.backend_base_url]
+env = "SONUS_BACKEND_BASE_URL"
+aliases = ["backend-base-url"]
+type = "string"
+help = "Base URL of the JSON API (sonus-auris-backend.rs)."
+
+[flags.supabase_url]
+env = "SONUS_SUPABASE_URL"
+aliases = ["supabase-url"]
+type = "string"
+help = "Supabase project URL."
+
+[flags.supabase_anon_key]
+env = "SONUS_SUPABASE_ANON_KEY"
+aliases = ["supabase-anon-key"]
+type = "string"
+help = "Supabase anon/publishable key."
+
+[flags.disable_interruption_resume]
+env = "SONUS_DISABLE_INTERRUPTION_RESUME"
+aliases = ["disable-interruption-resume"]
+type = "bool"
+default = "false"
+true_aliases = ["1", "t"]
+false_aliases = ["0", "f"]
+help = "Disable auto-resume of capture after an audio interruption."
