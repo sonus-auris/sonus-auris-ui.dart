@@ -13,11 +13,15 @@ ARG ANDROID_TARGET=google_apis
 ARG ANDROID_ARCH=x86_64
 ARG CMDLINE_TOOLS_VERSION=11076708   # Android cmdline-tools (stable)
 
+# TARGETARCH is provided by buildkit (amd64 / arm64). JAVA_HOME is arch-suffixed
+# on Debian/Ubuntu, so derive it — this lets the same Dockerfile build for x86
+# metal AND cheaper ARM Graviton metal (with ANDROID_ARCH=arm64-v8a below).
+ARG TARGETARCH=amd64
 ENV DEBIAN_FRONTEND=noninteractive \
     ANDROID_SDK_ROOT=/opt/android-sdk \
     ANDROID_HOME=/opt/android-sdk \
     ANDROID_AVD_HOME=/root/.android/avd \
-    JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+    JAVA_HOME=/usr/lib/jvm/java-17-openjdk-${TARGETARCH}
 ENV PATH="$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
