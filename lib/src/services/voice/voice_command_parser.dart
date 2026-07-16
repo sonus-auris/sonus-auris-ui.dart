@@ -334,6 +334,13 @@ class VoiceCommandParser {
     if (numeric != null) {
       return int.parse(_toSeconds(numeric.group(1)!, numeric.group(2)!));
     }
+    // Idioms before the worded match: "half an hour" contains "an hour".
+    if (RegExp(r'\bhalf an? hour\b').hasMatch(text)) {
+      return 1800;
+    }
+    if (RegExp(r'\bquarter of an hour\b').hasMatch(text)) {
+      return 900;
+    }
     final worded = RegExp(
       r'\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|'
       r'twenty|thirty|forty[ -]five|forty|fifty|sixty|ninety)\s+'
