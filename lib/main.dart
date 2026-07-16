@@ -2003,6 +2003,11 @@ class _ConfigureView extends StatelessWidget {
                 onChanged: onAudioConfigChanged,
                 sttApiKeyController: sttApiKeyController,
               ),
+              _VoiceIdSection(
+                config: viewModel.config,
+                onChanged: onAudioConfigChanged,
+                controller: controller,
+              ),
               _MusicMemoriesSection(
                 config: viewModel.config,
                 onChanged: onAudioConfigChanged,
