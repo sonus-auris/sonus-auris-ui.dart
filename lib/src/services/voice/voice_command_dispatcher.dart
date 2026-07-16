@@ -99,6 +99,15 @@ class VoiceCommandDispatcher {
   final BehaviorSubject<VoiceCommandResult> _results =
       BehaviorSubject<VoiceCommandResult>();
 
+  /// A short-lived dialogue turn: the previous command is waiting on one slot
+  /// (e.g. pause duration) and the next utterance is treated as the answer.
+  VoiceCommand? _pendingCommand;
+  String? _pendingSlot;
+  DateTime? _pendingExpiresAt;
+
+  /// How long a "for how long?"-style question stays answerable.
+  static const Duration followUpWindow = Duration(seconds: 30);
+
   /// Stream of executed command results, for a command log / toast UI.
   ValueStream<VoiceCommandResult> get results => _results.stream;
 
