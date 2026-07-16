@@ -217,6 +217,26 @@ void main() {
     expect(row['message'], 'Widget exploded');
     expect(row['platform'], 'android');
     expect((row['details'] as Map)['screen'], 'login');
+    expect(row, isNot(contains('user_id')));
+  });
+
+  test('empty telemetry batch does not touch the network', () async {
+    var called = false;
+    final client = SupabaseRestClient(
+      httpClient: MockClient((_) async {
+        called = true;
+        return http.Response('', 201);
+      }),
+    );
+
+    final error = await client.insertTelemetry(
+      config: config,
+      secrets: secrets,
+      events: const [],
+    );
+
+    expect(error, isNull);
+    expect(called, isFalse);
   });
 
   test('redacts telemetry secrets before upload', () async {
