@@ -350,12 +350,6 @@ class VoiceCommandParser {
       final count = _numberWords[worded.group(1)!.replaceAll('-', ' ')] ?? 1;
       return int.parse(_toSeconds('$count', worded.group(2)!));
     }
-    if (RegExp(r'\bhalf an? hour\b').hasMatch(text)) {
-      return 1800;
-    }
-    if (RegExp(r'\bquarter of an hour\b').hasMatch(text)) {
-      return 900;
-    }
     return null;
   }
 
