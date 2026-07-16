@@ -1605,6 +1605,39 @@ class AppController {
     await _updateContextTriggers();
   }
 
+  void _cancelPendingPauseResume() {
+    _pauseResumeTimer?.cancel();
+    _pauseResumeTimer = null;
+    _pauseResumeAtUtc = null;
+  }
+
+  /// Temporarily stops capture and auto-resumes after [duration]. This is the
+  /// "pause recording for ten minutes" voice command's executor, but is also
+  /// callable from UI. A manual start or stop during the pause cancels the
+  /// scheduled resume.
+  Future<void> pauseRecordingFor(Duration duration) async {
+    _cancelPendingPauseResume();
+    if (_recorder.isRecording) {
+      await stopRecording();
+    }
+    final resumeAt = DateTime.now().toUtc().add(duration);
+    _pauseResumeAtUtc = resumeAt;
+    _pauseResumeTimer = Timer(duration, () {
+      _pauseResumeTimer = null;
+      _pauseResumeAtUtc = null;
+      _diagnostics.add('Pause elapsed; resuming recording.');
+      unawaited(startRecording());
+    });
+    _diagnostics.add(
+      'Recording paused until ${resumeAt.toIso8601String()} '
+      '(${duration.inSeconds}s).',
+    );
+    _message.add(
+      'Recording paused; resuming automatically in '
+      '${describeSpokenDuration(duration.inSeconds)}.',
+    );
+  }
+
   /// Android's microphone permission is "while in use"; recent Android versions
   /// do not reliably allow a microphone foreground service to be created from a
   /// fully background/killed state. Once the user arms a schedule, keep a
