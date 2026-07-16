@@ -67,6 +67,11 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+            // Keep rules for TFLite's reflective GPU-delegate references.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
