@@ -313,6 +313,32 @@ class AppController {
   /// Field (not constructor-injected) so tests can swap in a fake.
   DeviceStorageInfo deviceStorageInfo = DeviceStorageInfo();
 
+  /// On-device "Knows your voice" store: up to five enrolled voice samples
+  /// plus their FFT/MFCC fingerprints. Field so tests can swap in a fake.
+  VoiceProfileService voiceProfiles = VoiceProfileService();
+
+  /// Hands-free command pipeline (transcript → intent → recorder control),
+  /// wired to this controller's transport and spoken back through TTS.
+  late final VoiceCommandDispatcher _voiceCommands = VoiceCommandDispatcher(
+    recorderControl: RecorderControl(
+      start: () => startRecording(),
+      stop: stopRecording,
+      isRecording: () => _recorder.isRecording,
+      pauseFor: pauseRecordingFor,
+      isPaused: () => isRecordingPaused,
+    ),
+    speak: (phrase) => _feedback.say(phrase),
+  );
+
+  Timer? _pauseResumeTimer;
+  DateTime? _pauseResumeAtUtc;
+
+  /// True while capture is voice/user-paused awaiting the auto-resume.
+  bool get isRecordingPaused => _pauseResumeTimer != null;
+
+  /// When the current pause will auto-resume (null when not paused).
+  DateTime? get pauseResumeAtUtc => _pauseResumeAtUtc;
+
   /// Keep at least this much free on the segments volume. The rolling window
   /// advertises "the last 100 hours, space permitting" — when the device runs
   /// low, the oldest uploaded/saved local copies are dropped first.
