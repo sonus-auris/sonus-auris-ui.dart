@@ -67,6 +67,9 @@ dependencies:
   battery_plus: ^6.2.1
   connectivity_plus: ^6.1.0
   fftea: ^1.5.0+1
+  # On-device TFLite inference for recognition models (bird ID via Perch).
+  # Models are NOT bundled — downloaded on demand (see services/recognition/).
+  tflite_flutter: ^0.11.0
   # Scheduled recording: exact OS alarms (Android) fire at window barriers even
   # when the app is killed; a background isolate toggles the capture service.
   android_alarm_manager_plus: ^4.0.4
