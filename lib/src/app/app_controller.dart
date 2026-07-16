@@ -308,6 +308,15 @@ class AppController {
   final PowerNetworkGate _powerNetworkGate;
   final SupabaseRestClient _supabaseRestClient;
 
+  /// Free-disk-space probe backing the "space permitting" retention floor.
+  /// Field (not constructor-injected) so tests can swap in a fake.
+  DeviceStorageInfo deviceStorageInfo = DeviceStorageInfo();
+
+  /// Keep at least this much free on the segments volume. The rolling window
+  /// advertises "the last 100 hours, space permitting" — when the device runs
+  /// low, the oldest uploaded/saved local copies are dropped first.
+  static const int minFreeDiskBytes = 2 * 1024 * 1024 * 1024;
+
   /// The onboarding consent the user accepted (null until first onboarding).
   ConsentRecord? _consentRecord;
   ConsentRecord? get consentRecord => _consentRecord;
