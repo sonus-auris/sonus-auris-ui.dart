@@ -23,8 +23,9 @@ Before submitting, ensure:
 2. **In-app:** verify the production build has `SONUS_BACKEND_BASE_URL`,
    `SONUS_SUPABASE_URL`, and `SONUS_SUPABASE_ANON_KEY` so account creation and
    deletion work without developer project fields.
-3. **Web:** host the request page below at a public URL and put it in the Play
-   "Data deletion" field and the App Store privacy section.
+3. **Web:** the public request page is
+   `https://sonusauris.app/account-deletion/`; put it in the Play "Data
+   deletion" field and App Store privacy section after replacing its contact placeholder.
 
 ## What gets deleted vs. retained
 

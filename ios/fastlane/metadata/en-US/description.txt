@@ -7,7 +7,8 @@ YOUR AUDIO, ENCRYPTED ON YOUR DEVICE
 - Every recording is encrypted on the device with AES-256-GCM before it is stored
   or uploaded. Keys stay on your device.
 - Optional backup to storage you control — your own S3-compatible bucket, Google
-  Drive, OneDrive, or iCloud. There is no shared Sonus Auris media server.
+  Drive, OneDrive, or iCloud — or to Sonus Auris ciphertext backup. Recordings
+  are encrypted before upload, so the service cannot listen to them.
 - Keep only a rolling window on the phone; older clips age out automatically.
 
 USEFUL THINGS IT HEARS (ALL OPTIONAL, OFF BY DEFAULT)

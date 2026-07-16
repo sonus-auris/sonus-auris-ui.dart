@@ -23,11 +23,19 @@ Permissions
 - Bluetooth: OPTIONAL — only to notice nearby devices for scheduled-capture prompts.
 
 Cloud / accounts
-- There is no shared media server. Backup goes to storage the user controls.
+- Backup goes to user-connected storage or Sonus Auris ciphertext storage;
+  recordings are encrypted on-device and the service cannot decrypt them.
 - If you need to exercise the optional backend (alerts/links), contact us for a
   demo configuration; it is not required to evaluate the core recording feature.
 - Account creation uses Supabase email/password auth. Signed-in users can delete
   their account from Configure > Account > Delete account; the app confirms,
   calls the backend deletion endpoint, and clears local recordings/tokens.
 
-Privacy policy: <PASTE HOSTED URL>   Account deletion: <PASTE HOSTED URL>
+Scheduled capture
+- iOS starts/stops scheduled windows exactly while the app remains alive. If it
+  was suspended or terminated before a start boundary, a local notification asks
+  the user to reopen the app; the app does not silently launch the microphone.
+
+Privacy policy: https://sonusauris.app/privacy/
+Account deletion: https://sonusauris.app/account-deletion/
+Support: https://sonusauris.app/support/

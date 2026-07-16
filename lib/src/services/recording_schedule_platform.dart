@@ -110,8 +110,7 @@ class PluginSchedulePlatform implements SchedulePlatform {
   Future<void> register(List<ScheduleTransition> transitions) async {
     switch (_hostPlatform) {
       case ScheduleHostPlatform.android:
-        if (transitions.isNotEmpty &&
-            !await _exactAlarmPermissionRequester()) {
+        if (transitions.isNotEmpty && !await _exactAlarmPermissionRequester()) {
           _diagnostics?.add(
             'Exact-alarm access was not granted; schedule transitions will '
             'still run while Sonus Auris is alive, but Android may not wake '

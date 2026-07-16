@@ -11,9 +11,10 @@ _Last updated: <SET DATE>. Publisher: <LEGAL ENTITY NAME>, contact: <privacy@you
 ## Summary
 
 Sonus Auris records audio you choose to capture. Your recordings are **encrypted
-on your device** and are **only** sent to cloud storage **you** connect (your own
-S3 bucket, Google Drive, OneDrive, or iCloud). We do **not** operate a shared
-media server that stores your recordings, and we cannot read your encrypted clips.
+on your device** before they leave it. If you enable backup, ciphertext can be
+sent to storage **you** connect (your own S3 bucket, Google Drive, OneDrive, or
+iCloud) or to Sonus Auris backup storage. We cannot decrypt your clips because
+their keys stay on your device.
 
 ## What we collect and why
 
@@ -29,13 +30,16 @@ it was recorded. Purpose: app functionality you opt into.
 loud-event detection run locally on your device. Detection results stay with your
 data; raw audio is not sent anywhere for analysis.
 
-**Account / backend data (only if you use the optional backend)** — a device or
-account identifier, authentication tokens, and metadata about clips you choose to
-back up or share (timestamps, sizes, upload status). Purpose: authentication,
-backup coordination, and optional alert/listening links you request.
+**Account / backend data (only if you use an account)** — your email address, a
+user and device identifier, authentication tokens, and metadata about clips you
+choose to back up or share (timestamps, sizes, upload status). Purpose:
+authentication, backup coordination, and optional alert/listening links you request.
 
-**Diagnostics** — limited on-device logs to help the app run. We do not include
-third-party advertising or analytics SDKs.
+**Diagnostics** — after you sign in, sanitized app events, errors, stack traces,
+platform, and app version can be sent to our Supabase project under your user and
+device ID so we can operate and fix the app. Secret-shaped fields are redacted;
+diagnostics do not contain recording audio. We do not include third-party
+advertising or analytics SDKs.
 
 ## What we do NOT do
 
@@ -49,16 +53,17 @@ third-party advertising or analytics SDKs.
 - **On your device** by default (encrypted).
 - **To storage you control**, if you connect it (your S3-compatible bucket,
   Google Drive, OneDrive, or iCloud). Their handling is governed by their terms.
-- **To the optional Sonus Auris backend**, only for features you invoke
-  (authentication, backup coordination, alert links). Recordings remain
-  client-encrypted; the backend brokers transfers and short-lived links.
+- **To Supabase and the optional Sonus Auris backend**, only for features you
+  invoke (authentication, settings/consent sync, diagnostics, backup
+  coordination, encrypted backup, and alert links). Recordings remain
+  client-encrypted; the services cannot derive the device-held key.
 
 ## Retention
 
 Local clips age out automatically based on your rolling-window setting. Backed-up
-clips persist in your chosen storage until you delete them. Backend metadata is
-retained only as long as needed for the feature, and is removed on account
-deletion.
+clips persist according to the retention settings for their destination or until
+you delete them. Backend ciphertext and metadata are removed when their retention
+expires or on account deletion, subject to the limited legal retention below.
 
 ## Your choices and rights
 

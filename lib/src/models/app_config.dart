@@ -19,7 +19,7 @@ class AppConfig {
 
   const AppConfig({
     required this.deviceId,
-    this.deviceRetentionHours = 50,
+    this.deviceRetentionHours = 100,
     this.cloudRetentionHours = 500,
     this.segmentMinutes = 1,
     this.overlapSeconds = 2,
@@ -565,7 +565,7 @@ class AppConfig {
     final useCase = json['useCase'] as String? ?? 'security';
     return AppConfig(
       deviceId: json['deviceId'] as String,
-      deviceRetentionHours: _asInt(json['deviceRetentionHours'], 50),
+      deviceRetentionHours: _asInt(json['deviceRetentionHours'], 100),
       cloudRetentionHours: _asInt(json['cloudRetentionHours'], 500),
       segmentMinutes: _asInt(json['segmentMinutes'], 1).clamp(1, 60),
       overlapSeconds: _asInt(json['overlapSeconds'], 2).clamp(0, 30),

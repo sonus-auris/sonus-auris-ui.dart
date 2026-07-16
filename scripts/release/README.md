@@ -14,3 +14,5 @@ release flow.
   Bundle (`.aab`) plus symbols.
 - **[ios-build-ipa.sh](ios-build-ipa.sh)** — build a signed App Store `.ipa`
   (macOS + Xcode only).
+- **[generate-store-assets.sh](generate-store-assets.sh)** — regenerate branded
+  iOS/Android launcher icons plus Play icon/feature graphic (ImageMagick 7).

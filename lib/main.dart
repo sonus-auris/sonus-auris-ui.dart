@@ -2435,7 +2435,7 @@ class _AccountSectionState extends State<_AccountSection> {
 }
 
 /// Battery + network controls for cloud streaming. These never affect local
-/// capture (the rolling 50h+ window keeps recording); they only defer uploads,
+/// capture (the rolling 100h+ window keeps recording); they only defer uploads,
 /// which catch up automatically once conditions allow. Changes persist
 /// immediately via [onChanged]; [status] reflects the live gate decision.
 class _TransferPolicySection extends StatefulWidget {
