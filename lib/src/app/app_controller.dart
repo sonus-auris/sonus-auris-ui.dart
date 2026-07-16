@@ -2309,6 +2309,8 @@ class AppController {
       _diagnosticTelemetrySubscription?.cancel() ?? Future<void>.value(),
     ]);
     _telemetryFlushTimer?.cancel();
+    _cancelPendingPauseResume();
+    await _voiceCommands.dispose();
 
     // 2. Synchronous client/scheduler closes — fire them off together.
     _scheduler.dispose();
