@@ -93,9 +93,8 @@ class SoundRecorderBackendClient {
   SoundRecorderBackendClient({
     http.Client? httpClient,
     this.requestTimeout = const Duration(seconds: 45),
-    SegmentEncryptor? encryptor,
-  }) : _httpClient = httpClient ?? http.Client(),
-       _encryptor = encryptor;
+    this._encryptor,
+  }) : _httpClient = httpClient ?? http.Client();
 
   final http.Client _httpClient;
   final Duration requestTimeout;

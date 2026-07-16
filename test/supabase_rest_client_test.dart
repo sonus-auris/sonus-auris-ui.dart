@@ -293,4 +293,75 @@ void main() {
     expect(error, isNot(contains('sb_secret_never-ship')));
     expect(called, isFalse);
   });
+
+  test('reads and upserts typed portable account settings', () async {
+    late http.Request updateRequest;
+    final seedClient = SupabaseRestClient();
+    final row = seedClient.userSettingsForUpsert(config).toJson()
+      ..['user_id'] = '11111111-1111-1111-1111-111111111111';
+    final client = SupabaseRestClient(
+      httpClient: MockClient((request) async {
+        if (request.method == 'GET') {
+          return http.Response(jsonEncode([row]), 200);
+        }
+        updateRequest = request;
+        return http.Response('', 201);
+      }),
+    );
+
+    final loaded = await client.fetchUserSettings(
+      config: config,
+      secrets: secrets,
+    );
+    expect(loaded.error, isNull);
+    expect(loaded.settings?.preferredUseCase, 'security');
+    expect(loaded.settings?.userId, '11111111-1111-1111-1111-111111111111');
+
+    final error = await client.upsertUserSettings(
+      config: config,
+      secrets: secrets,
+    );
+    expect(error, isNull);
+    expect(updateRequest.url.queryParameters['on_conflict'], 'user_id');
+    expect(updateRequest.headers['authorization'], 'Bearer user-jwt');
+    expect(updateRequest.headers['prefer'], contains('merge-duplicates'));
+    final body = jsonDecode(updateRequest.body) as List;
+    final payload = body.single as Map<String, dynamic>;
+    expect(payload, isNot(contains('user_id')));
+    expect(payload, isNot(contains('device_id')));
+    expect(payload, isNot(contains('supabase_anon_key')));
+    expect(payload['device_retention_hours'], 50);
+  });
+
+  test('merges account settings without touching device-only controls', () {
+    const local = AppConfig(
+      deviceId: 'device-local',
+      supabaseUrl: 'https://proj.supabase.co',
+      supabaseAnonKey: 'anon-key',
+      s3Bucket: 'device-bucket',
+      locationTaggingEnabled: true,
+      autoStartCaptureEnabled: true,
+      pauseUploadsOnLowBattery: false,
+    );
+    final client = SupabaseRestClient();
+    final remote = client.userSettingsForUpsert(
+      local.copyWith(
+        useCase: 'music',
+        deviceRetentionHours: 72,
+        cloudRetentionHours: 720,
+        micSensitivity: 1.5,
+      ),
+    );
+
+    final merged = client.mergeUserSettings(local, remote);
+    expect(merged.useCase, 'music');
+    expect(merged.deviceRetentionHours, 72);
+    expect(merged.cloudRetentionHours, 720);
+    expect(merged.micSensitivity, 1.5);
+    expect(merged.deviceId, 'device-local');
+    expect(merged.s3Bucket, 'device-bucket');
+    expect(merged.locationTaggingEnabled, isTrue);
+    expect(merged.autoStartCaptureEnabled, isTrue);
+    expect(merged.pauseUploadsOnLowBattery, isFalse);
+  });
 }

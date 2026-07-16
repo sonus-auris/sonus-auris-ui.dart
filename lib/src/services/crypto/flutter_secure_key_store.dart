@@ -5,12 +5,13 @@ import 'key_manager.dart';
 /// [SecureKeyStore] backed by the platform secure store: the iOS Keychain
 /// (with `first_unlock_this_device` accessibility so the key is never synced
 /// off-device or included in unencrypted backups) and Android Keystore-backed
-/// storage.
+/// Android Keystore-protected storage.
 class FlutterSecureKeyStore implements SecureKeyStore {
   FlutterSecureKeyStore({FlutterSecureStorage? storage})
     : _storage =
           storage ??
           const FlutterSecureStorage(
+            aOptions: AndroidOptions(),
             iOptions: IOSOptions(
               accessibility: KeychainAccessibility.first_unlock_this_device,
               synchronizable: false,

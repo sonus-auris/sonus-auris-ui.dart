@@ -501,6 +501,7 @@ class AppController {
     _isInitializing.add(false);
     _diagnostics.add('App controller init completed.');
     await _ensureSupabaseReady();
+    await _syncPortableSettingsFromSupabase();
     _scheduleTelemetryFlush();
     // If consent was captured before sign-in (or a previous sync failed), push it
     // now that a session may be available.
@@ -796,7 +797,15 @@ class AppController {
     }
     await _settingsStore.saveConfig(normalized);
     _config.add(normalized);
-    _message.add('Settings saved.');
+    final settingsSyncError = await _syncPortableSettingsToSupabase(normalized);
+    _message.add(
+      settingsSyncError == null
+          ? 'Settings saved.'
+          : 'Settings saved on this device. Account sync failed.',
+    );
+    if (settingsSyncError != null) {
+      _diagnostics.add(settingsSyncError);
+    }
     // Battery-saver / network-policy may have changed; re-evaluate the gate (and
     // report the new policy to the backend) before draining.
     await _refreshTransferStatus();
@@ -1112,6 +1121,7 @@ class AppController {
         return;
       }
       await _applySupabaseSession(session);
+      await _syncPortableSettingsFromSupabase();
       await _ensureDeviceRegistered();
       // Flush any consent captured before sign-in.
       await _maybeSyncConsent();
@@ -1321,6 +1331,52 @@ class AppController {
   Future<void> _ensureSupabaseReady() async {
     await _ensureFreshSupabaseToken();
     await _ensureDeviceRegistered();
+  }
+
+  Future<String?> _syncPortableSettingsToSupabase(AppConfig config) async {
+    final currentSecrets = _secrets.valueOrNull;
+    if (currentSecrets == null || !currentSecrets.hasSupabaseToken) {
+      return null;
+    }
+    await _ensureFreshSupabaseToken();
+    final secrets = _secrets.valueOrNull;
+    if (secrets == null || !secrets.hasSupabaseToken) {
+      return 'Portable settings sync skipped because the Supabase session is unavailable.';
+    }
+    return _supabaseRestClient.upsertUserSettings(
+      config: config,
+      secrets: secrets,
+    );
+  }
+
+  Future<void> _syncPortableSettingsFromSupabase() async {
+    if (!_config.hasValue) {
+      return;
+    }
+    await _ensureFreshSupabaseToken();
+    final config = _config.value;
+    final secrets = _secrets.valueOrNull;
+    if (secrets == null || !secrets.hasSupabaseToken) {
+      return;
+    }
+    final result = await _supabaseRestClient.fetchUserSettings(
+      config: config,
+      secrets: secrets,
+    );
+    if (result.error != null) {
+      _diagnostics.add(result.error!);
+      return;
+    }
+    final remote = result.settings;
+    if (remote == null) {
+      final error = await _syncPortableSettingsToSupabase(config);
+      if (error != null) {
+        _diagnostics.add(error);
+      }
+      return;
+    }
+    final merged = _supabaseRestClient.mergeUserSettings(config, remote);
+    await saveConfig(merged);
   }
 
   /// Silently refreshes the Supabase access token when it is missing or near

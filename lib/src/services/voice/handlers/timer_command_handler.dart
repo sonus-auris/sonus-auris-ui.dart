@@ -16,8 +16,8 @@ class VoiceTimer {
     required this.id,
     required this.duration,
     required this.startedAt,
-    required Timer timer,
-  }) : _timer = timer;
+    required this._timer,
+  });
 
   final String id;
   final Duration duration;
