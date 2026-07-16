@@ -44,9 +44,11 @@ class NoopSchedulePlatform implements SchedulePlatform {
 ///  1. An in-app [Timer] armed to the next transition, so while the app's main
 ///     isolate is alive (including backgrounded under the foreground service)
 ///     the schedule is honored to the minute via [onTransition].
-///  2. OS-level events registered through [SchedulePlatform], which wake the app
-///     at a barrier when it isn't running; the controller then reconciles actual
-///     capture against [RecordingSchedule.isActiveAt].
+///  2. OS-level events registered through [SchedulePlatform], which persist the
+///     intended barrier state so the controller can reconcile actual capture
+///     against [RecordingSchedule.isActiveAt]. On Android, mic capture still
+///     depends on a user-visible foreground service because microphone access is
+///     a while-in-use permission.
 class RecordingScheduler {
   RecordingScheduler({
     DiagnosticLog? diagnostics,

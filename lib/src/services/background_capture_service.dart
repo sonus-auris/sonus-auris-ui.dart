@@ -7,6 +7,29 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import 'diagnostic_log.dart';
 
+enum BackgroundCaptureMode {
+  scheduleStandby,
+  recording;
+
+  String get notificationTitle {
+    switch (this) {
+      case BackgroundCaptureMode.scheduleStandby:
+        return 'Sonus Auris schedule armed';
+      case BackgroundCaptureMode.recording:
+        return 'Sonus Auris is recording';
+    }
+  }
+
+  String get notificationText {
+    switch (this) {
+      case BackgroundCaptureMode.scheduleStandby:
+        return 'Waiting for your next declared recording window.';
+      case BackgroundCaptureMode.recording:
+        return 'Rolling local window and cloud upload are active.';
+    }
+  }
+}
+
 class BackgroundCaptureService {
   BackgroundCaptureService({DiagnosticLog? diagnostics})
     : _diagnostics = diagnostics;
@@ -14,6 +37,12 @@ class BackgroundCaptureService {
   final DiagnosticLog? _diagnostics;
 
   void init() {
+    if (!Platform.isAndroid) {
+      _diagnostics?.add(
+        'Foreground task initialization skipped: platform is not Android.',
+      );
+      return;
+    }
     _diagnostics?.add('Initializing Android foreground task options.');
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
@@ -33,13 +62,20 @@ class BackgroundCaptureService {
         eventAction: ForegroundTaskEventAction.repeat(30000),
         allowWakeLock: true,
         allowWifiLock: false,
-        allowAutoRestart: true,
+        // Android 14+ forbids starting a microphone-typed foreground service
+        // from a boot/restart receiver (ForegroundServiceStartNotAllowedException),
+        // and Play policy treats it as background mic access. After reboot the
+        // alarm-manager receiver re-arms schedules instead, and capture resumes
+        // from a user-visible trigger.
+        allowAutoRestart: false,
         stopWithTask: false,
       ),
     );
   }
 
-  Future<String?> start() async {
+  Future<String?> start({
+    BackgroundCaptureMode mode = BackgroundCaptureMode.recording,
+  }) async {
     if (!Platform.isAndroid) {
       _diagnostics?.add('Foreground service skipped: platform is not Android.');
       return null;
@@ -54,15 +90,30 @@ class BackgroundCaptureService {
         await FlutterForegroundTask.requestNotificationPermission();
       }
       if (await FlutterForegroundTask.isRunningService) {
-        _diagnostics?.add('Foreground service already running.');
+        _diagnostics?.add(
+          'Foreground service already running; updating ${mode.name} notice.',
+        );
+        final result = await FlutterForegroundTask.updateService(
+          notificationTitle: mode.notificationTitle,
+          notificationText: mode.notificationText,
+          callback: audioDashcamForegroundCallback,
+        );
+        if (result is ServiceRequestFailure) {
+          _diagnostics?.add(
+            'Foreground service update failed: ${result.error}.',
+          );
+          return _friendlyStartError(result.error);
+        }
         return null;
       }
-      _diagnostics?.add('Starting microphone foreground service.');
+      _diagnostics?.add(
+        'Starting microphone foreground service (${mode.name}).',
+      );
       final result = await FlutterForegroundTask.startService(
         serviceId: 500,
         serviceTypes: const [ForegroundServiceTypes.microphone],
-        notificationTitle: 'Sonus Auris is recording',
-        notificationText: 'Rolling local window and cloud upload are active.',
+        notificationTitle: mode.notificationTitle,
+        notificationText: mode.notificationText,
         callback: audioDashcamForegroundCallback,
       );
       if (result is ServiceRequestFailure) {

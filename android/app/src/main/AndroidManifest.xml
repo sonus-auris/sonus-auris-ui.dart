@@ -8,15 +8,10 @@
     <!-- Resume the capture foreground service automatically after a reboot, so
          the rolling window keeps running without the user re-opening the app. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Recording schedule: exact alarms fire start/stop at window barriers even
-         when the app is idle/killed (android_alarm_manager_plus). USE_EXACT_ALARM
-         is auto-granted for an alarm-clock-style app; SCHEDULE_EXACT_ALARM is the
-         pre-Android-14 equivalent the user can revoke under "Alarms & reminders". -->
+    <!-- Recording schedule: SCHEDULE_EXACT_ALARM is user-grantable under
+         "Alarms & reminders". Do not add USE_EXACT_ALARM: Play restricts that
+         auto-granted permission to alarm/timer/calendar apps. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <!-- Cycle-aware sleep alarm: full-screen alarm UI so the wake-up can rouse a
-         sleeper even over the lock screen (Android 14+ gates this permission). -->
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- Optional GPS evidence tagging (off by default). -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -35,7 +30,8 @@
         android:maxSdkVersion="30" />
     <!-- Read the joined Wi-Fi SSID (home/away detection) + Android-13 nearby-Wi-Fi. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation" />
 
     <application
         android:label="Sonus Auris"

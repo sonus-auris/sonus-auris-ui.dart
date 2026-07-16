@@ -1,13 +1,16 @@
 // Mobile entrypoint: boots Flutter, wires up the AppController and services, and runs the Sonus Auris app UI.
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show FlutterExceptionHandler;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 // `show DateFormat` so intl's TextDirection enum doesn't shadow dart:ui's.
 import 'package:intl/intl.dart' show DateFormat;
+import 'package:url_launcher/url_launcher.dart';
 
 import 'src/app/app_controller.dart';
 import 'src/app/app_view_model.dart';
@@ -26,9 +29,27 @@ import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
 import 'src/widgets/supabase_auth_form.dart';
 
+const String _privacyPolicyUrl = 'https://sonusauris.app/privacy/';
+const String _accountDeletionUrl = 'https://sonusauris.app/account-deletion/';
+const String _supportUrl = 'https://sonusauris.app/support/';
+
+Future<void> _openPublicPage(BuildContext context, String url) async {
+  final opened = await launchUrl(
+    Uri.parse(url),
+    mode: LaunchMode.externalApplication,
+  );
+  if (!opened && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not open the Sonus Auris website.')),
+    );
+  }
+}
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  FlutterForegroundTask.initCommunicationPort();
+  if (Platform.isAndroid) {
+    FlutterForegroundTask.initCommunicationPort();
+  }
   // Native alarm-manager readiness is owned by PluginSchedulePlatform's
   // bounded gate. Never hold the first Flutter frame behind a plugin channel:
   // Android services can legitimately lag just after a cold reboot.
@@ -54,6 +75,8 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
   AppController? _controller;
   Future<void>? _initFuture;
   Object? _startupError;
+  FlutterExceptionHandler? _previousFlutterOnError;
+  ui.ErrorCallback? _previousPlatformOnError;
 
   @override
   void initState() {
@@ -80,6 +103,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
     try {
       final controller = widget.controllerFactory?.call() ?? AppController();
       _controller = controller;
+      _installTelemetryErrorHooks(controller);
       final initFuture = controller.init();
       if (!mounted) {
         unawaited(controller.dispose());
@@ -97,9 +121,32 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
     }
   }
 
+  void _installTelemetryErrorHooks(AppController controller) {
+    _previousFlutterOnError ??= FlutterError.onError;
+    FlutterError.onError = (details) {
+      controller.recordFlutterError(details);
+      _previousFlutterOnError?.call(details);
+    };
+    _previousPlatformOnError ??= ui.PlatformDispatcher.instance.onError;
+    ui.PlatformDispatcher.instance.onError = (error, stack) {
+      controller.recordUnhandledError(
+        error,
+        stack,
+        event: 'platform_dispatcher_error',
+      );
+      return _previousPlatformOnError?.call(error, stack) ?? false;
+    };
+  }
+
   @override
   void dispose() {
     _controllerBootstrapTimer?.cancel();
+    if (_previousFlutterOnError != null) {
+      FlutterError.onError = _previousFlutterOnError;
+    }
+    if (_previousPlatformOnError != null) {
+      ui.PlatformDispatcher.instance.onError = _previousPlatformOnError;
+    }
     final controller = _controller;
     if (controller != null) {
       unawaited(controller.dispose());
@@ -483,6 +530,8 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
           'recorder working; everything else is optional and off by default.',
           style: TextStyle(color: SonusColors.inkSoft),
         ),
+        const SizedBox(height: 12),
+        const _RecordingDisclosure(),
         const SizedBox(height: 8),
         for (final item in ConsentItem.values)
           Card(
@@ -502,6 +551,23 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                   : (v) => setState(() => _grants[item] = v),
             ),
           ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            TextButton.icon(
+              onPressed: () => _openPublicPage(context, _privacyPolicyUrl),
+              icon: const Icon(Icons.privacy_tip_outlined),
+              label: const Text('Privacy policy'),
+            ),
+            TextButton.icon(
+              onPressed: () => _openPublicPage(context, _accountDeletionUrl),
+              icon: const Icon(Icons.manage_accounts_outlined),
+              label: const Text('Account & data deletion'),
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -610,6 +676,45 @@ class _ProgressDots extends StatelessWidget {
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecordingDisclosure extends StatelessWidget {
+  const _RecordingDisclosure();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: 'Important recording disclosure',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF5EA),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: SonusColors.orange200),
+        ),
+        child: const Padding(
+          padding: EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.mic_outlined, color: SonusColors.orange600),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Recording begins only after you tap Start, accept a prompt, '
+                  'or arm a schedule. Once active, it can continue in the '
+                  'background or while your phone is locked until you stop it '
+                  'or the scheduled window ends. Your phone always shows its '
+                  'system recording indicator or persistent notification.',
+                  style: TextStyle(color: SonusColors.ink, height: 1.35),
+                ),
+              ),
             ],
           ),
         ),
@@ -2210,6 +2315,30 @@ class _AccountSectionState extends State<_AccountSection> {
     }
   }
 
+  Widget _legalLinks() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        TextButton.icon(
+          onPressed: () => _openPublicPage(context, _privacyPolicyUrl),
+          icon: const Icon(Icons.privacy_tip_outlined),
+          label: const Text('Privacy'),
+        ),
+        TextButton.icon(
+          onPressed: () => _openPublicPage(context, _accountDeletionUrl),
+          icon: const Icon(Icons.manage_accounts_outlined),
+          label: const Text('Deletion help'),
+        ),
+        TextButton.icon(
+          onPressed: () => _openPublicPage(context, _supportUrl),
+          icon: const Icon(Icons.help_outline),
+          label: const Text('Support'),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -2269,6 +2398,8 @@ class _AccountSectionState extends State<_AccountSection> {
                 ),
               ],
             ),
+            const SizedBox(height: 8),
+            _legalLinks(),
           ],
         ),
       );
@@ -2295,6 +2426,8 @@ class _AccountSectionState extends State<_AccountSection> {
             onSignUp: widget.onSignUp,
             onPasswordReset: widget.onPasswordReset,
           ),
+          const SizedBox(height: 8),
+          _legalLinks(),
         ],
       ),
     );
@@ -4317,8 +4450,10 @@ class _NumberField extends StatelessWidget {
 
 /// Weekly recording schedule editor. Each day gets a horizontal 0–24h timeline
 /// the user paints recording windows onto; pre-defining the windows is the
-/// consent to record during them, and [AppController] registers OS alarms /
-/// iOS notifications at the barriers so capture starts/stops on time.
+/// consent to record during them. [AppController] registers exact Android
+/// alarms and iOS reminders at the barriers; iOS transitions are exact while
+/// the app remains alive, while a suspended or terminated app requires the
+/// user to reopen it from the reminder.
 class _ScheduleSection extends StatefulWidget {
   const _ScheduleSection({required this.config, required this.onChanged});
 
@@ -4381,7 +4516,9 @@ class _ScheduleSectionState extends State<_ScheduleSection> {
           Text(
             'Record automatically during the windows you set for each day. '
             'Setting these times is your consent to record then; keep the app '
-            'running so iOS can maintain the active audio session.',
+            'running so iOS can maintain the active audio session. On Android, '
+            'Sonus Auris keeps a persistent notification while the schedule is '
+            'armed so the microphone can start at the declared windows.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: SonusColors.inkSoft,
             ),

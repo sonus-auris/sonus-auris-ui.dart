@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_initializing_formals
+
 // Mirrors encrypted segments the backend cannot push into the user's iCloud Drive via the native iCloud bridge.
 import 'dart:async';
 
@@ -29,14 +31,16 @@ class IcloudSyncResult {
 /// copy complete to the backend. Apple exposes no server-side iCloud write API,
 /// so this device-driven mirror is the only way to back up into a user's iCloud.
 class IcloudSyncService {
+  // Keep the public named parameter `encryptor`; an initializing formal would
+  // expose the private field name as API.
   IcloudSyncService({
     MethodChannel? channel,
     http.Client? httpClient,
     this.downloadTimeout = const Duration(seconds: 45),
     SegmentEncryptor? encryptor,
-  })  : _channel = channel ?? const MethodChannel('audio_dashcam/icloud'),
-        _httpClient = httpClient ?? http.Client(),
-        _encryptor = encryptor;
+  }) : _channel = channel ?? const MethodChannel('audio_dashcam/icloud'),
+       _httpClient = httpClient ?? http.Client(),
+       _encryptor = encryptor;
 
   final MethodChannel _channel;
   final http.Client _httpClient;

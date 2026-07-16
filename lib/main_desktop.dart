@@ -17,6 +17,10 @@
 // Keeping them as distinct entrypoints means desktop look *and* logic can
 // diverge freely without leaking the phone layout onto the desktop.
 
+import 'dart:async';
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart' show FlutterExceptionHandler;
 import 'package:flutter/material.dart';
 
 import 'src/app/app_controller.dart';
@@ -45,12 +49,15 @@ class SonusDesktopApp extends StatefulWidget {
 class _SonusDesktopAppState extends State<SonusDesktopApp> {
   late final AppController _controller;
   late final Future<void> _ready;
+  FlutterExceptionHandler? _previousFlutterOnError;
+  ui.ErrorCallback? _previousPlatformOnError;
 
   @override
   void initState() {
     super.initState();
     DesktopAutostart.setup();
     _controller = AppController();
+    _installTelemetryErrorHooks(_controller);
     // On desktop, behave like an always-on recorder: register as a login item
     // (first run) and start capturing as soon as the app opens.
     _ready = _controller.init().then((_) async {
@@ -59,9 +66,28 @@ class _SonusDesktopAppState extends State<SonusDesktopApp> {
     });
   }
 
+  void _installTelemetryErrorHooks(AppController controller) {
+    _previousFlutterOnError = FlutterError.onError;
+    FlutterError.onError = (details) {
+      controller.recordFlutterError(details);
+      _previousFlutterOnError?.call(details);
+    };
+    _previousPlatformOnError = ui.PlatformDispatcher.instance.onError;
+    ui.PlatformDispatcher.instance.onError = (error, stack) {
+      controller.recordUnhandledError(
+        error,
+        stack,
+        event: 'platform_dispatcher_error',
+      );
+      return _previousPlatformOnError?.call(error, stack) ?? false;
+    };
+  }
+
   @override
   void dispose() {
-    _controller.dispose();
+    FlutterError.onError = _previousFlutterOnError;
+    ui.PlatformDispatcher.instance.onError = _previousPlatformOnError;
+    unawaited(_controller.dispose());
     super.dispose();
   }
 
@@ -304,7 +330,11 @@ class _NavItem extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
               children: [
-                Icon(icon, size: 20, color: active ? _greenBright : Colors.white70),
+                Icon(
+                  icon,
+                  size: 20,
+                  color: active ? _greenBright : Colors.white70,
+                ),
                 const SizedBox(width: 12),
                 Text(
                   label,
@@ -385,8 +415,10 @@ class _ThisDevicePanel extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Input level',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
+                const Text(
+                  'Input level',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
                 const SizedBox(height: 8),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6),
@@ -436,10 +468,18 @@ class _ThisDevicePanel extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                Text(
+                  label,
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
                 const SizedBox(height: 4),
-                Text(value,
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ],
             ),
           ),
@@ -470,10 +510,10 @@ class _AllDevicesPanel extends StatelessWidget {
             Text(
               vm.isSignedIn
                   ? 'As the master viewer, this app will browse and play audio '
-                      'from every device on your account — decrypted on-device '
-                      'with your account key, unlocked by your PIN. Coming next.'
+                        'from every device on your account — decrypted on-device '
+                        'with your account key, unlocked by your PIN. Coming next.'
                   : 'Sign in to use this desktop as your account’s master viewer '
-                      'and browse audio from all your devices.',
+                        'and browse audio from all your devices.',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white60, height: 1.5),
             ),

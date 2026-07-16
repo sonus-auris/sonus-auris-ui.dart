@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -24,24 +26,26 @@ abstract class SecureKeyStore {
 /// system zero-knowledge — the backend can hold every recovery blob and still
 /// never recover the MK on its own.
 class KeyManager {
+  // Keep the public named parameter `store`; an initializing formal would expose
+  // the private field name as API.
   KeyManager({
     required SecureKeyStore store,
     AesGcm? aead,
     Argon2id? passphraseKdf,
-  })  : _store = store,
-        _aead = aead ?? AesGcm.with256bits(),
-        _passphraseKdf = passphraseKdf ?? _defaultPassphraseKdf();
+  }) : _store = store,
+       _aead = aead ?? AesGcm.with256bits(),
+       _passphraseKdf = passphraseKdf ?? _defaultPassphraseKdf();
 
   /// Storage key for the base64 master key. Bumped if the format ever changes.
   static const String masterKeyStorageId = 'sa.mk.v1';
 
   /// OWASP-leaning Argon2id parameters. Tunable per-device if enrollment is slow.
   static Argon2id _defaultPassphraseKdf() => Argon2id(
-        memory: 19 * 1024, // 19 MiB
-        parallelism: 1,
-        iterations: 2,
-        hashLength: SegmentCipher.dekLength,
-      );
+    memory: 19 * 1024, // 19 MiB
+    parallelism: 1,
+    iterations: 2,
+    hashLength: SegmentCipher.dekLength,
+  );
 
   final SecureKeyStore _store;
   final AesGcm _aead;
@@ -114,7 +118,9 @@ class KeyManager {
   /// Wraps the master key under a key derived from [passphrase] (Argon2id).
   /// The returned JSON-encodable blob is safe to store anywhere — including our
   /// own backend — because it is useless without the passphrase.
-  Future<Map<String, Object?>> exportPassphraseRecovery(String passphrase) async {
+  Future<Map<String, Object?>> exportPassphraseRecovery(
+    String passphrase,
+  ) async {
     _requireStrongPassphrase(passphrase);
     final mk = await getOrCreateMasterKey();
     final salt = _randomBytes(16);
@@ -145,13 +151,19 @@ class KeyManager {
       memory: (recovery['mem'] as num?)?.toInt() ?? _passphraseKdf.memory,
       parallelism:
           (recovery['par'] as num?)?.toInt() ?? _passphraseKdf.parallelism,
-      iterations: (recovery['it'] as num?)?.toInt() ?? _passphraseKdf.iterations,
+      iterations:
+          (recovery['it'] as num?)?.toInt() ?? _passphraseKdf.iterations,
       hashLength: SegmentCipher.dekLength,
     );
     final salt = base64Decode(recovery['salt'] as String);
-    final wrappingKey =
-        await kdf.deriveKeyFromPassword(password: passphrase, nonce: salt);
-    final mkBytes = await _decryptConcat(recovery['blob'] as String, wrappingKey);
+    final wrappingKey = await kdf.deriveKeyFromPassword(
+      password: passphrase,
+      nonce: salt,
+    );
+    final mkBytes = await _decryptConcat(
+      recovery['blob'] as String,
+      wrappingKey,
+    );
     await _persistMasterKey(mkBytes);
   }
 
@@ -189,12 +201,18 @@ class KeyManager {
     final secret = base64Decode(recoverySecretBase64.trim());
     final salt = base64Decode(recovery['salt'] as String);
     final wrappingKey = await _deriveAccountKey(secret, salt);
-    final mkBytes = await _decryptConcat(recovery['blob'] as String, wrappingKey);
+    final mkBytes = await _decryptConcat(
+      recovery['blob'] as String,
+      wrappingKey,
+    );
     await _persistMasterKey(mkBytes);
   }
 
   Future<SecretKey> _deriveAccountKey(List<int> secret, List<int> salt) async {
-    final hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: SegmentCipher.dekLength);
+    final hkdf = Hkdf(
+      hmac: Hmac.sha256(),
+      outputLength: SegmentCipher.dekLength,
+    );
     return hkdf.deriveKey(
       secretKey: SecretKey(secret),
       nonce: salt,

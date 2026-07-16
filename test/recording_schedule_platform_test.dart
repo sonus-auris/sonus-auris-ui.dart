@@ -47,6 +47,7 @@ void main() {
         notifications: LocalNotificationsService(),
         androidAlarmClient: alarms,
         hostPlatform: ScheduleHostPlatform.android,
+        exactAlarmPermissionRequester: () async => true,
         alarmInitializationTimeout: const Duration(minutes: 1),
       );
       final transition = ScheduleTransition(
@@ -81,6 +82,7 @@ void main() {
         notifications: LocalNotificationsService(),
         androidAlarmClient: alarms,
         hostPlatform: ScheduleHostPlatform.android,
+        exactAlarmPermissionRequester: () async => true,
       );
       final transition = ScheduleTransition(
         at: DateTime(2026, 6, 15, 9),

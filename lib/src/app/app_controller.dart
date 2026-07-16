@@ -3,7 +3,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
+import 'package:flutter/foundation.dart'
+    show FlutterErrorDetails, ValueListenable, ValueNotifier;
 import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:rxdart/rxdart.dart';
@@ -11,6 +12,7 @@ import 'package:rxdart/rxdart.dart';
 import '../models/acoustic_detection.dart';
 import '../models/audio_trigger_event.dart';
 import '../models/app_config.dart';
+import '../models/client_telemetry_event.dart';
 import '../models/cloud_provider.dart';
 import '../models/context_trigger.dart';
 import '../models/cloud_secrets.dart';
@@ -60,7 +62,7 @@ import 'app_view_model.dart';
 /// Consent string recorded against the device on registration. Bump when the
 /// recording/privacy disclosure shown to the user materially changes. Bumping
 /// this also re-triggers the onboarding consent flow.
-const String kConsentVersion = 'audio-dashcam-consent-v1';
+const String kConsentVersion = 'audio-dashcam-consent-v2';
 
 /// App-level Supabase project, injected at build time so the onboarding
 /// login/sign-up works out of the box:
@@ -382,6 +384,7 @@ class AppController {
   StreamSubscription<dynamic>? _detectionsSubscription;
   StreamSubscription<dynamic>? _uploadSubscription;
   StreamSubscription<String>? _resumeRequestsSubscription;
+  StreamSubscription<DiagnosticEntry>? _diagnosticTelemetrySubscription;
 
   // Auto-resume state. [_intendRecording] is the user/schedule intent (true
   // between a successful start and the next stop), independent of whether the
@@ -394,6 +397,11 @@ class AppController {
   BackendUploadSession? _backendSession;
   String? _backendSessionKey;
   final List<AudioTriggerEvent> _pendingAlertEvents = [];
+  final List<ClientTelemetryEvent> _pendingTelemetry = [];
+  Timer? _telemetryFlushTimer;
+  bool _telemetryFlushInFlight = false;
+  static const int _maxPendingTelemetry = 100;
+  static const int _telemetryBatchSize = 20;
 
   /// Writes the time-aligned FFT feature sidecar next to each finalized segment.
   final SpectralSidecar _spectralSidecar = SpectralSidecar();
@@ -402,6 +410,10 @@ class AppController {
 
   Future<void> init() async {
     _diagnostics.add('App controller init started.');
+    _diagnosticTelemetrySubscription = _diagnostics.events.listen(
+      _queueDiagnosticTelemetry,
+      onError: (_) {},
+    );
     _backgroundCaptureService.init();
     final loadedConfig = await _settingsStore.loadConfig();
     _sleepCycleProfile = (await _settingsStore.loadSleepCycleProfile()).pruned(
@@ -489,6 +501,8 @@ class AppController {
     _isInitializing.add(false);
     _diagnostics.add('App controller init completed.');
     await _ensureSupabaseReady();
+    await _syncPortableSettingsFromSupabase();
+    _scheduleTelemetryFlush();
     // If consent was captured before sign-in (or a previous sync failed), push it
     // now that a session may be available.
     await _maybeSyncConsent();
@@ -518,6 +532,7 @@ class AppController {
         '${pendingScheduleCommand ? "start" : "stop"}.',
       );
     }
+    await _syncScheduleForegroundService(config.recordingSchedule);
     await _reconcileWithSchedule(config.recordingSchedule);
     // Arm context triggers and honor a consent notification the user may have
     // tapped to launch the app.
@@ -561,6 +576,7 @@ class AppController {
         await stopRecording();
         _scheduleStartedRecording = false;
       }
+      await _syncScheduleForegroundService(_config.value.recordingSchedule);
     }
     // The window/recording state just changed — re-arm context sources to match
     // (they run only inside an active window while idle).
@@ -781,7 +797,15 @@ class AppController {
     }
     await _settingsStore.saveConfig(normalized);
     _config.add(normalized);
-    _message.add('Settings saved.');
+    final settingsSyncError = await _syncPortableSettingsToSupabase(normalized);
+    _message.add(
+      settingsSyncError == null
+          ? 'Settings saved.'
+          : 'Settings saved on this device. Account sync failed.',
+    );
+    if (settingsSyncError != null) {
+      _diagnostics.add(settingsSyncError);
+    }
     // Battery-saver / network-policy may have changed; re-evaluate the gate (and
     // report the new policy to the backend) before draining.
     await _refreshTransferStatus();
@@ -790,6 +814,7 @@ class AppController {
     // Re-register OS events and reconcile capture when the schedule was edited.
     if (scheduleChanged) {
       await _scheduler.sync(normalized.recordingSchedule);
+      await _syncScheduleForegroundService(normalized.recordingSchedule);
       await _reconcileWithSchedule(normalized.recordingSchedule);
     }
     // Re-arm context sources for any change to trigger or schedule config.
@@ -1096,6 +1121,7 @@ class AppController {
         return;
       }
       await _applySupabaseSession(session);
+      await _syncPortableSettingsFromSupabase();
       await _ensureDeviceRegistered();
       // Flush any consent captured before sign-in.
       await _maybeSyncConsent();
@@ -1137,8 +1163,160 @@ class AppController {
       next = next.copyWith(backendDeviceToken: '');
       _backendSession = null;
       _backendSessionKey = null;
+      _pendingTelemetry.clear();
     }
     await _persistSecrets(next);
+    _diagnostics.add(
+      'Supabase telemetry streaming started.',
+      event: 'telemetry.streaming_started',
+    );
+    _scheduleTelemetryFlush();
+  }
+
+  void _queueDiagnosticTelemetry(DiagnosticEntry entry) {
+    final config = _config.valueOrNull;
+    final secrets = _secrets.valueOrNull;
+    if (config == null ||
+        secrets == null ||
+        !_supabaseRestClient.canInsert(config, secrets)) {
+      return;
+    }
+    _pendingTelemetry.add(
+      ClientTelemetryEvent(
+        level: _normalizeTelemetryLevel(entry.level),
+        event: entry.event.trim().isEmpty ? 'diagnostic' : entry.event.trim(),
+        message: entry.message,
+        occurredAtUtc: entry.occurredAtUtc,
+        stack: entry.stack?.toString(),
+        platform: _telemetryPlatform(),
+        details: {'source': 'diagnostic_log', ...entry.details},
+      ),
+    );
+    if (_pendingTelemetry.length > _maxPendingTelemetry) {
+      _pendingTelemetry.removeRange(
+        0,
+        _pendingTelemetry.length - _maxPendingTelemetry,
+      );
+    }
+    _scheduleTelemetryFlush();
+  }
+
+  void _scheduleTelemetryFlush({
+    Duration delay = const Duration(milliseconds: 250),
+  }) {
+    if (_pendingTelemetry.isEmpty || _telemetryFlushInFlight) {
+      return;
+    }
+    final config = _config.valueOrNull;
+    final secrets = _secrets.valueOrNull;
+    if (config == null ||
+        secrets == null ||
+        !_supabaseRestClient.canInsert(config, secrets)) {
+      return;
+    }
+    if (_telemetryFlushTimer?.isActive ?? false) {
+      return;
+    }
+    _telemetryFlushTimer = Timer(delay, () {
+      unawaited(_flushTelemetry());
+    });
+  }
+
+  Future<void> _flushTelemetry() async {
+    if (_telemetryFlushInFlight || _pendingTelemetry.isEmpty) {
+      return;
+    }
+    final config = _config.valueOrNull;
+    final secrets = _secrets.valueOrNull;
+    if (config == null ||
+        secrets == null ||
+        !_supabaseRestClient.canInsert(config, secrets)) {
+      return;
+    }
+    _telemetryFlushTimer?.cancel();
+    _telemetryFlushInFlight = true;
+    var ok = false;
+    try {
+      await _ensureFreshSupabaseToken();
+      final freshSecrets = _secrets.valueOrNull ?? secrets;
+      final batch = _pendingTelemetry
+          .take(_telemetryBatchSize)
+          .toList(growable: false);
+      final error = await _supabaseRestClient.insertTelemetry(
+        config: _config.valueOrNull ?? config,
+        secrets: freshSecrets,
+        events: batch,
+      );
+      ok = error == null;
+      if (ok && _pendingTelemetry.isNotEmpty) {
+        _pendingTelemetry.removeRange(
+          0,
+          batch.length.clamp(0, _pendingTelemetry.length),
+        );
+      }
+    } finally {
+      _telemetryFlushInFlight = false;
+    }
+    if (_pendingTelemetry.isNotEmpty) {
+      _scheduleTelemetryFlush(
+        delay: ok
+            ? const Duration(milliseconds: 250)
+            : const Duration(seconds: 30),
+      );
+    }
+  }
+
+  String _telemetryPlatform() {
+    if (Platform.isAndroid) {
+      return 'android';
+    }
+    if (Platform.isIOS) {
+      return 'ios';
+    }
+    if (Platform.isMacOS) {
+      return 'macos';
+    }
+    if (Platform.isWindows) {
+      return 'windows';
+    }
+    if (Platform.isLinux) {
+      return 'linux';
+    }
+    return 'other';
+  }
+
+  String _normalizeTelemetryLevel(String level) {
+    final normalized = level.trim().toLowerCase();
+    const allowed = {'debug', 'info', 'warning', 'error', 'fatal'};
+    return allowed.contains(normalized) ? normalized : 'info';
+  }
+
+  void recordFlutterError(FlutterErrorDetails details) {
+    _diagnostics.add(
+      details.exceptionAsString(),
+      level: 'error',
+      event: 'flutter_error',
+      stack: details.stack,
+      details: {
+        'exceptionType': details.exception.runtimeType.toString(),
+        if (details.library != null) 'library': details.library,
+        if (details.context != null) 'context': details.context.toString(),
+      },
+    );
+  }
+
+  void recordUnhandledError(
+    Object error,
+    StackTrace stack, {
+    String event = 'unhandled_dart_error',
+  }) {
+    _diagnostics.add(
+      error.toString(),
+      level: 'fatal',
+      event: event,
+      stack: stack,
+      details: {'exceptionType': error.runtimeType.toString()},
+    );
   }
 
   Future<void> _persistSecrets(CloudSecrets secrets) async {
@@ -1153,6 +1331,52 @@ class AppController {
   Future<void> _ensureSupabaseReady() async {
     await _ensureFreshSupabaseToken();
     await _ensureDeviceRegistered();
+  }
+
+  Future<String?> _syncPortableSettingsToSupabase(AppConfig config) async {
+    final currentSecrets = _secrets.valueOrNull;
+    if (currentSecrets == null || !currentSecrets.hasSupabaseToken) {
+      return null;
+    }
+    await _ensureFreshSupabaseToken();
+    final secrets = _secrets.valueOrNull;
+    if (secrets == null || !secrets.hasSupabaseToken) {
+      return 'Portable settings sync skipped because the Supabase session is unavailable.';
+    }
+    return _supabaseRestClient.upsertUserSettings(
+      config: config,
+      secrets: secrets,
+    );
+  }
+
+  Future<void> _syncPortableSettingsFromSupabase() async {
+    if (!_config.hasValue) {
+      return;
+    }
+    await _ensureFreshSupabaseToken();
+    final config = _config.value;
+    final secrets = _secrets.valueOrNull;
+    if (secrets == null || !secrets.hasSupabaseToken) {
+      return;
+    }
+    final result = await _supabaseRestClient.fetchUserSettings(
+      config: config,
+      secrets: secrets,
+    );
+    if (result.error != null) {
+      _diagnostics.add(result.error!);
+      return;
+    }
+    final remote = result.settings;
+    if (remote == null) {
+      final error = await _syncPortableSettingsToSupabase(config);
+      if (error != null) {
+        _diagnostics.add(error);
+      }
+      return;
+    }
+    final merged = _supabaseRestClient.mergeUserSettings(config, remote);
+    await saveConfig(merged);
   }
 
   /// Silently refreshes the Supabase access token when it is missing or near
@@ -1341,6 +1565,32 @@ class AppController {
     // Idle again — if we're still inside a window, re-arm context sources so a
     // later event can offer to resume.
     await _updateContextTriggers();
+  }
+
+  /// Android's microphone permission is "while in use"; recent Android versions
+  /// do not reliably allow a microphone foreground service to be created from a
+  /// fully background/killed state. Once the user arms a schedule, keep a
+  /// foreground service alive in a truthful standby mode so the in-app schedule
+  /// timer can open the mic exactly at the declared windows.
+  Future<void> _syncScheduleForegroundService(
+    RecordingSchedule schedule,
+  ) async {
+    if (_recorder.isRecording) {
+      return;
+    }
+    if (!schedule.enabled || !schedule.hasAnyWindows) {
+      await _backgroundCaptureService.stop();
+      return;
+    }
+    final error = await _backgroundCaptureService.start(
+      mode: BackgroundCaptureMode.scheduleStandby,
+    );
+    if (error != null) {
+      _diagnostics.add(error);
+      _message.add(
+        'Scheduled recording is armed, but Android background protection is not active: $error',
+      );
+    }
   }
 
   /// Battery-friendly voice profile (16 kHz) vs. the music-grade high-fidelity
@@ -1978,7 +2228,9 @@ class AppController {
       _uploadSubscription?.cancel() ?? Future<void>.value(),
       _resumeRequestsSubscription?.cancel() ?? Future<void>.value(),
       _transferConditionsSubscription?.cancel() ?? Future<void>.value(),
+      _diagnosticTelemetrySubscription?.cancel() ?? Future<void>.value(),
     ]);
+    _telemetryFlushTimer?.cancel();
 
     // 2. Synchronous client/scheduler closes — fire them off together.
     _scheduler.dispose();

@@ -2,12 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Private app-scoped Keychain storage for credentials and encryption keys. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	</array>
 	<!--
 	  iCloud Documents capability for the audio_dashcam/icloud bridge.
-	  Replace YOUR.BUNDLE.ID with the Runner bundle identifier and make sure the
-	  matching iCloud container exists in your Apple Developer account.
-	  This file is only used once it is set as CODE_SIGN_ENTITLEMENTS on the
-	  Runner target (see ios/ICLOUD_SETUP.md).
+	  The matching iCloud container must exist in the Apple Developer account.
+	  Release/Profile builds use this file; simulator Debug uses the smaller
+	  RunnerBase.entitlements so development does not require portal capabilities.
 	-->
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>

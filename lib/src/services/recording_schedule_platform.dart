@@ -80,9 +80,13 @@ class PluginSchedulePlatform implements SchedulePlatform {
     AndroidScheduleAlarmClient? androidAlarmClient,
     ScheduleHostPlatform? hostPlatform,
     Duration alarmInitializationTimeout = const Duration(seconds: 3),
+    Future<bool> Function()? exactAlarmPermissionRequester,
   }) : _notifications = notifications,
        _diagnostics = diagnostics,
-       _hostPlatform = hostPlatform ?? _currentHostPlatform() {
+       _hostPlatform = hostPlatform ?? _currentHostPlatform(),
+       _exactAlarmPermissionRequester =
+           exactAlarmPermissionRequester ??
+           notifications.requestExactAlarmPermission {
     final client =
         androidAlarmClient ?? const PluginAndroidScheduleAlarmClient();
     _androidAlarmClient = client;
@@ -95,6 +99,7 @@ class PluginSchedulePlatform implements SchedulePlatform {
   final LocalNotificationsService _notifications;
   final DiagnosticLog? _diagnostics;
   final ScheduleHostPlatform _hostPlatform;
+  final Future<bool> Function() _exactAlarmPermissionRequester;
   late final AndroidScheduleAlarmClient _androidAlarmClient;
   late final AlarmManagerInitializationGate _androidAlarmInitialization;
 
@@ -105,6 +110,15 @@ class PluginSchedulePlatform implements SchedulePlatform {
   Future<void> register(List<ScheduleTransition> transitions) async {
     switch (_hostPlatform) {
       case ScheduleHostPlatform.android:
+        if (transitions.isNotEmpty &&
+            !await _exactAlarmPermissionRequester()) {
+          _diagnostics?.add(
+            'Exact-alarm access was not granted; schedule transitions will '
+            'still run while Sonus Auris is alive, but Android may not wake '
+            'the app at a boundary.',
+          );
+          return;
+        }
         final revision = ++_androidOperationRevision;
         final snapshot = List<ScheduleTransition>.unmodifiable(transitions);
         await _runAndroidWhenReady(
@@ -265,12 +279,12 @@ class PluginSchedulePlatform implements SchedulePlatform {
 /// Background-isolate callback fired by an exact alarm. It runs in a separate
 /// isolate that can NOT drive the main-isolate recorder, so it deliberately does
 /// not touch capture or the foreground service: doing so could stop a *manual*
-/// recording (bypassing the ownership guard) or show a "recording" notification
-/// while nothing is actually captured. Instead it only records the commanded
-/// state; the main isolate reconciles against the schedule (the authoritative
-/// `isActiveAt`) whenever it is next alive. While the app is alive the precise
-/// in-app timer does the real start/stop; this alarm is the wake/redundancy
-/// path. Reliable capture from a fully-killed app is a known limitation.
+/// recording (bypassing the ownership guard) or try to create microphone capture
+/// from Android background state, which modern Android blocks for while-in-use
+/// permissions. Instead it only records the commanded state; the main isolate
+/// reconciles against the schedule (the authoritative `isActiveAt`) whenever it
+/// is next alive. Reliable Android scheduled capture depends on the user-visible
+/// schedule/recording foreground service staying alive after the user arms it.
 @pragma('vm:entry-point')
 Future<void> scheduleAlarmFired(int id) async {
   final prefs = await SharedPreferences.getInstance();

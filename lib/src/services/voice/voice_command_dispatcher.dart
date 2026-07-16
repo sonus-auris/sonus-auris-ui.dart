@@ -26,16 +26,12 @@ typedef SpeakCallback = Future<void> Function(String phrase);
 /// path catches anything they miss.
 class VoiceCommandDispatcher {
   VoiceCommandDispatcher._({
-    required IntentResolver resolver,
-    required Map<VoiceIntent, VoiceCommandHandler> registry,
-    required List<TimerCommandHandler> timerHandlers,
-    SpeakCallback? speak,
-    double minConfidence = 0.5,
-  }) : _resolver = resolver,
-       _registry = registry,
-       _timerHandlers = timerHandlers,
-       _speak = speak,
-       _minConfidence = minConfidence;
+    required this._resolver,
+    required this._registry,
+    required this._timerHandlers,
+    this._speak,
+    this._minConfidence = 0.5,
+  });
 
   /// Builds a dispatcher with the default registry.
   ///
