@@ -24,15 +24,6 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Check out pinned interfaces package
-        uses: actions/checkout@v7
-        with:
-          repository: sonus-auris/sonus-auris-interfaces
-          ref: 16cdb9eb843240959c5dc77c3d5592360b4dc7ed
-          path: .ci/sonus-auris-interfaces
-          persist-credentials: false
-      - name: Link sibling interfaces package
-        run: ln -s "$GITHUB_WORKSPACE/.ci/sonus-auris-interfaces" "$GITHUB_WORKSPACE/../sonus-auris-interfaces"
 
       - name: Enable KVM
         run: |
@@ -88,15 +79,6 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Check out pinned interfaces package
-        uses: actions/checkout@v7
-        with:
-          repository: sonus-auris/sonus-auris-interfaces
-          ref: 16cdb9eb843240959c5dc77c3d5592360b4dc7ed
-          path: .ci/sonus-auris-interfaces
-          persist-credentials: false
-      - name: Link sibling interfaces package
-        run: ln -s "$GITHUB_WORKSPACE/.ci/sonus-auris-interfaces" "$GITHUB_WORKSPACE/../sonus-auris-interfaces"
 
       - name: Enable KVM
         run: |

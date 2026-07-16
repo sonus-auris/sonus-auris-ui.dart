@@ -935,7 +935,7 @@ packages:
   sonus_auris_interfaces:
     dependency: "direct main"
     description:
-      path: "../sonus-auris-interfaces/generated/dart"
+      path: "packages/sonus_auris_interfaces"
       relative: true
     source: path
     version: "20260713.0.0"

@@ -35,15 +35,6 @@ jobs:
       HAS_SIGNING: ${{ secrets.IOS_DIST_CERT_P12_BASE64 != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check out pinned interfaces package
-        uses: actions/checkout@v4
-        with:
-          repository: sonus-auris/sonus-auris-interfaces
-          ref: 16cdb9eb843240959c5dc77c3d5592360b4dc7ed
-          path: .ci/sonus-auris-interfaces
-          persist-credentials: false
-      - name: Link sibling interfaces package
-        run: ln -s "$GITHUB_WORKSPACE/.ci/sonus-auris-interfaces" "$GITHUB_WORKSPACE/../sonus-auris-interfaces"
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
