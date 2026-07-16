@@ -31,16 +31,15 @@ class BirdMatch {
 /// (the capture pipeline already produces mono float frames).
 class BirdClassifier {
   BirdClassifier({
-    required ModelManager models,
+    required this.models,
     http.Client? httpClient,
     this.labelsUrl = 'https://models.sonusauris.app/perch/perch-v2-labels.csv',
-  })  : _models = models,
-        _http = httpClient ?? http.Client();
+  }) : _http = httpClient ?? http.Client();
 
   static const int sampleRate = 32000;
   static const int windowSamples = 5 * sampleRate;
 
-  final ModelManager _models;
+  final ModelManager models;
   final http.Client _http;
   final String labelsUrl;
 
