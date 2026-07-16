@@ -31,6 +31,26 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "audio_dashcam/device_storage"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "freeBytes" -> {
+                    val path = call.argument<String>("path")
+                    if (path.isNullOrEmpty()) {
+                        result.error("bad_args", "path is required", null)
+                    } else {
+                        try {
+                            result.success(StatFs(path).availableBytes)
+                        } catch (error: Exception) {
+                            result.error("statfs_failed", error.message, null)
+                        }
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     private fun sampleSleepSignals(
