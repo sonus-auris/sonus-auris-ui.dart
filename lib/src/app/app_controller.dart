@@ -3038,6 +3038,69 @@ class AppController {
     }
   }
 
+  /// Routes a transcript into the voice-command pipeline when enabled.
+  ///
+  /// Guards, in order: the feature flag; a leading wake word ("hey sonus, …")
+  /// unless the dispatcher is mid-dialogue awaiting a follow-up answer; and —
+  /// when "Knows your voice" is on with enrolled samples — the speaker must
+  /// match an enrolled fingerprint, so a stranger saying "hey sonus, stop
+  /// recording" is ignored. An inconclusive match (too little speech in the
+  /// window) is allowed through: voice ID is a convenience gate, not
+  /// authentication.
+  Future<void> _maybeHandleVoiceCommand(
+    AppConfig config,
+    String transcript,
+    VoiceMatch? speakerMatch,
+  ) async {
+    if (!config.voiceCommandsEnabled) {
+      return;
+    }
+    final normalized = transcript.trim().toLowerCase();
+    final hasWakeWord = VoiceCommandParser.wakeWords.any(
+      normalized.startsWith,
+    );
+    if (!hasWakeWord && !_voiceCommands.hasPendingFollowUp) {
+      return;
+    }
+    if (speakerMatch != null && !speakerMatch.isMatch) {
+      _diagnostics.add(
+        'Voice command ignored: speaker similarity '
+        '${speakerMatch.similarity.toStringAsFixed(2)} is below the enrolled '
+        'voice threshold.',
+      );
+      return;
+    }
+    final result = await _voiceCommands.dispatch(transcript);
+    _diagnostics.add(
+      'Voice command ${result.command.intent.name}: '
+      '${result.handled ? (result.success ? 'ok' : 'failed') : 'unavailable'}.',
+    );
+    if (result.spokenResponse.isNotEmpty) {
+      _message.add(result.spokenResponse);
+    }
+  }
+
+  /// Enrolls the last few seconds of live audio as a "Knows your voice"
+  /// sample. Returns a user-facing status/error message.
+  Future<String> enrollVoiceSample() async {
+    final clip = _recorder.recentAudio(window: const Duration(seconds: 5));
+    if (clip == null) {
+      return 'Start recording, speak normally for a few seconds, then add '
+          'the sample.';
+    }
+    final result = await voiceProfiles.enroll(
+      mono: pcm16BytesToMonoDoubles(clip.bytes, clip.channels),
+      sampleRate: clip.sampleRate,
+    );
+    if (result.error != null) {
+      return result.error!;
+    }
+    return 'Voice sample added '
+        '(${voiceProfiles.samples.length}/${VoiceProfileService.maxSamples}).';
+  }
+
+  Future<void> removeVoiceSample(String id) => voiceProfiles.removeSample(id);
+
   void _appendDetection(AcousticDetection detection) {
     if (_detectionsList.isClosed) {
       return;
