@@ -21,6 +21,7 @@
 		D1A000012F00000100000001 /* IcloudBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A000002F00000100000001 /* IcloudBridge.swift */; };
 		D1A000052F00000100000001 /* ShazamBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A000042F00000100000001 /* ShazamBridge.swift */; };
 		D1A000072F00000100000001 /* SleepSensorsBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A000062F00000100000001 /* SleepSensorsBridge.swift */; };
+		D1A000092F00000100000001 /* DeviceStorageBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A000082F00000100000001 /* DeviceStorageBridge.swift */; };
 		DBE8AA92B02A68852FD21F75 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C42512D0B4EBC5028D54E847 /* Pods_RunnerTests.framework */; };
 /* End PBXBuildFile section */
 
@@ -74,6 +75,7 @@
 		D1A000002F00000100000001 /* IcloudBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IcloudBridge.swift; sourceTree = "<group>"; };
 		D1A000042F00000100000001 /* ShazamBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShazamBridge.swift; sourceTree = "<group>"; };
 		D1A000062F00000100000001 /* SleepSensorsBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepSensorsBridge.swift; sourceTree = "<group>"; };
+		D1A000082F00000100000001 /* DeviceStorageBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceStorageBridge.swift; sourceTree = "<group>"; };
 		E5AC5E4A955F71B254A7A51E /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		E87D7500E3D088C43D7040A6 /* Pods-Runner.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"; sourceTree = "<group>"; };
 		EEF901B262D02B449F682BDB /* Pods-RunnerTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig"; sourceTree = "<group>"; };
@@ -164,6 +166,7 @@
 				D1A000002F00000100000001 /* IcloudBridge.swift */,
 				D1A000042F00000100000001 /* ShazamBridge.swift */,
 				D1A000062F00000100000001 /* SleepSensorsBridge.swift */,
+				D1A000082F00000100000001 /* DeviceStorageBridge.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
@@ -408,6 +411,7 @@
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				D1A000052F00000100000001 /* ShazamBridge.swift in Sources */,
 				D1A000072F00000100000001 /* SleepSensorsBridge.swift in Sources */,
+				D1A000092F00000100000001 /* DeviceStorageBridge.swift in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
