@@ -3138,6 +3138,13 @@ class AppController {
       segments: await _segmentIndex.loadSegments(),
       cutoffUtc: now.subtract(Duration(hours: config.deviceRetentionHours)),
     );
+    // "Space permitting": within the retention window, still yield local disk
+    // back to the OS before the device runs out, oldest uploaded/saved first.
+    segments = await _segmentIndex.enforceFreeSpaceFloor(
+      segments: segments,
+      minFreeBytes: minFreeDiskBytes,
+      freeBytes: deviceStorageInfo.freeBytes,
+    );
     if (!_backendClient.canUseBackend(config, _secrets.value) &&
         config.cloudProvider == CloudProvider.s3 &&
         config.s3TargetReady &&
