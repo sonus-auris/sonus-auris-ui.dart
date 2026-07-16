@@ -7,6 +7,7 @@ import 'handlers/recording_command_handler.dart';
 import 'handlers/timer_command_handler.dart';
 import 'intent_resolver.dart';
 import 'voice_command_handler.dart';
+import 'voice_command_parser.dart';
 import 'voice_limits.dart';
 
 /// Speaks short confirmation phrases back to the user. The app already has
