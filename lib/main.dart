@@ -25,6 +25,7 @@ import 'src/models/recording_schedule.dart';
 import 'src/models/storage_estimate.dart';
 import 'src/models/transfer_gate_status.dart';
 import 'src/models/upload_network_policy.dart';
+import 'src/services/voice_id/voice_profile_service.dart';
 import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
 import 'src/widgets/supabase_auth_form.dart';
