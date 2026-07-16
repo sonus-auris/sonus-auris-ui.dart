@@ -117,15 +117,54 @@ class VoiceCommandDispatcher {
 
   /// Parse + execute a raw transcript end-to-end. The returned result is also
   /// pushed onto [results] and (best-effort) spoken aloud.
+  ///
+  /// When the previous result asked a follow-up question (missing slot), this
+  /// first tries to read the utterance as that answer — "pause recording" →
+  /// "for how long?" → "ten minutes" completes the original command. A reply
+  /// that doesn't answer falls through to normal parsing, so "never mind, stop
+  /// recording" still works mid-dialogue.
   Future<VoiceCommandResult> dispatch(String transcript) async {
+    final pending = _takePendingFollowUp();
+    if (pending != null) {
+      final seconds = VoiceCommandParser.spokenDurationSeconds(transcript);
+      if (seconds != null) {
+        return dispatchCommand(
+          pending.command.copyWith(
+            slots: {...pending.command.slots, pending.slot: '$seconds'},
+          ),
+        );
+      }
+    }
     final command = await _resolver.resolve(transcript);
     return dispatchCommand(command);
+  }
+
+  ({VoiceCommand command, String slot})? _takePendingFollowUp() {
+    final command = _pendingCommand;
+    final slot = _pendingSlot;
+    final expires = _pendingExpiresAt;
+    _pendingCommand = null;
+    _pendingSlot = null;
+    _pendingExpiresAt = null;
+    if (command == null || slot == null || expires == null) {
+      return null;
+    }
+    if (DateTime.now().isAfter(expires)) {
+      return null;
+    }
+    return (command: command, slot: slot);
   }
 
   /// Execute an already-parsed command (useful when the parser is swapped for
   /// an external NLU service upstream).
   Future<VoiceCommandResult> dispatchCommand(VoiceCommand command) async {
     final result = await _execute(command);
+    if (result.data[VoiceCommandResult.followUpSlotKey] case final String slot
+        when slot.isNotEmpty) {
+      _pendingCommand = result.command;
+      _pendingSlot = slot;
+      _pendingExpiresAt = DateTime.now().add(followUpWindow);
+    }
     if (!_results.isClosed) {
       _results.add(result);
     }
