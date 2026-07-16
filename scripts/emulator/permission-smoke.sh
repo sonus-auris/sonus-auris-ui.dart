@@ -137,12 +137,12 @@ fi
 assert_ui_text "Welcome to Sonus Auris" "$ui_xml"
 assert_ui_text "Continue" "$ui_xml"
 tap_ui_text "Continue" "$ui_xml"
-if ! wait_for_ui_text "Create your Sonus Auris account" 20; then
+if ! wait_for_ui_text "Create your account" 20; then
   echo "  ✗ account screen did not become ready within 20 seconds"
   capture_failure_evidence
   exit 1
 fi
-assert_ui_text "Create your Sonus Auris account" "$ui_xml"
+assert_ui_text "Create your account" "$ui_xml"
 assert_ui_text "Sign in" "$ui_xml"
 assert_ui_text "Create account" "$ui_xml"
 if adb_ logcat -d 2>/dev/null | grep -m1 -F "A RenderFlex overflowed"; then

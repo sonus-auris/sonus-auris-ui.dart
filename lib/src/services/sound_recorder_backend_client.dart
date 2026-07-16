@@ -1,4 +1,6 @@
 // Backend-mediated upload client for non-S3 providers: registers the device and streams encrypted segments through the Sonus backend.
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -86,6 +88,8 @@ class DeviceRegistration {
 }
 
 class SoundRecorderBackendClient {
+  // Keep the public named parameter `encryptor`; an initializing formal would
+  // expose the private field name as API.
   SoundRecorderBackendClient({
     http.Client? httpClient,
     this.requestTimeout = const Duration(seconds: 45),
@@ -401,10 +405,10 @@ class SoundRecorderBackendClient {
             'installId': installId,
             'consentVersion': consentVersion,
             'recordingIndicatorAcknowledged': recordingIndicatorAcknowledged,
-            if (appVersion != null) 'appVersion': appVersion,
-            if (osVersion != null) 'osVersion': osVersion,
-            if (displayName != null) 'displayName': displayName,
-            if (legalRegion != null) 'legalRegion': legalRegion,
+            'appVersion': ?appVersion,
+            'osVersion': ?osVersion,
+            'displayName': ?displayName,
+            'legalRegion': ?legalRegion,
           }),
         )
         .timeout(requestTimeout);
@@ -460,10 +464,10 @@ class SoundRecorderBackendClient {
             headers: _jsonHeaders(secrets),
             body: jsonEncode({
               'paused': paused,
-              if (reason != null) 'reason': reason,
+              'reason': ?reason,
               'networkPolicy': networkPolicy,
-              if (batteryLevel != null) 'batteryLevel': batteryLevel,
-              if (charging != null) 'charging': charging,
+              'batteryLevel': ?batteryLevel,
+              'charging': ?charging,
             }),
           )
           .timeout(requestTimeout);
@@ -532,10 +536,10 @@ class SoundRecorderBackendClient {
           headers: _jsonHeaders(secrets),
           body: jsonEncode({
             'provider': canonicalProviderName(provider),
-            if (redirectUri != null) 'redirectUri': redirectUri,
-            if (folderPath != null) 'folderPath': folderPath,
-            if (rootFolderId != null) 'rootFolderId': rootFolderId,
-            if (displayName != null) 'displayName': displayName,
+            'redirectUri': ?redirectUri,
+            'folderPath': ?folderPath,
+            'rootFolderId': ?rootFolderId,
+            'displayName': ?displayName,
           }),
         )
         .timeout(requestTimeout);
@@ -577,24 +581,17 @@ class SoundRecorderBackendClient {
           body: jsonEncode({
             'provider': canonicalProviderName(provider),
             'state': state,
-            if (providerAccessToken != null)
-              'providerAccessToken': providerAccessToken,
-            if (providerRefreshToken != null)
-              'providerRefreshToken': providerRefreshToken,
-            if (providerTokenExpiresIn != null)
-              'providerTokenExpiresIn': providerTokenExpiresIn,
-            if (providerTokenScope != null)
-              'providerTokenScope': providerTokenScope,
-            if (authorizationCode != null)
-              'authorizationCode': authorizationCode,
-            if (redirectUri != null) 'redirectUri': redirectUri,
-            if (clientManagedAcknowledged != null)
-              'clientManagedAcknowledged': clientManagedAcknowledged,
-            if (displayName != null) 'displayName': displayName,
-            if (providerAccountId != null)
-              'providerAccountId': providerAccountId,
-            if (folderPath != null) 'folderPath': folderPath,
-            if (rootFolderId != null) 'rootFolderId': rootFolderId,
+            'providerAccessToken': ?providerAccessToken,
+            'providerRefreshToken': ?providerRefreshToken,
+            'providerTokenExpiresIn': ?providerTokenExpiresIn,
+            'providerTokenScope': ?providerTokenScope,
+            'authorizationCode': ?authorizationCode,
+            'redirectUri': ?redirectUri,
+            'clientManagedAcknowledged': ?clientManagedAcknowledged,
+            'displayName': ?displayName,
+            'providerAccountId': ?providerAccountId,
+            'folderPath': ?folderPath,
+            'rootFolderId': ?rootFolderId,
           }),
         )
         .timeout(requestTimeout);
@@ -647,8 +644,8 @@ class SoundRecorderBackendClient {
           uri,
           headers: _jsonHeaders(secrets),
           body: jsonEncode({
-            if (providerFileId != null) 'providerFileId': providerFileId,
-            if (destinationKey != null) 'destinationKey': destinationKey,
+            'providerFileId': ?providerFileId,
+            'destinationKey': ?destinationKey,
           }),
         )
         .timeout(requestTimeout);

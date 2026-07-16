@@ -1,7 +1,9 @@
 // Mobile entrypoint: boots Flutter, wires up the AppController and services, and runs the Sonus Auris app UI.
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show FlutterExceptionHandler;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
@@ -54,6 +56,8 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
   AppController? _controller;
   Future<void>? _initFuture;
   Object? _startupError;
+  FlutterExceptionHandler? _previousFlutterOnError;
+  ui.ErrorCallback? _previousPlatformOnError;
 
   @override
   void initState() {
@@ -80,6 +84,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
     try {
       final controller = widget.controllerFactory?.call() ?? AppController();
       _controller = controller;
+      _installTelemetryErrorHooks(controller);
       final initFuture = controller.init();
       if (!mounted) {
         unawaited(controller.dispose());
@@ -97,9 +102,32 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
     }
   }
 
+  void _installTelemetryErrorHooks(AppController controller) {
+    _previousFlutterOnError ??= FlutterError.onError;
+    FlutterError.onError = (details) {
+      controller.recordFlutterError(details);
+      _previousFlutterOnError?.call(details);
+    };
+    _previousPlatformOnError ??= ui.PlatformDispatcher.instance.onError;
+    ui.PlatformDispatcher.instance.onError = (error, stack) {
+      controller.recordUnhandledError(
+        error,
+        stack,
+        event: 'platform_dispatcher_error',
+      );
+      return _previousPlatformOnError?.call(error, stack) ?? false;
+    };
+  }
+
   @override
   void dispose() {
     _controllerBootstrapTimer?.cancel();
+    if (_previousFlutterOnError != null) {
+      FlutterError.onError = _previousFlutterOnError;
+    }
+    if (_previousPlatformOnError != null) {
+      ui.PlatformDispatcher.instance.onError = _previousPlatformOnError;
+    }
     final controller = _controller;
     if (controller != null) {
       unawaited(controller.dispose());
@@ -2850,6 +2878,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
   late bool _sleepMotionConsent;
   late bool _sleepAmbientLightConsent;
   late bool _sleepPhoneContextConsent;
+  late bool _sleepCloudSyncConsent;
   late double _sleepCycleMinutes;
   late bool _music;
   late bool _speech;
@@ -2871,6 +2900,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
     _sleepMotionConsent = config.sleepMotionSensorConsent;
     _sleepAmbientLightConsent = config.sleepAmbientLightConsent;
     _sleepPhoneContextConsent = config.sleepPhoneContextConsent;
+    _sleepCloudSyncConsent = config.sleepCloudSyncConsent;
     _sleepCycleMinutes = config.sleepCycleMinutesByIndex.isEmpty
         ? 90.0
         : config.sleepCycleMinutesByIndex.first;
@@ -2911,6 +2941,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
         sleepMotionSensorConsent: _sleepMotionConsent,
         sleepAmbientLightConsent: _sleepAmbientLightConsent,
         sleepPhoneContextConsent: _sleepPhoneContextConsent,
+        sleepCloudSyncConsent: _sleepCloudSyncConsent,
         musicDetectionEnabled: _music,
         speechDetectionEnabled: _speech,
         shazamEnabled: _shazam,
@@ -2973,6 +3004,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
                     _sleepMotionConsent = false;
                     _sleepAmbientLightConsent = false;
                     _sleepPhoneContextConsent = false;
+                    _sleepCloudSyncConsent = false;
                   }
                 });
                 _apply();
@@ -3028,6 +3060,18 @@ class _AcousticSectionState extends State<_AcousticSection> {
                 value: _sleepPhoneContextConsent,
                 onChanged: (v) {
                   setState(() => _sleepPhoneContextConsent = v);
+                  _apply();
+                },
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Sync sleep cycles to cloud'),
+                subtitle: const Text(
+                  'Off: sleep detections stay on this device',
+                ),
+                value: _sleepCloudSyncConsent,
+                onChanged: (v) {
+                  setState(() => _sleepCloudSyncConsent = v);
                   _apply();
                 },
               ),
@@ -4365,7 +4409,9 @@ class _ScheduleSectionState extends State<_ScheduleSection> {
           Text(
             'Record automatically during the windows you set for each day. '
             'Setting these times is your consent to record then; keep the app '
-            'running so iOS can maintain the active audio session.',
+            'running so iOS can maintain the active audio session. On Android, '
+            'Sonus Auris keeps a persistent notification while the schedule is '
+            'armed so the microphone can start at the declared windows.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: SonusColors.inkSoft,
             ),
