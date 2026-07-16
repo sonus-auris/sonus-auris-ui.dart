@@ -350,7 +350,7 @@ void main() {
     expect(payload, isNot(contains('user_id')));
     expect(payload, isNot(contains('device_id')));
     expect(payload, isNot(contains('supabase_anon_key')));
-    expect(payload['device_retention_hours'], 50);
+    expect(payload['device_retention_hours'], 100);
   });
 
   test('merges account settings without touching device-only controls', () {
