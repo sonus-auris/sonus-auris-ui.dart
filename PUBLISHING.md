@@ -54,7 +54,7 @@ These require a human with the right accounts; do them once.
 - [ ] **Apple Privacy "Nutrition Labels"** filled from `docs/compliance/PRIVACY_LABELS_appstore.md`.
 - [x] **Apple privacy manifest** bundled at `ios/Runner/PrivacyInfo.xcprivacy` and kept aligned with those labels.
 - [ ] **Permissions rationale** ready for reviewers (`docs/compliance/PERMISSIONS_RATIONALE.md`) — mic + **background audio** + location + Bluetooth are all high-scrutiny. Record a demo video showing the recording flow for App Review.
-- [ ] **iOS export compliance** decided (`docs/compliance/EXPORT_COMPLIANCE.md`) — the app does its own AES-256-GCM E2E encryption, so this is **not** an automatic "exempt". `ITSAppUsesNonExemptEncryption` is set in `Info.plist` per that doc; confirm the determination.
+- [ ] **iOS export compliance** confirmed (`docs/compliance/EXPORT_COMPLIANCE.md`) — the documented determination self-classifies the app's standard AES-256-GCM protection as exempt and sets `ITSAppUsesNonExemptEncryption = false`; have the publisher or counsel confirm that determination for the intended countries.
 - [ ] **Foreground-service / background-audio justification** (Play "Foreground Service" declaration + Apple background `audio` mode review).
 - [x] Android targets API 36, omits restricted exact-alarm/full-screen permissions, and requests user-grantable exact-alarm access only when a schedule is armed.
 

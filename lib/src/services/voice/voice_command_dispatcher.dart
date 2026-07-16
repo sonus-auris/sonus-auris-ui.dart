@@ -108,6 +108,14 @@ class VoiceCommandDispatcher {
   /// How long a "for how long?"-style question stays answerable.
   static const Duration followUpWindow = Duration(seconds: 30);
 
+  /// True while the previous command's follow-up question ("for how long?")
+  /// is still answerable. Callers that gate dispatch on a wake word should
+  /// let a bare answer through while this is set.
+  bool get hasPendingFollowUp =>
+      _pendingCommand != null &&
+      _pendingExpiresAt != null &&
+      DateTime.now().isBefore(_pendingExpiresAt!);
+
   /// Stream of executed command results, for a command log / toast UI.
   ValueStream<VoiceCommandResult> get results => _results.stream;
 
