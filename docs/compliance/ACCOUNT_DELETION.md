@@ -32,8 +32,8 @@ Before submitting, ensure:
 | Data | On deletion |
 |---|---|
 | Account record, Supabase Auth user, auth/device tokens | Deleted |
-| Clip metadata held by the backend | Deleted |
-| On-device recordings, keys, tokens | Wiped from the device |
+| Clip metadata and encrypted backups held by Sonus Auris | Deleted |
+| On-device recordings, keys, tokens | Wiped by in-app deletion; a web/email request cannot remotely erase a device |
 | Clips you backed up to **your own** storage (S3/Drive/OneDrive/iCloud) | You control these; delete them in that service |
 | Minimal transaction logs required by law | Retained only as long as legally required, then deleted |
 
@@ -50,8 +50,10 @@ Target: complete deletion within 30 days of a verified request.
 > from the address associated with your account (or the device/account ID shown in
 > the app's Settings) with the subject "Delete my account".
 >
-> We will verify the request and delete your account, authentication tokens, and
-> the clip metadata we hold, normally within 30 days. Recordings you backed up to
-> your own cloud storage are under your control — delete them in that service.
+> We will verify the request and delete your account, authentication tokens, clip
+> metadata, and encrypted backups held by Sonus Auris, normally within 30 days.
+> Recordings you backed up to your own cloud storage are under your control —
+> delete them in that service. A request made outside the app cannot remotely
+> erase recordings stored only on your device.
 >
 > Questions: **<privacy@yourdomain>**.
