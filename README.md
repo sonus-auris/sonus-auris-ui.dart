@@ -147,6 +147,23 @@ Run checks:
 /Users/maca5/development/flutter/bin/flutter test
 ```
 
+The opt-in live Supabase test signs in two pre-created users, inserts one
+`acoustic_events` fixture per user, proves cross-user reads and writes are
+blocked by the deployed RLS policy, and removes both fixtures:
+
+```sh
+flutter test -d macos integration_test/live_supabase_auth_test.dart \
+  --dart-define=SONUS_SUPABASE_URL=https://PROJECT.supabase.co \
+  --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_REPLACE_ME \
+  --dart-define=SONUS_TEST_EMAIL=user-a@example.test \
+  --dart-define=SONUS_TEST_PASSWORD=REPLACE_ME \
+  --dart-define=SONUS_TEST_EMAIL_B=user-b@example.test \
+  --dart-define=SONUS_TEST_PASSWORD_B=REPLACE_ME
+```
+
+Use only the public client key. The test never accepts a service-role key and
+does not print access tokens.
+
 Run on a configured device:
 
 ```sh
