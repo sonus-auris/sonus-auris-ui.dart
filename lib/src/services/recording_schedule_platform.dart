@@ -110,6 +110,11 @@ class PluginSchedulePlatform implements SchedulePlatform {
   Future<void> register(List<ScheduleTransition> transitions) async {
     switch (_hostPlatform) {
       case ScheduleHostPlatform.android:
+        // Claim the revision before the first await: caller order defines the
+        // "latest desired state", so a cancelAll() issued after this register()
+        // must observe a newer revision even while the permission prompt or
+        // alarm-manager initialization is still pending.
+        final revision = ++_androidOperationRevision;
         if (transitions.isNotEmpty && !await _exactAlarmPermissionRequester()) {
           _diagnostics?.add(
             'Exact-alarm access was not granted; schedule transitions will '
@@ -118,7 +123,6 @@ class PluginSchedulePlatform implements SchedulePlatform {
           );
           return;
         }
-        final revision = ++_androidOperationRevision;
         final snapshot = List<ScheduleTransition>.unmodifiable(transitions);
         await _runAndroidWhenReady(
           revision: revision,
