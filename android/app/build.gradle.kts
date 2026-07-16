@@ -44,6 +44,15 @@ android {
         versionName = flutter.versionName
     }
 
+    packaging {
+        jniLibs {
+            // tflite_flutter bundles the TFLite GPU delegate (~3.4 MB/ABI).
+            // Our models (Perch bird ID) run on CPU/XNNPack only — drop the
+            // GPU .so to keep the store download small.
+            excludes += "**/libtensorflowlite_gpu_jni.so"
+        }
+    }
+
     signingConfigs {
         create("release") {
             if (keystorePropertiesFile.exists()) {
