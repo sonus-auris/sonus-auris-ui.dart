@@ -58,6 +58,11 @@ import '../services/speech_to_text_client.dart';
 import '../services/on_device_speech_client.dart';
 import '../services/supabase_auth_client.dart';
 import '../services/supabase_rest_client.dart';
+import '../services/acoustic/spectral_features.dart';
+import '../services/voice/handlers/recording_command_handler.dart';
+import '../services/voice/voice_command_dispatcher.dart';
+import '../services/voice/voice_command_parser.dart';
+import '../services/voice_id/voice_profile_service.dart';
 import 'app_view_model.dart';
 
 /// Consent string recorded against the device on registration. Bump when the
