@@ -42,6 +42,7 @@ import '../services/recording_scheduler.dart';
 import '../services/recording_schedule_platform.dart';
 import '../services/spectral_sidecar.dart';
 import '../services/s3_storage_client.dart';
+import '../services/device_storage_info.dart';
 import '../services/segment_index.dart';
 import '../services/segment_recorder.dart';
 import '../services/settings_store.dart';
