@@ -58,6 +58,24 @@ class VoiceCommandResult {
         spokenResponse: "Sorry, I didn't catch that.",
       );
 
+  /// The command was understood but is missing a required [slot]; the spoken
+  /// response asks for it and the dispatcher treats the user's next utterance
+  /// as the answer. Not marked handled — nothing has executed yet.
+  factory VoiceCommandResult.needsFollowUp(
+    VoiceCommand command,
+    String spokenResponse, {
+    required String slot,
+  }) => VoiceCommandResult(
+    command: command,
+    handled: false,
+    success: false,
+    spokenResponse: spokenResponse,
+    data: {followUpSlotKey: slot},
+  );
+
+  /// Data key naming the slot a [needsFollowUp] result is waiting on.
+  static const String followUpSlotKey = 'followUpSlot';
+
   final VoiceCommand command;
   final bool handled;
   final bool success;
