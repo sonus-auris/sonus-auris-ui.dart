@@ -54,7 +54,7 @@ class BirdClassifier {
     if (isReady) {
       return;
     }
-    final modelFile = await _models.ensure(ModelCatalog.perchBirds);
+    final modelFile = await models.ensure(ModelCatalog.perchBirds);
     _labels ??= await _loadLabels(modelFile.parent);
     final raw = Interpreter.fromFile(modelFile);
     _rawInterpreter = raw;
