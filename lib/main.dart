@@ -2929,9 +2929,8 @@ class _VoiceIdSectionState extends State<_VoiceIdSection> {
               'device.',
             ),
             value: config.voiceIdEnabled,
-            onChanged: (v) => widget.onChanged(
-              config.copyWith(voiceIdEnabled: v),
-            ),
+            onChanged: (v) =>
+                widget.onChanged(config.copyWith(voiceIdEnabled: v)),
           ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
@@ -2942,9 +2941,8 @@ class _VoiceIdSectionState extends State<_VoiceIdSection> {
               'recognition on, only your enrolled voice is obeyed.',
             ),
             value: config.voiceCommandsEnabled,
-            onChanged: (v) => widget.onChanged(
-              config.copyWith(voiceCommandsEnabled: v),
-            ),
+            onChanged: (v) =>
+                widget.onChanged(config.copyWith(voiceCommandsEnabled: v)),
           ),
           const SizedBox(height: 8),
           Text(

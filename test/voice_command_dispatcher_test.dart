@@ -148,31 +148,34 @@ void main() {
       expect(result.spokenResponse, contains('10 minutes'));
     });
 
-    test('pause without a duration asks, then the next utterance answers', () async {
-      var recording = true;
-      Duration? pausedFor;
-      final control = RecorderControl(
-        start: () async => recording = true,
-        stop: () async => recording = false,
-        isRecording: () => recording,
-        pauseFor: (duration) async {
-          pausedFor = duration;
-          recording = false;
-        },
-        isPaused: () => pausedFor != null && !recording,
-      );
-      final dispatcher = VoiceCommandDispatcher(recorderControl: control);
-      addTearDown(dispatcher.dispose);
+    test(
+      'pause without a duration asks, then the next utterance answers',
+      () async {
+        var recording = true;
+        Duration? pausedFor;
+        final control = RecorderControl(
+          start: () async => recording = true,
+          stop: () async => recording = false,
+          isRecording: () => recording,
+          pauseFor: (duration) async {
+            pausedFor = duration;
+            recording = false;
+          },
+          isPaused: () => pausedFor != null && !recording,
+        );
+        final dispatcher = VoiceCommandDispatcher(recorderControl: control);
+        addTearDown(dispatcher.dispose);
 
-      final question = await dispatcher.dispatch('pause recording');
-      expect(question.handled, isFalse);
-      expect(question.spokenResponse, contains('how long'));
-      expect(pausedFor, isNull);
+        final question = await dispatcher.dispatch('pause recording');
+        expect(question.handled, isFalse);
+        expect(question.spokenResponse, contains('how long'));
+        expect(pausedFor, isNull);
 
-      final answer = await dispatcher.dispatch('twenty minutes');
-      expect(answer.success, isTrue);
-      expect(pausedFor, const Duration(minutes: 20));
-    });
+        final answer = await dispatcher.dispatch('twenty minutes');
+        expect(answer.success, isTrue);
+        expect(pausedFor, const Duration(minutes: 20));
+      },
+    );
 
     test('a non-answer mid-dialogue falls through to normal parsing', () async {
       var recording = true;

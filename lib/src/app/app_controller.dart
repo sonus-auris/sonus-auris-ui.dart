@@ -3063,9 +3063,7 @@ class AppController {
       return;
     }
     final normalized = transcript.trim().toLowerCase();
-    final hasWakeWord = VoiceCommandParser.wakeWords.any(
-      normalized.startsWith,
-    );
+    final hasWakeWord = VoiceCommandParser.wakeWords.any(normalized.startsWith);
     if (!hasWakeWord && !_voiceCommands.hasPendingFollowUp) {
       return;
     }

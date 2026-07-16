@@ -110,10 +110,7 @@ class RecordingCommandHandler implements VoiceCommandHandler {
     try {
       await pauseFor(Duration(seconds: seconds));
     } catch (_) {
-      return VoiceCommandResult.failure(
-        command,
-        "I couldn't pause recording.",
-      );
+      return VoiceCommandResult.failure(command, "I couldn't pause recording.");
     }
     return VoiceCommandResult.ok(
       command,
@@ -143,7 +140,9 @@ class RecordingCommandHandler implements VoiceCommandHandler {
     } catch (_) {
       return VoiceCommandResult.failure(
         command,
-        wantStart ? "I couldn't start recording." : "I couldn't stop recording.",
+        wantStart
+            ? "I couldn't start recording."
+            : "I couldn't stop recording.",
       );
     }
 

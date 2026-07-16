@@ -30,8 +30,10 @@ class VoiceFingerprinter {
     this.melBands = 24,
     this.mfccCount = 13,
     this.minVoicedFrames = 25,
-  }) : assert(fftSize > 0 && (fftSize & (fftSize - 1)) == 0,
-           'fftSize must be a power of two'),
+  }) : assert(
+         fftSize > 0 && (fftSize & (fftSize - 1)) == 0,
+         'fftSize must be a power of two',
+       ),
        _fft = FFT(fftSize),
        _window = _hann(fftSize) {
     _filterbank = _melFilterbank(
@@ -224,7 +226,8 @@ class VoiceFingerprinter {
     return window;
   }
 
-  static double _hzToMel(double hz) => 2595 * math.log(1 + hz / 700) / math.ln10;
+  static double _hzToMel(double hz) =>
+      2595 * math.log(1 + hz / 700) / math.ln10;
 
   static double _melToHz(double mel) =>
       700 * (math.pow(10, mel / 2595) - 1).toDouble();
@@ -267,12 +270,16 @@ class VoiceFingerprinter {
 
   /// DCT-II rows 1..[rows] (row 0 — overall log energy — is deliberately
   /// skipped: it tracks loudness, not voice identity).
-  static List<Float64List> _dctMatrix({required int rows, required int columns}) {
+  static List<Float64List> _dctMatrix({
+    required int rows,
+    required int columns,
+  }) {
     final matrix = <Float64List>[];
     for (var r = 1; r <= rows; r++) {
       final row = Float64List(columns);
       for (var c = 0; c < columns; c++) {
-        row[c] = math.cos(math.pi * r * (c + 0.5) / columns) *
+        row[c] =
+            math.cos(math.pi * r * (c + 0.5) / columns) *
             math.sqrt(2 / columns);
       }
       matrix.add(row);

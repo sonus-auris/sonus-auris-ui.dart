@@ -14,8 +14,10 @@ void main() {
 
     test('parses seconds and hours', () {
       expect(parser.parse('timer 90 seconds').slot('durationSeconds'), '90');
-      expect(parser.parse('set a timer for 1 hour').slot('durationSeconds'),
-          '3600');
+      expect(
+        parser.parse('set a timer for 1 hour').slot('durationSeconds'),
+        '3600',
+      );
     });
 
     test('focus session defaults to 25 minutes', () {
@@ -52,24 +54,33 @@ void main() {
 
   group('recording control', () {
     test('start recording', () {
-      expect(parser.parse('Start recording').intent,
-          VoiceIntent.startRecording);
-      expect(parser.parse('begin the recording').intent,
-          VoiceIntent.startRecording);
+      expect(
+        parser.parse('Start recording').intent,
+        VoiceIntent.startRecording,
+      );
+      expect(
+        parser.parse('begin the recording').intent,
+        VoiceIntent.startRecording,
+      );
     });
 
     test('stop recording', () {
-      expect(parser.parse('Stop recording.').intent,
-          VoiceIntent.stopRecording);
+      expect(parser.parse('Stop recording.').intent, VoiceIntent.stopRecording);
     });
 
     test('confirm recording', () {
-      expect(parser.parse('Confirm recording').intent,
-          VoiceIntent.confirmRecording);
-      expect(parser.parse('hey sonus, am I recording?').intent,
-          VoiceIntent.confirmRecording);
-      expect(parser.parse('are you still recording').intent,
-          VoiceIntent.confirmRecording);
+      expect(
+        parser.parse('Confirm recording').intent,
+        VoiceIntent.confirmRecording,
+      );
+      expect(
+        parser.parse('hey sonus, am I recording?').intent,
+        VoiceIntent.confirmRecording,
+      );
+      expect(
+        parser.parse('are you still recording').intent,
+        VoiceIntent.confirmRecording,
+      );
     });
 
     test('pause recording is its own intent, not stop', () {
@@ -87,8 +98,10 @@ void main() {
       expect(VoiceCommandParser.spokenDurationSeconds('twenty minutes'), 1200);
       expect(VoiceCommandParser.spokenDurationSeconds('an hour'), 3600);
       expect(VoiceCommandParser.spokenDurationSeconds('half an hour'), 1800);
-      expect(VoiceCommandParser.spokenDurationSeconds('forty five minutes'),
-          2700);
+      expect(
+        VoiceCommandParser.spokenDurationSeconds('forty five minutes'),
+        2700,
+      );
       expect(VoiceCommandParser.spokenDurationSeconds('no idea'), isNull);
     });
   });

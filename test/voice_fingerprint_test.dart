@@ -31,8 +31,7 @@ Float64List syntheticVoice({
       // Formant shaping: harmonics near the two formants are amplified.
       final d1 = (freq - formant1Hz) / 150.0;
       final d2 = (freq - formant2Hz) / 200.0;
-      final gain =
-          0.1 + math.exp(-d1 * d1) + 0.7 * math.exp(-d2 * d2);
+      final gain = 0.1 + math.exp(-d1 * d1) + 0.7 * math.exp(-d2 * d2);
       sample += gain * math.sin(2 * math.pi * freq * t) / h;
     }
     // A little noise so clips of the "same voice" are not bit-identical.
@@ -122,9 +121,7 @@ void main() {
 
     setUp(() async {
       tempDir = await Directory.systemTemp.createTemp('voice-profile-test');
-      service = VoiceProfileService(
-        baseDirectoryProvider: () async => tempDir,
-      );
+      service = VoiceProfileService(baseDirectoryProvider: () async => tempDir);
     });
 
     tearDown(() async {
@@ -138,41 +135,43 @@ void main() {
       seed: seed,
     );
 
-    test('enrolls, persists, matches, and enforces the five-sample cap',
-        () async {
-      for (var i = 0; i < VoiceProfileService.maxSamples; i++) {
-        final result = await service.enroll(
-          mono: clip(seed: i),
+    test(
+      'enrolls, persists, matches, and enforces the five-sample cap',
+      () async {
+        for (var i = 0; i < VoiceProfileService.maxSamples; i++) {
+          final result = await service.enroll(
+            mono: clip(seed: i),
+            sampleRate: 16000,
+          );
+          expect(result.error, isNull);
+          expect(result.sample, isNotNull);
+          expect(File(result.sample!.wavPath!).existsSync(), isTrue);
+        }
+        final overflow = await service.enroll(mono: clip(), sampleRate: 16000);
+        expect(overflow.sample, isNull);
+        expect(overflow.error, contains('5'));
+
+        // A fresh instance reloads the persisted fingerprints from disk.
+        final reloaded = VoiceProfileService(
+          baseDirectoryProvider: () async => tempDir,
+        );
+        expect(await reloaded.load(), hasLength(5));
+
+        final match = await reloaded.match(
+          mono: clip(seed: 42),
           sampleRate: 16000,
         );
-        expect(result.error, isNull);
-        expect(result.sample, isNotNull);
-        expect(File(result.sample!.wavPath!).existsSync(), isTrue);
-      }
-      final overflow = await service.enroll(mono: clip(), sampleRate: 16000);
-      expect(overflow.sample, isNull);
-      expect(overflow.error, contains('5'));
+        expect(match, isNotNull);
+        expect(match!.isMatch, isTrue);
 
-      // A fresh instance reloads the persisted fingerprints from disk.
-      final reloaded = VoiceProfileService(
-        baseDirectoryProvider: () async => tempDir,
-      );
-      expect(await reloaded.load(), hasLength(5));
-
-      final match = await reloaded.match(
-        mono: clip(seed: 42),
-        sampleRate: 16000,
-      );
-      expect(match, isNotNull);
-      expect(match!.isMatch, isTrue);
-
-      final stranger = await reloaded.match(
-        mono: syntheticVoice(pitchHz: 230, formant1Hz: 450, formant2Hz: 2600),
-        sampleRate: 16000,
-      );
-      expect(stranger, isNotNull);
-      expect(stranger!.isMatch, isFalse);
-    });
+        final stranger = await reloaded.match(
+          mono: syntheticVoice(pitchHz: 230, formant1Hz: 450, formant2Hz: 2600),
+          sampleRate: 16000,
+        );
+        expect(stranger, isNotNull);
+        expect(stranger!.isMatch, isFalse);
+      },
+    );
 
     test('rejects clips without enough speech', () async {
       final result = await service.enroll(
@@ -189,10 +188,7 @@ void main() {
       await service.removeSample(enrolled.sample!.id);
       expect(service.samples, isEmpty);
       expect(File(wavPath).existsSync(), isFalse);
-      expect(
-        await service.match(mono: clip(), sampleRate: 16000),
-        isNull,
-      );
+      expect(await service.match(mono: clip(), sampleRate: 16000), isNull);
     });
   });
 }

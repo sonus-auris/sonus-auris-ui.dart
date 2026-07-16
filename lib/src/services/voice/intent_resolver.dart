@@ -114,7 +114,10 @@ class LlmIntentResolver implements IntentResolver {
   @override
   Future<VoiceCommand> resolve(String transcript) async {
     // Don't ship more than one utterance's worth of text off-device.
-    final clipped = VoiceLimits.clip(transcript, VoiceLimits.maxTranscriptChars);
+    final clipped = VoiceLimits.clip(
+      transcript,
+      VoiceLimits.maxTranscriptChars,
+    );
     final headers = <String, String>{'content-type': 'application/json'};
     if (apiKey != null && apiKey!.trim().isNotEmpty) {
       headers['authorization'] = 'Bearer ${apiKey!.trim()}';
@@ -159,8 +162,10 @@ class LlmIntentResolver implements IntentResolver {
           if (slots.length >= VoiceLimits.maxSlots) {
             break;
           }
-          slots['${entry.key}'] =
-              VoiceLimits.clip('${entry.value}', VoiceLimits.maxSlotValueChars);
+          slots['${entry.key}'] = VoiceLimits.clip(
+            '${entry.value}',
+            VoiceLimits.maxSlotValueChars,
+          );
         }
       }
       final confidence = VoiceLimits.sanitizeConfidence(
@@ -168,7 +173,10 @@ class LlmIntentResolver implements IntentResolver {
       );
       return VoiceCommand(
         intent: intent,
-        transcript: VoiceLimits.clip(transcript, VoiceLimits.maxTranscriptChars),
+        transcript: VoiceLimits.clip(
+          transcript,
+          VoiceLimits.maxTranscriptChars,
+        ),
         slots: slots,
         confidence: confidence,
       );
@@ -177,8 +185,11 @@ class LlmIntentResolver implements IntentResolver {
     }
   }
 
-  VoiceCommand _unknown(String transcript) =>
-      VoiceCommand(intent: VoiceIntent.unknown, transcript: transcript, confidence: 0);
+  VoiceCommand _unknown(String transcript) => VoiceCommand(
+    intent: VoiceIntent.unknown,
+    transcript: transcript,
+    confidence: 0,
+  );
 
   static VoiceIntent _intentByName(String? name) {
     if (name == null) return VoiceIntent.unknown;
@@ -201,19 +212,18 @@ class LlmIntentResolver implements IntentResolver {
       String description,
       Map<String, dynamic> properties,
       List<String> required,
-    ) =>
-        {
-          'type': 'function',
-          'function': {
-            'name': intent.name,
-            'description': description,
-            'parameters': {
-              'type': 'object',
-              'properties': properties,
-              'required': required,
-            },
-          },
-        };
+    ) => {
+      'type': 'function',
+      'function': {
+        'name': intent.name,
+        'description': description,
+        'parameters': {
+          'type': 'object',
+          'properties': properties,
+          'required': required,
+        },
+      },
+    };
 
     return [
       fn(
@@ -223,7 +233,7 @@ class LlmIntentResolver implements IntentResolver {
           'durationSeconds': {
             'type': 'integer',
             'description': 'Timer length in seconds.',
-          }
+          },
         },
         ['durationSeconds'],
       ),
@@ -231,7 +241,7 @@ class LlmIntentResolver implements IntentResolver {
         VoiceIntent.takeNote,
         'Capture a free-text note for the user.',
         {
-          'text': {'type': 'string', 'description': 'The note body.'}
+          'text': {'type': 'string', 'description': 'The note body.'},
         },
         ['text'],
       ),
@@ -239,7 +249,7 @@ class LlmIntentResolver implements IntentResolver {
         VoiceIntent.createTask,
         'Create a to-do task.',
         {
-          'text': {'type': 'string', 'description': 'The task description.'}
+          'text': {'type': 'string', 'description': 'The task description.'},
         },
         ['text'],
       ),
