@@ -1537,6 +1537,8 @@ class AppController {
   }
 
   Future<void> startRecording({bool scheduleInitiated = false}) async {
+    // Any start — manual, voice, or scheduled — supersedes a pending pause.
+    _cancelPendingPauseResume();
     // Ownership: a manual start clears schedule ownership, a schedule-driven
     // start claims it. Only a schedule-owned session is auto-stopped at a window
     // barrier (see [_applyScheduleState]).
