@@ -44,18 +44,16 @@ enum RecognitionKind { song, birdCall }
 /// idle recording costs nothing extra in CPU, battery, or app size.
 class RecognitionOrchestrator {
   RecognitionOrchestrator({
-    required DetectionClipSource clips,
-    ShazamClient? shazam,
-    BirdClassifier? birds,
+    required this.clips,
+    this.shazam,
+    this.birds,
     this.songIdEnabled = true,
     this.birdIdEnabled = false,
-  })  : _clips = clips,
-        _shazam = shazam,
-        _birds = birds;
+  });
 
-  final DetectionClipSource _clips;
-  final ShazamClient? _shazam;
-  final BirdClassifier? _birds;
+  final DetectionClipSource clips;
+  final ShazamClient? shazam;
+  final BirdClassifier? birds;
 
   /// Feature toggles, wired to settings. Bird ID is opt-in because it pulls a
   /// ~14 MB model on first enable.
@@ -97,9 +95,9 @@ class RecognitionOrchestrator {
   }
 
   Future<void> _identifySong(AcousticDetection detection) async {
-    final shazam = _shazam;
+    final shazam = this.shazam;
     if (songIdEnabled && shazam != null && shazam.isSupported) {
-      final pcm = await _clips.pcm16Around(
+      final pcm = await clips.pcm16Around(
         detection,
         length: const Duration(seconds: 12),
       );
@@ -125,11 +123,11 @@ class RecognitionOrchestrator {
   }
 
   Future<void> _identifyBird(AcousticDetection detection) async {
-    final birds = _birds;
+    final birds = this.birds;
     if (!birdIdEnabled || birds == null) {
       return;
     }
-    final samples = await _clips.monoFloatAround(
+    final samples = await clips.monoFloatAround(
       detection,
       length: const Duration(seconds: 5),
       sampleRate: BirdClassifier.sampleRate,
