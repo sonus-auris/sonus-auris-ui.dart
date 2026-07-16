@@ -117,7 +117,24 @@ class VoiceCommandParser {
       RegExp(r'\b(?:record|capture) (?:a )?voice memo\b[:\s]*(.*)'),
       (m, _) => {'text': (m.group(1) ?? '').trim()},
     ),
-    // App-native recording control.
+    // App-native recording control. Order matters: confirm/pause are more
+    // specific than the stop rule and must win first.
+    _Rule(
+      VoiceIntent.confirmRecording,
+      RegExp(
+        r'\b(?:confirm|verify|check)(?: the| that(?: the)?)? recording\b'
+        r'|\b(?:am i|are you|is it) (?:still )?recording\b',
+      ),
+      (_, _) => const {},
+    ),
+    _Rule(
+      VoiceIntent.pauseRecording,
+      RegExp(r'\b(?:pause|suspend|hold) (?:the )?recording\b'),
+      (_, text) => {
+        if (_firstDurationSeconds(text) case final seconds?)
+          'durationSeconds': seconds,
+      },
+    ),
     _Rule(
       VoiceIntent.startRecording,
       RegExp(r'\b(?:start|begin|resume) (?:the )?recording\b'),
@@ -125,7 +142,7 @@ class VoiceCommandParser {
     ),
     _Rule(
       VoiceIntent.stopRecording,
-      RegExp(r'\b(?:stop|end|pause) (?:the )?recording\b'),
+      RegExp(r'\b(?:stop|end) (?:the )?recording\b'),
       (_, _) => const {},
     ),
     // Reminder: "remind me to call John tomorrow at 9am".
