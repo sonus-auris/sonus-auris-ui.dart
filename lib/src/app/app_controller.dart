@@ -2994,6 +2994,17 @@ class AppController {
       if (transcript == null) {
         return;
       }
+      // "Knows your voice": one fingerprint match of this window serves both
+      // the command gate and detection annotation. Null when disabled, nothing
+      // is enrolled, or the window holds too little speech to judge.
+      VoiceMatch? speakerMatch;
+      if (config.voiceIdEnabled) {
+        speakerMatch = await voiceProfiles.match(
+          mono: pcm16BytesToMonoDoubles(clip.bytes, clip.channels),
+          sampleRate: clip.sampleRate,
+        );
+      }
+      await _maybeHandleVoiceCommand(config, transcript, speakerMatch);
       final match = _speechToTextClient.matchKeyword(config, transcript);
       if (match == null) {
         return;
@@ -3004,7 +3015,11 @@ class AppController {
         endedAtUtc: speech.endedAtUtc,
         confidence: 1.0,
         captureSessionId: speech.captureSessionId,
-        details: {'keyword': match.keyword, 'transcript': match.transcript},
+        details: {
+          'keyword': match.keyword,
+          'transcript': match.transcript,
+          if (speakerMatch != null) 'knownVoice': speakerMatch.isMatch,
+        },
       );
       _appendDetection(keywordEvent);
       await _storeDetections([keywordEvent]);
