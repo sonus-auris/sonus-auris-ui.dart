@@ -64,6 +64,7 @@ class AppConfig {
     this.sleepMotionSensorConsent = false,
     this.sleepAmbientLightConsent = false,
     this.sleepPhoneContextConsent = false,
+    this.sleepCloudSyncConsent = false,
     this.musicDetectionEnabled = true,
     this.speechDetectionEnabled = true,
     this.shazamEnabled = false,
@@ -204,6 +205,12 @@ class AppConfig {
   final bool sleepMotionSensorConsent;
   final bool sleepAmbientLightConsent;
   final bool sleepPhoneContextConsent;
+
+  /// Opt-in cloud sync of sleep-cycle detections. These rows carry enriched
+  /// sensor/context fields (motion stillness, ambient lux, charging, bedtime
+  /// score, sleep probability), so without this consent they stay on-device
+  /// even when Supabase sync is otherwise configured.
+  final bool sleepCloudSyncConsent;
   final bool musicDetectionEnabled;
   final bool speechDetectionEnabled;
 
@@ -386,6 +393,7 @@ class AppConfig {
     bool? sleepMotionSensorConsent,
     bool? sleepAmbientLightConsent,
     bool? sleepPhoneContextConsent,
+    bool? sleepCloudSyncConsent,
     bool? musicDetectionEnabled,
     bool? speechDetectionEnabled,
     bool? shazamEnabled,
@@ -463,6 +471,8 @@ class AppConfig {
           sleepAmbientLightConsent ?? this.sleepAmbientLightConsent,
       sleepPhoneContextConsent:
           sleepPhoneContextConsent ?? this.sleepPhoneContextConsent,
+      sleepCloudSyncConsent:
+          sleepCloudSyncConsent ?? this.sleepCloudSyncConsent,
       musicDetectionEnabled:
           musicDetectionEnabled ?? this.musicDetectionEnabled,
       speechDetectionEnabled:
@@ -533,6 +543,7 @@ class AppConfig {
       'sleepMotionSensorConsent': sleepMotionSensorConsent,
       'sleepAmbientLightConsent': sleepAmbientLightConsent,
       'sleepPhoneContextConsent': sleepPhoneContextConsent,
+      'sleepCloudSyncConsent': sleepCloudSyncConsent,
       'musicDetectionEnabled': musicDetectionEnabled,
       'speechDetectionEnabled': speechDetectionEnabled,
       'shazamEnabled': shazamEnabled,
@@ -634,6 +645,7 @@ class AppConfig {
           json['sleepAmbientLightConsent'] as bool? ?? false,
       sleepPhoneContextConsent:
           json['sleepPhoneContextConsent'] as bool? ?? false,
+      sleepCloudSyncConsent: json['sleepCloudSyncConsent'] as bool? ?? false,
       musicDetectionEnabled: json['musicDetectionEnabled'] as bool? ?? true,
       speechDetectionEnabled: json['speechDetectionEnabled'] as bool? ?? true,
       shazamEnabled: json['shazamEnabled'] as bool? ?? false,

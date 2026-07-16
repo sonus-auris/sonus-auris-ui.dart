@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_initializing_formals
+
 // Voice handler that runs real timers / focus sessions started by voice.
 import 'dart:async';
 
@@ -8,6 +10,8 @@ import '../voice_limits.dart';
 /// A timer started by voice. Exposed so the UI can render a countdown and so
 /// callers can cancel.
 class VoiceTimer {
+  // Keep the public named parameter `timer`; an initializing formal would expose
+  // the private field name as API.
   VoiceTimer({
     required this.id,
     required this.duration,

@@ -16,6 +16,7 @@ void main() {
       sleepMotionSensorConsent: true,
       sleepAmbientLightConsent: true,
       sleepPhoneContextConsent: true,
+      sleepCloudSyncConsent: true,
       musicDetectionEnabled: false,
       speechDetectionEnabled: true,
       shazamEnabled: true,
@@ -38,6 +39,7 @@ void main() {
     expect(restored.sleepMotionSensorConsent, isTrue);
     expect(restored.sleepAmbientLightConsent, isTrue);
     expect(restored.sleepPhoneContextConsent, isTrue);
+    expect(restored.sleepCloudSyncConsent, isTrue);
     expect(restored.musicDetectionEnabled, isFalse);
     expect(restored.shazamEnabled, isTrue);
     expect(restored.keywords, ['help', 'fire']);
@@ -58,6 +60,7 @@ void main() {
     expect(config.sleepMotionSensorConsent, isFalse);
     expect(config.sleepAmbientLightConsent, isFalse);
     expect(config.sleepPhoneContextConsent, isFalse);
+    expect(config.sleepCloudSyncConsent, isFalse);
     expect(config.adaptiveQualityEnabled, isFalse);
     // With adaptive quality off, the mic opens at the plain sample rate.
     expect(config.effectiveCaptureSampleRate, config.sampleRate);

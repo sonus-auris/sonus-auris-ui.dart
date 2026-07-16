@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -24,9 +26,15 @@ abstract class SecureKeyStore {
 /// system zero-knowledge — the backend can hold every recovery blob and still
 /// never recover the MK on its own.
 class KeyManager {
-  KeyManager({required this._store, AesGcm? aead, Argon2id? passphraseKdf})
-    : _aead = aead ?? AesGcm.with256bits(),
-      _passphraseKdf = passphraseKdf ?? _defaultPassphraseKdf();
+  // Keep the public named parameter `store`; an initializing formal would expose
+  // the private field name as API.
+  KeyManager({
+    required SecureKeyStore store,
+    AesGcm? aead,
+    Argon2id? passphraseKdf,
+  }) : _store = store,
+       _aead = aead ?? AesGcm.with256bits(),
+       _passphraseKdf = passphraseKdf ?? _defaultPassphraseKdf();
 
   /// Storage key for the base64 master key. Bumped if the format ever changes.
   static const String masterKeyStorageId = 'sa.mk.v1';

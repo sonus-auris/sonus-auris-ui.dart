@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:typed_data';
 
 import 'account_recipient.dart';
@@ -8,13 +10,17 @@ import 'segment_cipher.dart';
 /// material directly. Seals plaintext audio into a [SegmentCipher] container
 /// before it leaves the device, and opens containers coming back from the cloud.
 class SegmentEncryptor {
+  // Keep stable public named parameters (`keyManager`, `accountPublicKey`);
+  // initializing formals would expose private field names as API.
   SegmentEncryptor({
-    required this._keyManager,
+    required KeyManager keyManager,
     SegmentCipher? cipher,
     AccountRecipient? accountRecipient,
-    this._accountPublicKey,
-  }) : _cipher = cipher ?? SegmentCipher(),
-       _accountRecipient = accountRecipient ?? AccountRecipient();
+    Uint8List? accountPublicKey,
+  }) : _keyManager = keyManager,
+       _cipher = cipher ?? SegmentCipher(),
+       _accountRecipient = accountRecipient ?? AccountRecipient(),
+       _accountPublicKey = accountPublicKey;
 
   final KeyManager _keyManager;
   final SegmentCipher _cipher;

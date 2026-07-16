@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_initializing_formals
+
 // Best-effort, opt-in GPS tagging for segments; fails soft so a missing fix never breaks capture.
 import 'package:geolocator/geolocator.dart';
 
@@ -8,10 +10,13 @@ import '../models/geo_tag.dart';
 /// returns null and capture continues unaffected — a missing location must
 /// never break recording. Tagging is opt-in (gated by the caller's config flag).
 class LocationService {
+  // Keep stable public named parameters (`fixTimeout`, `accuracy`); initializing
+  // formals would expose private field names as API.
   LocationService({
-    this._fixTimeout = const Duration(seconds: 8),
-    this._accuracy = LocationAccuracy.best,
-  });
+    Duration fixTimeout = const Duration(seconds: 8),
+    LocationAccuracy accuracy = LocationAccuracy.best,
+  }) : _fixTimeout = fixTimeout,
+       _accuracy = accuracy;
 
   final Duration _fixTimeout;
   final LocationAccuracy _accuracy;

@@ -8,6 +8,7 @@ import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
 
 import '../models/acoustic_detection.dart';
 import '../models/app_config.dart';
+import '../models/client_telemetry_event.dart';
 import '../models/cloud_secrets.dart';
 import '../models/cloud_provider.dart';
 import '../models/consent.dart';
@@ -26,6 +27,7 @@ class SupabaseRestClient {
   final Duration requestTimeout;
 
   static const String acousticEventsTable = 'acoustic_events';
+  static const String clientTelemetryTable = 'client_telemetry';
 
   /// Onboarding consent records.
   ///
@@ -233,7 +235,13 @@ class SupabaseRestClient {
     required CloudSecrets secrets,
     required List<AcousticDetection> detections,
   }) async {
-    if (detections.isEmpty) {
+    // Sleep-cycle rows carry enriched sensor/context fields and only leave the
+    // device with their own explicit consent — fail closed and keep them local
+    // otherwise. Filtered here so every caller inherits the gate.
+    final uploadable = config.sleepCloudSyncConsent
+        ? detections
+        : detections.where((d) => !_isSleepCycleKind(d.kind)).toList();
+    if (uploadable.isEmpty) {
       return null;
     }
     if (!canInsert(config, secrets)) {
@@ -245,7 +253,7 @@ class SupabaseRestClient {
     } on FormatException catch (error) {
       return error.message;
     }
-    final rows = detections
+    final rows = uploadable
         .map((d) => d.toSupabaseRow(config.deviceId))
         .toList();
     try {
@@ -296,8 +304,53 @@ class SupabaseRestClient {
     }
   }
 
+  /// Inserts sanitized client-side logs/errors for observability. Telemetry is
+  /// append-only and RLS-scoped to the signed-in user; callers should treat
+  /// failures as non-fatal.
+  Future<String?> insertTelemetry({
+    required AppConfig config,
+    required CloudSecrets secrets,
+    required List<ClientTelemetryEvent> events,
+  }) async {
+    if (events.isEmpty) {
+      return null;
+    }
+    if (!canInsert(config, secrets)) {
+      return 'Supabase URL, anon key, and a signed-in session are required.';
+    }
+    final Uri uri;
+    try {
+      uri = _restUri(config, clientTelemetryTable);
+    } on FormatException catch (error) {
+      return error.message;
+    }
+    final rows = events
+        .map(
+          (event) =>
+              _sanitizeTelemetryRow(event.toSupabaseRow(config.deviceId)),
+        )
+        .toList();
+    try {
+      final response = await _httpClient
+          .post(uri, headers: _headers(config, secrets), body: jsonEncode(rows))
+          .timeout(requestTimeout);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return 'Supabase telemetry insert failed (${response.statusCode}): '
+          '${_shortBody(response.body)}';
+    } catch (error) {
+      return 'Supabase telemetry insert error: $error';
+    }
+  }
+
   void close() {
     _httpClient.close();
+  }
+
+  static bool _isSleepCycleKind(AcousticDetectionKind kind) {
+    return kind == AcousticDetectionKind.sleepCycle ||
+        kind == AcousticDetectionKind.sleepCycleAlarm;
   }
 
   Uri _restUri(AppConfig config, String table) {
@@ -332,5 +385,78 @@ class SupabaseRestClient {
   String _shortBody(String body) {
     final trimmed = body.trim();
     return trimmed.length > 200 ? trimmed.substring(0, 200) : trimmed;
+  }
+
+  Map<String, Object?> _sanitizeTelemetryRow(Map<String, Object?> row) {
+    return row.map((key, value) {
+      if (key == 'message' || key == 'stack') {
+        return MapEntry(key, _redactAndTruncate(value?.toString() ?? '', 4000));
+      }
+      if (key == 'details' && value is Map) {
+        return MapEntry(key, _sanitizeTelemetryDetails(value));
+      }
+      return MapEntry(key, value);
+    });
+  }
+
+  Map<String, Object?> _sanitizeTelemetryDetails(
+    Map<dynamic, dynamic> details,
+  ) {
+    final clean = <String, Object?>{};
+    for (final entry in details.entries.take(40)) {
+      final key = entry.key.toString();
+      if (_looksSecretKey(key)) {
+        clean[key] = '[redacted]';
+        continue;
+      }
+      clean[key] = _sanitizeTelemetryValue(entry.value);
+    }
+    return clean;
+  }
+
+  Object? _sanitizeTelemetryValue(Object? value) {
+    if (value == null || value is num || value is bool) {
+      return value;
+    }
+    if (value is DateTime) {
+      return value.toUtc().toIso8601String();
+    }
+    if (value is Iterable) {
+      return value.take(20).map(_sanitizeTelemetryValue).toList();
+    }
+    if (value is Map) {
+      return _sanitizeTelemetryDetails(value);
+    }
+    return _redactAndTruncate(value.toString(), 1000);
+  }
+
+  bool _looksSecretKey(String key) {
+    final lower = key.toLowerCase();
+    return lower.contains('token') ||
+        lower.contains('secret') ||
+        lower.contains('password') ||
+        lower.contains('authorization') ||
+        lower.contains('apikey') ||
+        lower.contains('api_key');
+  }
+
+  String _redactAndTruncate(String value, int maxLength) {
+    var clean = value
+        .replaceAll(
+          RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]+', caseSensitive: false),
+          'Bearer [redacted]',
+        )
+        .replaceAll(
+          RegExp(r'sb_(?:secret|service_role)_[A-Za-z0-9._~-]+'),
+          'sb_[redacted]',
+        )
+        .replaceAll(
+          RegExp(r'postgresql://[^\s]+', caseSensitive: false),
+          'postgresql://[redacted]',
+        );
+    if (clean.length > maxLength) {
+      clean = '${clean.substring(0, maxLength)}…';
+    }
+    return clean;
   }
 }

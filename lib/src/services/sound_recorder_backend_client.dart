@@ -1,4 +1,6 @@
 // Backend-mediated upload client for non-S3 providers: registers the device and streams encrypted segments through the Sonus backend.
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -86,6 +88,8 @@ class DeviceRegistration {
 }
 
 class SoundRecorderBackendClient {
+  // Keep the public named parameter `encryptor`; an initializing formal would
+  // expose the private field name as API.
   SoundRecorderBackendClient({
     http.Client? httpClient,
     this.requestTimeout = const Duration(seconds: 45),
