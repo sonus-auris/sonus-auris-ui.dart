@@ -132,12 +132,26 @@ void main() {
     var sawPresign = false;
     var sawUpload = false;
     var sawComplete = false;
+    await File('${tempDir.path}/segment.features.json').writeAsString(
+      jsonEncode({
+        'version': 2,
+        'summary': {
+          'heuristic': true,
+          'classificationCounts': {'suddenLoudNoise': 1},
+        },
+      }),
+    );
     final client = SoundRecorderBackendClient(
       httpClient: MockClient((request) async {
         if (request.method == 'POST' && request.url.path.endsWith('/presign')) {
           sawPresign = true;
           final body = jsonDecode(request.body) as Map<String, dynamic>;
           expect(body['byteCount'], 4);
+          final metadata = body['metaData'] as Map<String, dynamic>;
+          expect(metadata['acousticAnalysis'], {
+            'heuristic': true,
+            'classificationCounts': {'suddenLoudNoise': 1},
+          });
           return http.Response(
             jsonEncode({
               'upload': {

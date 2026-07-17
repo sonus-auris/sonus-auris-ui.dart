@@ -62,13 +62,17 @@ If a later cloud playback browser needs listing, add `s3:ListBucket` scoped to t
 An optional frequency-domain engine runs alongside capture. It is **off by
 default** (enable it under Configure → Acoustic Intelligence) and, when on, stays
 idle until the input is sustained at or above an activation level (dBFS) for a
-few seconds — the "kick in once decibels get consistently high" gate. Once
-active it keeps analyzing through quiet stretches for a hold window so gaps
-between sounds are observed, then goes idle again.
+few seconds. A near-full-scale transient with a high peak/RMS crest opens the
+gate immediately so a one-off crash or bang reaches the FFT. Once active it
+keeps analyzing through quiet stretches for a hold window so gaps between
+sounds are observed, then goes idle again.
 
 - Analysis runs on a background isolate (`AcousticAnalyzer`) so the capture path
   never blocks. The recorder decimates the processed stream to ~16 kHz mono and
   feeds 2048-point Hann-windowed FFT frames (50% overlap). FFT uses `fftea`.
+- Every frame includes spectral centroid/flatness/crest/rolloff and low, speech,
+  and high-band energy, plus RMS/dBFS, peak amplitude, time-domain crest factor,
+  and clipping fraction.
 - Detectors (all pure/unit-tested in `lib/src/services/acoustic/`):
   - **Snoring** — sustained low-centroid bursts with strong 60–300 Hz energy.
   - **Possible apnea pattern** — a run of regular snores interrupted by a long
@@ -78,6 +82,11 @@ between sounds are observed, then goes idle again.
     from the loudness-envelope autocorrelation).
   - **Speech** — voiced-band (300–3400 Hz) dominance with 3–8 Hz syllabic
     modulation.
+  - **Sudden loud noise** — rapid level rise plus transient or broadband
+    evidence. This does not claim an accident or its cause.
+  - **Raised voice / possible argument pattern** — sustained loud speech-band
+    energy, with a possible-pattern event only after three distinct bursts.
+    This does not prove an argument, speaker count, or identity.
 - **Song identification (ShazamKit, iOS only):** when music is detected and the
   user enables it, a short clip is matched with Apple's ShazamKit via the
   `audio_dashcam/shazam` platform channel. Requires the ShazamKit capability on
@@ -88,8 +97,13 @@ between sounds are observed, then goes idle again.
   user-configured endpoint (`sttEndpoint` + secret `sttApiKey`). A keyword hit
   records a `keyword` event and raises the existing magic-phrase alert/email.
   Audio leaves the device only while STT is enabled.
-- On-device FFT detection alone sends nothing externally. Detections are
-  surfaced on the Home screen and synced to Supabase (below).
+- Classification and feature extraction happen on-device; no transcription is
+  needed for these classes. Detection metadata is surfaced on the Home screen
+  and follows the configured Supabase sync.
+- Every finalized WAV gets a versioned `<stem>.features.json` track with aligned
+  FFT frames and a compact heuristic summary. Direct S3 sync uploads it beside
+  the audio and encrypts it independently. Backend sync attaches only the
+  compact summary to the segment metadata.
 
 ## Adaptive Recording Quality
 

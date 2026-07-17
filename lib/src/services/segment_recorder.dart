@@ -685,9 +685,9 @@ class SegmentRecorder {
     _recentDb = _recentDb == null ? db : (0.9 * _recentDb! + 0.1 * db);
   }
 
-  /// Implements the "kick in once decibels get consistently high" gate and feeds
-  /// the analysis isolate while it is open (including quiet stretches, so gaps
-  /// between snores are observed for apnea detection).
+  /// Implements the sustained-loudness gate, plus an immediate transient path
+  /// so a one-off crash or bang is not discarded before the FFT sees it. While
+  /// open, quiet stretches are retained so gaps between snores are observable.
   void _runAcousticGate(
     Uint8List slice,
     int samples,
@@ -703,13 +703,14 @@ class SegmentRecorder {
     }
     final db = _dbForRms(power.averagePower);
     final loud = db >= _gateActivationDb;
+    final immediateTransient = _isImmediateTransient(power);
     if (!_gateOpen) {
       if (loud) {
         _gateLoudSamples += samples;
       } else {
         _gateLoudSamples = math.max(0, _gateLoudSamples - samples);
       }
-      if (_gateLoudSamples >= _gateSustainSamples) {
+      if (immediateTransient || _gateLoudSamples >= _gateSustainSamples) {
         _gateOpen = true;
         _gateQuietSamples = 0;
         _analyzer.resyncFeed();
@@ -729,6 +730,15 @@ class SegmentRecorder {
         _analyzer.flush();
       }
     }
+  }
+
+  bool _isImmediateTransient(_PcmPower power) {
+    if (power.peakPower < 0.94) {
+      return false;
+    }
+    final rms = math.max(power.averagePower, 0.0001);
+    final crestFactor = power.peakPower / rms;
+    return power.averagePower >= 0.316 || crestFactor >= 2.8;
   }
 
   void _feedAnalyzer(Uint8List slice, AppConfig config) {

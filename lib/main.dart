@@ -1186,8 +1186,8 @@ class _HomeView extends StatelessWidget {
   }
 }
 
-/// Lists recent on-device acoustic detections (snoring, possible apnea patterns,
-/// music, speech, keywords). Newest first.
+/// Lists recent on-device acoustic detections, including conservative safety
+/// sound patterns. Newest first.
 class _DetectionsSection extends StatelessWidget {
   const _DetectionsSection({required this.detections});
 
@@ -1207,6 +1207,12 @@ class _DetectionsSection extends StatelessWidget {
         return Icons.music_note;
       case AcousticDetectionKind.speech:
         return Icons.record_voice_over;
+      case AcousticDetectionKind.suddenLoudNoise:
+        return Icons.notification_important_outlined;
+      case AcousticDetectionKind.raisedVoice:
+        return Icons.campaign_outlined;
+      case AcousticDetectionKind.possibleArgumentPattern:
+        return Icons.groups_outlined;
       case AcousticDetectionKind.keyword:
         return Icons.flag;
     }
@@ -1230,6 +1236,12 @@ class _DetectionsSection extends StatelessWidget {
         return '$time · cycle ${d.details['cycleIndex'] ?? '?'} · ${d.details['estimatedCycleMinutes'] ?? '?'} min';
       case AcousticDetectionKind.sleepCycleAlarm:
         return '$time · wake after cycle ${d.details['cycleIndex'] ?? '?'}';
+      case AcousticDetectionKind.suddenLoudNoise:
+        return '$time · ${d.details['db'] ?? '?'} dBFS · sudden onset';
+      case AcousticDetectionKind.raisedVoice:
+        return '$time · max ${d.details['maxDb'] ?? '?'} dBFS · heuristic';
+      case AcousticDetectionKind.possibleArgumentPattern:
+        return '$time · ${d.details['raisedVoiceBursts'] ?? '?'} raised-voice bursts · not proof';
       default:
         return time;
     }
@@ -1244,8 +1256,7 @@ class _DetectionsSection extends StatelessWidget {
           ? const Padding(
               padding: EdgeInsets.symmetric(vertical: 8),
               child: Text(
-                'No detections yet. The engine activates when sound '
-                'is sustained.',
+                'No detections yet. Sustained sound or a sudden transient can activate the engine.',
               ),
             )
           : Column(
@@ -2972,7 +2983,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
             contentPadding: EdgeInsets.zero,
             title: const Text('Enable acoustic analysis'),
             subtitle: const Text(
-              'On-device FFT. Activates only when sound is sustained.',
+              'On-device FFT. Sustained sounds and sudden transients can activate it.',
             ),
             value: _enabled,
             onChanged: (v) {
@@ -3104,6 +3115,14 @@ class _AcousticSectionState extends State<_AcousticSection> {
                 setState(() => _speech = v);
                 _apply();
               },
+            ),
+            const ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.health_and_safety_outlined),
+              title: Text('Safety sound patterns'),
+              subtitle: Text(
+                'Classified on-device: sudden loud noise, raised voice, and repeated raised-voice patterns. Heuristic only; event metadata follows your configured sync.',
+              ),
             ),
             _slider(
               label: 'Activation level',

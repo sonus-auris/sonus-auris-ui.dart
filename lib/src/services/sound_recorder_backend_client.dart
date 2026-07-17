@@ -13,6 +13,7 @@ import '../models/cloud_provider.dart';
 import '../models/cloud_secrets.dart';
 import '../models/recording_segment.dart';
 import 'crypto/segment_encryptor.dart';
+import 'spectral_sidecar.dart';
 
 class BackendUploadSession {
   const BackendUploadSession({
@@ -164,6 +165,7 @@ class SoundRecorderBackendClient {
       );
     }
     try {
+      final acousticAnalysis = await _readAcousticSummary(file.path);
       final plaintext = await file.readAsBytes();
       // Seal on-device before anything leaves the phone. The hash, byte count,
       // and PUT body below all operate on the ciphertext the cloud stores.
@@ -196,6 +198,7 @@ class SoundRecorderBackendClient {
                 'sampleRate': segment.sampleRate,
                 'channels': segment.channels,
                 if (segment.geoTag != null) 'geo': segment.geoTag!.toJson(),
+                'acousticAnalysis': ?acousticAnalysis,
               },
             }),
           )
@@ -816,6 +819,26 @@ class SoundRecorderBackendClient {
     }
     final value = jsonDecode(response.body);
     return value is Map<String, dynamic> ? value : const {};
+  }
+
+  /// Reads only the compact, on-device classification summary. The full FFT
+  /// frame track remains a separate sidecar (and is uploaded alongside audio
+  /// for direct S3). A missing or malformed sidecar must never block audio.
+  Future<Map<String, dynamic>?> _readAcousticSummary(String audioPath) async {
+    try {
+      final sidecar = File(SpectralSidecar.sidecarPathFor(audioPath));
+      if (!await sidecar.exists()) {
+        return null;
+      }
+      final decoded = jsonDecode(await sidecar.readAsString());
+      if (decoded is! Map<String, dynamic>) {
+        return null;
+      }
+      final summary = decoded['summary'];
+      return summary is Map<String, dynamic> ? summary : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Returns [value] as a JSON object, or throws a clean [StateError] (rather

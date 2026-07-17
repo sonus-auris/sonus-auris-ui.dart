@@ -3,7 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../models/acoustic_detection.dart';
 import '../models/recording_segment.dart';
+import 'acoustic/music_detector.dart';
+import 'acoustic/safety_sound_detector.dart';
+import 'acoustic/speech_detector.dart';
 import 'acoustic/spectral_features.dart';
 
 /// Writes a **time-aligned spectral analysis track** next to each rolling WAV
@@ -22,12 +26,14 @@ import 'acoustic/spectral_features.dart';
 /// `kind` field, which lets multiple analysis tracks coexist.
 class SpectralSidecar {
   SpectralSidecar({this.fftSize = 1024})
-      : assert(fftSize > 0 && (fftSize & (fftSize - 1)) == 0,
-            'fftSize must be a power of two');
+    : assert(
+        fftSize > 0 && (fftSize & (fftSize - 1)) == 0,
+        'fftSize must be a power of two',
+      );
 
   final int fftSize;
 
-  static const int formatVersion = 1;
+  static const int formatVersion = 2;
 
   /// Sidecar path for a given audio path: `foo.wav` -> `foo.features.json`.
   static String sidecarPathFor(String audioPath) {
@@ -48,6 +54,8 @@ class SpectralSidecar {
       path,
       sampleRate: segment.sampleRate,
       channels: segment.channels,
+      startedAtUtc: segment.startedAtUtc,
+      captureSessionId: segment.captureSessionId,
     );
   }
 
@@ -55,6 +63,8 @@ class SpectralSidecar {
     String wavPath, {
     required int sampleRate,
     required int channels,
+    DateTime? startedAtUtc,
+    String captureSessionId = '',
   }) async {
     final file = File(wavPath);
     if (!await file.exists()) {
@@ -75,13 +85,52 @@ class SpectralSidecar {
 
     final analyzer = SpectralAnalyzer(fftSize: fftSize, sampleRate: sampleRate);
     final hop = fftSize ~/ 2;
+    final frameSeconds = hop / sampleRate;
+    final music = MusicDetector(
+      frameSeconds: frameSeconds,
+      captureSessionId: captureSessionId,
+    );
+    final speech = SpeechDetector(
+      frameSeconds: frameSeconds,
+      captureSessionId: captureSessionId,
+    );
+    final safety = SafetySoundDetector(
+      frameSeconds: frameSeconds,
+      captureSessionId: captureSessionId,
+    );
+    final baseUtc =
+        (startedAtUtc ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true))
+            .toUtc();
     final frame = Float64List(fftSize);
     final frames = <List<num>>[];
+    final detections = <AcousticDetection>[];
+    var maxDb = -120.0;
+    var maxPeakAmplitude = 0.0;
+    var maxClippingFraction = 0.0;
+    var highBandSum = 0.0;
     for (var start = 0; start + fftSize <= mono.length; start += hop) {
       for (var i = 0; i < fftSize; i++) {
         frame[i] = mono[start + i];
       }
       final f = analyzer.analyze(frame);
+      if (f.db > maxDb) {
+        maxDb = f.db;
+      }
+      if (f.peakAmplitude > maxPeakAmplitude) {
+        maxPeakAmplitude = f.peakAmplitude;
+      }
+      if (f.clippingFraction > maxClippingFraction) {
+        maxClippingFraction = f.clippingFraction;
+      }
+      highBandSum += f.highBandRatio;
+      final atUtc = baseUtc.add(
+        Duration(
+          microseconds: ((start + fftSize) * 1000000 / sampleRate).round(),
+        ),
+      );
+      detections.addAll(music.add(f, atUtc));
+      detections.addAll(speech.add(f, atUtc));
+      detections.addAll(safety.add(f, atUtc));
       frames.add([
         (start * 1000 / sampleRate).round(), // tMs: frame start offset
         _round(f.db, 1),
@@ -91,8 +140,52 @@ class SpectralSidecar {
         _round(f.dominantHz, 1),
         _round(f.lowBandRatio, 4),
         _round(f.speechBandRatio, 4),
+        _round(f.peakAmplitude, 4),
+        _round(f.crestFactor, 3),
+        _round(f.highBandRatio, 4),
+        _round(f.clippingFraction, 5),
+        _round(f.crest, 3),
       ]);
     }
+    detections.addAll(safety.flush());
+
+    final classificationCounts = <String, int>{};
+    for (final detection in detections) {
+      classificationCounts.update(
+        detection.kind.name,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    final summary = <String, dynamic>{
+      'heuristic': true,
+      'onDevice': true,
+      'transcriptionUsed': false,
+      'maxDb': _round(maxDb, 1),
+      'maxPeakAmplitude': _round(maxPeakAmplitude, 4),
+      'maxClippingFraction': _round(maxClippingFraction, 5),
+      'meanHighBandRatio': _round(highBandSum / frames.length, 4),
+      'classificationCounts': classificationCounts,
+      'events': detections
+          .map(
+            (detection) => {
+              'kind': detection.kind.name,
+              'startMs': detection.startedAtUtc
+                  .difference(baseUtc)
+                  .inMilliseconds
+                  .clamp(0, 1 << 31),
+              'endMs': detection.endedAtUtc
+                  .difference(baseUtc)
+                  .inMilliseconds
+                  .clamp(0, 1 << 31),
+              'confidence': _round(detection.confidence, 3),
+              'details': detection.details,
+            },
+          )
+          .toList(growable: false),
+      'caveat':
+          'Sound classes are acoustic patterns, not proof of an accident, argument, speaker count, or identity.',
+    };
 
     final payload = <String, dynamic>{
       'version': formatVersion,
@@ -109,8 +202,14 @@ class SpectralSidecar {
         'dominantHz',
         'lowBandRatio',
         'speechBandRatio',
+        'peakAmplitude',
+        'crestFactor',
+        'highBandRatio',
+        'clippingFraction',
+        'spectralCrest',
       ],
       'frames': frames,
+      'summary': summary,
     };
 
     final sidecar = File(sidecarPathFor(wavPath));

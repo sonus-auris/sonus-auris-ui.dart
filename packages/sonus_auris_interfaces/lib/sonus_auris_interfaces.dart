@@ -6,7 +6,7 @@
 import 'dart:convert';
 
 const acousticEventsTable = "acoustic_events";
-const acousticEventsKindValues = <String>["snore", "apneaPattern", "music", "speech", "keyword", "sleepCycle", "sleepCycleAlarm"];
+const acousticEventsKindValues = <String>["snore", "apneaPattern", "music", "speech", "keyword", "sleepCycle", "sleepCycleAlarm", "suddenLoudNoise", "raisedVoice", "possibleArgumentPattern"];
 
 class AcousticEvent {
   const AcousticEvent({

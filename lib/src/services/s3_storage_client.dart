@@ -11,6 +11,7 @@ import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
 import '../models/recording_segment.dart';
 import 'crypto/segment_encryptor.dart';
+import 'spectral_sidecar.dart';
 
 class UploadResult {
   const UploadResult.success(this.remoteKey) : error = null;
@@ -61,13 +62,40 @@ class S3StorageClient {
     if (!await file.exists()) {
       return const UploadResult.failure('Local segment file is missing.');
     }
-    return _putFile(
+    final audioResult = await _putFile(
       config: config,
       secrets: secrets,
       key: objectKeyFor(config, segment),
       file: file,
       contentType: segment.contentType,
     );
+    if (!audioResult.isSuccess) {
+      return audioResult;
+    }
+
+    // The sidecar is finalized before upload draining begins. Keep it adjacent
+    // to the audio in S3 and seal it independently when encryption is enabled.
+    // PUT is idempotent, so retrying after a sidecar failure safely replaces the
+    // already-uploaded audio object with the same logical segment.
+    final sidecar = File(SpectralSidecar.sidecarPathFor(file.path));
+    if (!await sidecar.exists()) {
+      return audioResult;
+    }
+    final sidecarResult = await _putFile(
+      config: config,
+      secrets: secrets,
+      key: analysisObjectKeyFor(config, segment),
+      file: sidecar,
+      contentType: _encryptor == null
+          ? 'application/json'
+          : 'application/octet-stream',
+    );
+    if (!sidecarResult.isSuccess) {
+      return UploadResult.failure(
+        'Audio uploaded, but FFT analysis sidecar failed: ${sidecarResult.error}',
+      );
+    }
+    return audioResult;
   }
 
   Future<UploadResult> saveSegmentPermanently({
@@ -142,6 +170,25 @@ class S3StorageClient {
     }
   }
 
+  /// Deletes a rolling segment's analysis sidecar first, then its audio. This
+  /// ordering avoids leaving readable event metadata behind if the second
+  /// request fails; either failure keeps the segment indexed for a later retry.
+  Future<String?> deleteSegmentObjects({
+    required AppConfig config,
+    required CloudSecrets secrets,
+    required String audioKey,
+  }) async {
+    final sidecarError = await deleteObject(
+      config: config,
+      secrets: secrets,
+      key: analysisObjectKeyForAudioKey(audioKey),
+    );
+    if (sidecarError != null) {
+      return 'FFT sidecar delete failed: $sidecarError';
+    }
+    return deleteObject(config: config, secrets: secrets, key: audioKey);
+  }
+
   String objectKeyFor(AppConfig config, RecordingSegment segment) {
     final prefix = config.s3Prefix
         .split('/')
@@ -159,6 +206,16 @@ class S3StorageClient {
       '${segment.id}.${segment.fileExtension}',
     ];
     return parts.join('/');
+  }
+
+  String analysisObjectKeyFor(AppConfig config, RecordingSegment segment) {
+    return analysisObjectKeyForAudioKey(objectKeyFor(config, segment));
+  }
+
+  String analysisObjectKeyForAudioKey(String audioKey) {
+    final dot = audioKey.lastIndexOf('.');
+    final stem = dot < 0 ? audioKey : audioKey.substring(0, dot);
+    return '$stem.features.json';
   }
 
   String permanentObjectKeyFor(AppConfig config, RecordingSegment segment) {

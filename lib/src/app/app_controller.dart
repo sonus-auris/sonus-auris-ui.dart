@@ -3140,10 +3140,10 @@ class AppController {
       for (final segment in segments) {
         if (segment.remoteKey != null &&
             segment.endedAtUtc.isBefore(cutoffUtc)) {
-          final error = await _s3StorageClient.deleteObject(
+          final error = await _s3StorageClient.deleteSegmentObjects(
             config: config,
             secrets: _secrets.value,
-            key: segment.remoteKey!,
+            audioKey: segment.remoteKey!,
           );
           if (error == null) {
             next.add(

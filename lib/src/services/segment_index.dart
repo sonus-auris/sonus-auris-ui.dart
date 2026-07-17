@@ -169,6 +169,10 @@ class SegmentIndex {
       if (await file.exists()) {
         await file.delete();
       }
+      final sidecar = File(_spectralSidecarPath(file.path));
+      if (await sidecar.exists()) {
+        await sidecar.delete();
+      }
       updated.add(segment.copyWith(localPath: null));
     }
     await saveSegments(updated);
@@ -194,6 +198,12 @@ class SegmentIndex {
   static String safeSegmentId(DateTime utc) {
     final value = utc.toUtc().toIso8601String();
     return value.replaceAll(':', '-').replaceAll('.', '-').replaceAll('Z', 'z');
+  }
+
+  static String _spectralSidecarPath(String audioPath) {
+    final dot = audioPath.lastIndexOf('.');
+    final stem = dot < 0 ? audioPath : audioPath.substring(0, dot);
+    return '$stem.features.json';
   }
 
   Future<void> _quarantineCorruptIndex(File file) async {
