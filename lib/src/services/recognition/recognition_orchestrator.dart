@@ -83,10 +83,15 @@ class RecognitionOrchestrator {
         case AcousticDetectionKind.apneaPattern:
         case AcousticDetectionKind.sleepCycle:
         case AcousticDetectionKind.sleepCycleAlarm:
+        case AcousticDetectionKind.suddenLoudNoise:
+        case AcousticDetectionKind.raisedVoice:
+        case AcousticDetectionKind.possibleArgumentPattern:
           // Speech transcription and sleep events are handled by their own
-          // services; the orchestrator only owns song and bird ID. Bird calls
-          // surface as music-adjacent tonal detections, so try Perch on music
-          // frames that ShazamKit did not match (see _identifySong).
+          // services, and safety events must remain available immediately
+          // without waiting on optional recognition. The orchestrator only
+          // owns song and bird ID. Bird calls surface as music-adjacent tonal
+          // detections, so try Perch on music frames that ShazamKit did not
+          // match (see _identifySong).
           break;
       }
     } catch (_) {
