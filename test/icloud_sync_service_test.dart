@@ -104,18 +104,20 @@ void main() {
     expect(nativeCalls.any((c) => c.method == 'importSegment'), isTrue);
   });
 
-  test('rejects a non-HTTPS download URL and leaves the job for retry',
-      () async {
-    mockNative(available: true);
-    final h = harness('http://dl.example/seg-1');
-    final result = await h.icloud.syncPendingJobs(
-      backendClient: h.backend,
-      config: config,
-      secrets: secrets,
-    );
-    expect(result.completed, 0);
-    expect(result.failed, 1);
-    // The insecure URL must never reach the native write path.
-    expect(nativeCalls.any((c) => c.method == 'importSegment'), isFalse);
-  });
+  test(
+    'rejects a non-HTTPS download URL and leaves the job for retry',
+    () async {
+      mockNative(available: true);
+      final h = harness('http://dl.example/seg-1');
+      final result = await h.icloud.syncPendingJobs(
+        backendClient: h.backend,
+        config: config,
+        secrets: secrets,
+      );
+      expect(result.completed, 0);
+      expect(result.failed, 1);
+      // The insecure URL must never reach the native write path.
+      expect(nativeCalls.any((c) => c.method == 'importSegment'), isFalse);
+    },
+  );
 }

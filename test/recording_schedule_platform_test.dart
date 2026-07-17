@@ -100,23 +100,23 @@ void main() {
     },
   );
 
-  test('denied exact-alarm access leaves the native alarm queue untouched', () async {
-    final alarms = _FakeAndroidAlarms();
-    final platform = PluginSchedulePlatform(
-      notifications: LocalNotificationsService(),
-      androidAlarmClient: alarms,
-      hostPlatform: ScheduleHostPlatform.android,
-      exactAlarmPermissionRequester: () async => false,
-    );
+  test(
+    'denied exact-alarm access leaves the native alarm queue untouched',
+    () async {
+      final alarms = _FakeAndroidAlarms();
+      final platform = PluginSchedulePlatform(
+        notifications: LocalNotificationsService(),
+        androidAlarmClient: alarms,
+        hostPlatform: ScheduleHostPlatform.android,
+        exactAlarmPermissionRequester: () async => false,
+      );
 
-    await platform.register([
-      ScheduleTransition(
-        at: DateTime(2026, 6, 15, 9),
-        startsRecording: true,
-      ),
-    ]);
+      await platform.register([
+        ScheduleTransition(at: DateTime(2026, 6, 15, 9), startsRecording: true),
+      ]);
 
-    expect(alarms.initializeCalls, 0);
-    expect(alarms.scheduled, isEmpty);
-  });
+      expect(alarms.initializeCalls, 0);
+      expect(alarms.scheduled, isEmpty);
+    },
+  );
 }

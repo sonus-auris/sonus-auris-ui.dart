@@ -11,9 +11,9 @@ class DayNote {
   String get timeLabel => DateFormat('HH:mm').format(atLocal);
 
   Map<String, Object?> toJson() => {
-        'at': atLocal.toIso8601String(),
-        'label': label,
-      };
+    'at': atLocal.toIso8601String(),
+    'label': label,
+  };
 }
 
 /// One "Day of My Life" — a 24-hour capture published as a single SoundCloud

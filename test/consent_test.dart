@@ -3,8 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('microphone is the only required consent item', () {
-    final required =
-        ConsentItem.values.where((i) => i.required).toList();
+    final required = ConsentItem.values.where((i) => i.required).toList();
     expect(required, [ConsentItem.microphone]);
   });
 
@@ -17,12 +16,15 @@ void main() {
 
   test('hasRequiredConsents reflects the required grants', () {
     ConsentRecord record(Map<ConsentItem, bool> grants) => ConsentRecord(
-          consentVersion: 'v1',
-          acceptedAtUtc: DateTime.utc(2026, 6, 28),
-          grants: {for (final e in grants.entries) e.key.key: e.value},
-        );
+      consentVersion: 'v1',
+      acceptedAtUtc: DateTime.utc(2026, 6, 28),
+      grants: {for (final e in grants.entries) e.key.key: e.value},
+    );
     expect(record({ConsentItem.microphone: true}).hasRequiredConsents, isTrue);
-    expect(record({ConsentItem.microphone: false}).hasRequiredConsents, isFalse);
+    expect(
+      record({ConsentItem.microphone: false}).hasRequiredConsents,
+      isFalse,
+    );
     expect(record({}).hasRequiredConsents, isFalse);
   });
 
@@ -31,11 +33,7 @@ void main() {
       consentVersion: 'audio-dashcam-consent-v1',
       acceptedAtUtc: DateTime.utc(2026, 6, 28, 7, 30),
       platform: 'ios',
-      grants: const {
-        'microphone': true,
-        'location': false,
-        'motion': true,
-      },
+      grants: const {'microphone': true, 'location': false, 'motion': true},
       synced: true,
     );
     final back = ConsentRecord.fromJson(record.toJson());

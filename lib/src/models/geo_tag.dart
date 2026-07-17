@@ -35,16 +35,16 @@ class GeoTag {
   String get accuracyLabel => '±${accuracyMeters.round()} m';
 
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'latitude': latitude,
-        'longitude': longitude,
-        'accuracyMeters': accuracyMeters,
-        'capturedAt': capturedAtUtc.toUtc().toIso8601String(),
-        if (altitudeMeters != null) 'altitudeMeters': altitudeMeters,
-        if (headingDegrees != null) 'headingDegrees': headingDegrees,
-        if (speedMetersPerSecond != null)
-          'speedMetersPerSecond': speedMetersPerSecond,
-        'source': source,
-      };
+    'latitude': latitude,
+    'longitude': longitude,
+    'accuracyMeters': accuracyMeters,
+    'capturedAt': capturedAtUtc.toUtc().toIso8601String(),
+    if (altitudeMeters != null) 'altitudeMeters': altitudeMeters,
+    if (headingDegrees != null) 'headingDegrees': headingDegrees,
+    if (speedMetersPerSecond != null)
+      'speedMetersPerSecond': speedMetersPerSecond,
+    'source': source,
+  };
 
   factory GeoTag.fromJson(Map<String, dynamic> json) {
     double asDouble(Object? v) =>
@@ -57,7 +57,7 @@ class GeoTag {
       accuracyMeters: asDouble(json['accuracyMeters']),
       capturedAtUtc:
           DateTime.tryParse('${json['capturedAt']}')?.toUtc() ??
-              DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       altitudeMeters: asNullableDouble(json['altitudeMeters']),
       headingDegrees: asNullableDouble(json['headingDegrees']),
       speedMetersPerSecond: asNullableDouble(json['speedMetersPerSecond']),

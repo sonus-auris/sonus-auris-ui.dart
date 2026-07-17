@@ -44,11 +44,13 @@ class ShazamClient {
       return null;
     }
     try {
-      final result = await _channel.invokeMapMethod<String, Object?>('match', {
-        'pcm': pcm16,
-        'sampleRate': sampleRate,
-        'channels': channels,
-      }).timeout(timeout, onTimeout: () => null);
+      final result = await _channel
+          .invokeMapMethod<String, Object?>('match', {
+            'pcm': pcm16,
+            'sampleRate': sampleRate,
+            'channels': channels,
+          })
+          .timeout(timeout, onTimeout: () => null);
       if (result == null) {
         return null;
       }

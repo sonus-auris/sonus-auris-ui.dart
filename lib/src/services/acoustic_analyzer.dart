@@ -80,16 +80,17 @@ class AcousticAnalyzer {
           break;
       }
     });
-    final starting = Isolate.spawn(_analyzerEntryPoint, {
-      'reply': receivePort.sendPort,
-      'fftSize': fftSize,
-      'sampleRate': sampleRate,
-      'flags': flags.toMap(),
-      'captureSessionId': captureSessionId,
-    }).then((isolate) async {
-      _isolate = isolate;
-      _commandPort = await ready.future;
-    });
+    final starting =
+        Isolate.spawn(_analyzerEntryPoint, {
+          'reply': receivePort.sendPort,
+          'fftSize': fftSize,
+          'sampleRate': sampleRate,
+          'flags': flags.toMap(),
+          'captureSessionId': captureSessionId,
+        }).then((isolate) async {
+          _isolate = isolate;
+          _commandPort = await ready.future;
+        });
     _starting = starting;
     await starting;
   }
@@ -204,9 +205,10 @@ void _analyzerEntryPoint(Map<String, dynamic> args) {
         try {
           final detections = pipeline.flush();
           if (detections.isNotEmpty) {
-            reply.send(
-              ['detections', detections.map((d) => d.toJson()).toList()],
-            );
+            reply.send([
+              'detections',
+              detections.map((d) => d.toJson()).toList(),
+            ]);
           }
         } catch (_) {
           // Ignore; nothing to flush.

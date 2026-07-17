@@ -24,7 +24,7 @@ import 'package:flutter/services.dart';
 /// error never breaks capture or analysis.
 class OnDeviceSpeechClient {
   OnDeviceSpeechClient({MethodChannel? channel})
-      : _channel = channel ?? const MethodChannel('audio_dashcam/stt');
+    : _channel = channel ?? const MethodChannel('audio_dashcam/stt');
 
   final MethodChannel _channel;
 
@@ -61,11 +61,7 @@ class OnDeviceSpeechClient {
     try {
       final result = await _channel.invokeMapMethod<String, Object?>(
         'transcribe',
-        {
-          'pcm': pcm16,
-          'sampleRate': sampleRate,
-          'channels': channels,
-        },
+        {'pcm': pcm16, 'sampleRate': sampleRate, 'channels': channels},
       );
       final text = (result?['text'] as String?)?.trim();
       return (text == null || text.isEmpty) ? null : text;

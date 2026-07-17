@@ -95,8 +95,9 @@ void main() {
           );
         }),
       );
-      final refusal = await refusing
-          .complete(messages: const [LlmMessage.user('x')]);
+      final refusal = await refusing.complete(
+        messages: const [LlmMessage.user('x')],
+      );
       expect(refusal.refused, isTrue);
 
       final erroring = AnthropicLlmClient(
@@ -232,8 +233,9 @@ void main() {
         }),
       );
 
-      final response =
-          await client.complete(messages: const [LlmMessage.user('x')]);
+      final response = await client.complete(
+        messages: const [LlmMessage.user('x')],
+      );
       expect(response.refused, isTrue);
       expect(response.text, isEmpty);
     });

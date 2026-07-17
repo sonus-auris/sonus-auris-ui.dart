@@ -52,7 +52,7 @@ class OAuthTokens {
 /// is fully unit-testable.
 class MusicOAuthService {
   MusicOAuthService({http.Client? httpClient})
-      : _httpClient = httpClient ?? http.Client();
+    : _httpClient = httpClient ?? http.Client();
 
   final http.Client _httpClient;
   final Random _random = Random.secure();
@@ -61,34 +61,32 @@ class MusicOAuthService {
   static OAuthProviderConfig spotify({
     required String clientId,
     required String redirectUri,
-  }) =>
-      OAuthProviderConfig(
-        name: 'spotify',
-        authorizeUrl: 'https://accounts.spotify.com/authorize',
-        tokenUrl: 'https://accounts.spotify.com/api/token',
-        clientId: clientId,
-        redirectUri: redirectUri,
-        scopes: const ['playlist-modify-private', 'playlist-read-private'],
-      );
+  }) => OAuthProviderConfig(
+    name: 'spotify',
+    authorizeUrl: 'https://accounts.spotify.com/authorize',
+    tokenUrl: 'https://accounts.spotify.com/api/token',
+    clientId: clientId,
+    redirectUri: redirectUri,
+    scopes: const ['playlist-modify-private', 'playlist-read-private'],
+  );
 
   static OAuthProviderConfig soundCloud({
     required String clientId,
     required String redirectUri,
-  }) =>
-      OAuthProviderConfig(
-        name: 'soundcloud',
-        authorizeUrl: 'https://secure.soundcloud.com/authorize',
-        tokenUrl: 'https://secure.soundcloud.com/oauth/token',
-        clientId: clientId,
-        redirectUri: redirectUri,
-        scopes: const [],
-      );
+  }) => OAuthProviderConfig(
+    name: 'soundcloud',
+    authorizeUrl: 'https://secure.soundcloud.com/authorize',
+    tokenUrl: 'https://secure.soundcloud.com/oauth/token',
+    clientId: clientId,
+    redirectUri: redirectUri,
+    scopes: const [],
+  );
 
   PkcePair generatePkce() {
     final verifier = _randomUrlSafe(64);
-    final challenge =
-        base64UrlEncode(sha256.convert(ascii.encode(verifier)).bytes)
-            .replaceAll('=', '');
+    final challenge = base64UrlEncode(
+      sha256.convert(ascii.encode(verifier)).bytes,
+    ).replaceAll('=', '');
     return PkcePair(verifier: verifier, challenge: challenge);
   }
 
@@ -99,15 +97,17 @@ class MusicOAuthService {
     required String state,
     required String codeChallenge,
   }) {
-    return Uri.parse(config.authorizeUrl).replace(queryParameters: {
-      'client_id': config.clientId,
-      'response_type': 'code',
-      'redirect_uri': config.redirectUri,
-      if (config.scopes.isNotEmpty) 'scope': config.scopes.join(' '),
-      'state': state,
-      'code_challenge_method': 'S256',
-      'code_challenge': codeChallenge,
-    });
+    return Uri.parse(config.authorizeUrl).replace(
+      queryParameters: {
+        'client_id': config.clientId,
+        'response_type': 'code',
+        'redirect_uri': config.redirectUri,
+        if (config.scopes.isNotEmpty) 'scope': config.scopes.join(' '),
+        'state': state,
+        'code_challenge_method': 'S256',
+        'code_challenge': codeChallenge,
+      },
+    );
   }
 
   /// Exchanges an authorization [code] for tokens. Returns null on failure.

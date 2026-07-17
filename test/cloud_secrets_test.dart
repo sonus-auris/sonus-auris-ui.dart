@@ -36,19 +36,22 @@ void main() {
     expect(secrets.supabaseTokenNeedsRefresh(now: now), isFalse);
   });
 
-  test('withoutSupabaseSession clears identity but keeps cloud credentials', () {
-    const secrets = CloudSecrets(
-      s3AccessKeyId: 'akid',
-      s3SecretAccessKey: 'secret',
-      backendDeviceToken: 'device',
-      supabaseAccessToken: 'access',
-      supabaseRefreshToken: 'refresh',
-      supabaseEmail: 'user@example.com',
-    );
-    final cleared = secrets.withoutSupabaseSession();
-    expect(cleared.hasSupabaseSession, isFalse);
-    expect(cleared.supabaseEmail, isEmpty);
-    expect(cleared.s3AccessKeyId, 'akid');
-    expect(cleared.backendDeviceToken, 'device');
-  });
+  test(
+    'withoutSupabaseSession clears identity but keeps cloud credentials',
+    () {
+      const secrets = CloudSecrets(
+        s3AccessKeyId: 'akid',
+        s3SecretAccessKey: 'secret',
+        backendDeviceToken: 'device',
+        supabaseAccessToken: 'access',
+        supabaseRefreshToken: 'refresh',
+        supabaseEmail: 'user@example.com',
+      );
+      final cleared = secrets.withoutSupabaseSession();
+      expect(cleared.hasSupabaseSession, isFalse);
+      expect(cleared.supabaseEmail, isEmpty);
+      expect(cleared.s3AccessKeyId, 'akid');
+      expect(cleared.backendDeviceToken, 'device');
+    },
+  );
 }

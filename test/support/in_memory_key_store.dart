@@ -3,8 +3,7 @@ import 'package:audio_dashcam/src/services/crypto/key_manager.dart';
 /// A non-persistent [SecureKeyStore] for tests. Mirrors the plugin contract:
 /// reads return null when absent, writes overwrite.
 class InMemoryKeyStore implements SecureKeyStore {
-  InMemoryKeyStore([Map<String, String>? seed])
-      : _data = {...?seed};
+  InMemoryKeyStore([Map<String, String>? seed]) : _data = {...?seed};
 
   final Map<String, String> _data;
 

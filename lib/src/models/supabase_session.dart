@@ -17,10 +17,7 @@ class SupabaseSession {
   final String email;
 
   /// Parses a GoTrue token response (`/auth/v1/token`, `/auth/v1/signup`).
-  factory SupabaseSession.fromJson(
-    Map<String, dynamic> json, {
-    DateTime? now,
-  }) {
+  factory SupabaseSession.fromJson(Map<String, dynamic> json, {DateTime? now}) {
     final accessToken = (json['access_token'] as String? ?? '').trim();
     if (accessToken.isEmpty) {
       throw const FormatException('Supabase response had no access_token.');

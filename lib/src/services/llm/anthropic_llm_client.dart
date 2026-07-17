@@ -69,8 +69,11 @@ class AnthropicLlmClient implements LlmClient {
     final http.Response response;
     try {
       response = await _http
-          .post(Uri.parse('$baseUrl/v1/messages'),
-              headers: headers, body: jsonEncode(body))
+          .post(
+            Uri.parse('$baseUrl/v1/messages'),
+            headers: headers,
+            body: jsonEncode(body),
+          )
           .timeout(timeout);
     } on Exception catch (e) {
       throw LlmException('Anthropic request failed: $e');

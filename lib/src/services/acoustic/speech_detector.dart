@@ -127,8 +127,14 @@ class SpeechDetector {
       return 0;
     }
     // Modulation frequency f maps to lag = 1/(f*frameSeconds).
-    final minLag = (1 / (config.maxModulationHz * frameSeconds)).floor().clamp(1, n - 1);
-    final maxLag = (1 / (config.minModulationHz * frameSeconds)).ceil().clamp(minLag, n - 1);
+    final minLag = (1 / (config.maxModulationHz * frameSeconds)).floor().clamp(
+      1,
+      n - 1,
+    );
+    final maxLag = (1 / (config.minModulationHz * frameSeconds)).ceil().clamp(
+      minLag,
+      n - 1,
+    );
     var best = 0.0;
     for (var lag = minLag; lag <= maxLag; lag++) {
       var sum = 0.0;

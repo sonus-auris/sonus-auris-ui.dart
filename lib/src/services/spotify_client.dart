@@ -23,9 +23,9 @@ class SpotifyClient {
   final String playlistName;
 
   Map<String, String> _auth(String token) => {
-        'authorization': 'Bearer ${token.trim()}',
-        'accept': 'application/json',
-      };
+    'authorization': 'Bearer ${token.trim()}',
+    'accept': 'application/json',
+  };
 
   /// Builds the Spotify search query for a recognised song. Exposed for testing.
   static String searchQuery({required String title, String? artist}) {
@@ -43,11 +43,13 @@ class SpotifyClient {
     if (title.trim().isEmpty) {
       return null;
     }
-    final uri = Uri.parse('$apiBase/search').replace(queryParameters: {
-      'q': searchQuery(title: title, artist: artist),
-      'type': 'track',
-      'limit': '1',
-    });
+    final uri = Uri.parse('$apiBase/search').replace(
+      queryParameters: {
+        'q': searchQuery(title: title, artist: artist),
+        'type': 'track',
+        'limit': '1',
+      },
+    );
     final res = await _get(uri, accessToken);
     final items = (((res?['tracks']) as Map?)?['items']) as List?;
     if (items == null || items.isEmpty) {
@@ -67,8 +69,11 @@ class SpotifyClient {
     String? artist,
   }) async {
     try {
-      final trackUri =
-          await findTrackUri(accessToken: accessToken, title: title, artist: artist);
+      final trackUri = await findTrackUri(
+        accessToken: accessToken,
+        title: title,
+        artist: artist,
+      );
       if (trackUri == null) {
         return null;
       }
@@ -76,8 +81,10 @@ class SpotifyClient {
       if (userId == null) {
         return null;
       }
-      final playlistId =
-          await _findOrCreatePlaylist(accessToken: accessToken, userId: userId);
+      final playlistId = await _findOrCreatePlaylist(
+        accessToken: accessToken,
+        userId: userId,
+      );
       if (playlistId == null) {
         return null;
       }
@@ -87,7 +94,9 @@ class SpotifyClient {
       final added = await _post(
         Uri.parse('$apiBase/playlists/$playlistId/tracks'),
         accessToken,
-        {'uris': [trackUri]},
+        {
+          'uris': [trackUri],
+        },
       );
       return added != null ? playlistId : null;
     } catch (_) {
@@ -105,7 +114,9 @@ class SpotifyClient {
     required String userId,
   }) async {
     final list = await _get(
-      Uri.parse('$apiBase/me/playlists').replace(queryParameters: {'limit': '50'}),
+      Uri.parse(
+        '$apiBase/me/playlists',
+      ).replace(queryParameters: {'limit': '50'}),
       accessToken,
     );
     final items = (list?['items']) as List?;
@@ -134,8 +145,9 @@ class SpotifyClient {
     String trackUri,
   ) async {
     final res = await _get(
-      Uri.parse('$apiBase/playlists/$playlistId/tracks')
-          .replace(queryParameters: {'fields': 'items(track(uri))', 'limit': '100'}),
+      Uri.parse('$apiBase/playlists/$playlistId/tracks').replace(
+        queryParameters: {'fields': 'items(track(uri))', 'limit': '100'},
+      ),
       accessToken,
     );
     final items = (res?['items']) as List?;
@@ -153,8 +165,9 @@ class SpotifyClient {
   }
 
   Future<Map<String, dynamic>?> _get(Uri uri, String accessToken) async {
-    final res =
-        await _httpClient.get(uri, headers: _auth(accessToken)).timeout(requestTimeout);
+    final res = await _httpClient
+        .get(uri, headers: _auth(accessToken))
+        .timeout(requestTimeout);
     if (res.statusCode < 200 || res.statusCode >= 300) {
       return null;
     }

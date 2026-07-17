@@ -27,7 +27,7 @@ class EncodedAudio {
 /// returns null and the caller falls back to uploading the raw WAV.
 class AudioEncoder {
   AudioEncoder({MethodChannel? channel})
-      : _channel = channel ?? const MethodChannel('audio_dashcam/encoder');
+    : _channel = channel ?? const MethodChannel('audio_dashcam/encoder');
 
   final MethodChannel _channel;
 

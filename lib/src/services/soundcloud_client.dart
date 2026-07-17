@@ -91,8 +91,9 @@ class SoundCloudClient {
       return const [];
     }
     try {
-      final uri = Uri.parse('$apiBase/me/tracks')
-          .replace(queryParameters: {'limit': '$limit'});
+      final uri = Uri.parse(
+        '$apiBase/me/tracks',
+      ).replace(queryParameters: {'limit': '$limit'});
       final response = await _httpClient
           .get(uri, headers: {'Authorization': 'OAuth ${accessToken.trim()}'})
           .timeout(requestTimeout);

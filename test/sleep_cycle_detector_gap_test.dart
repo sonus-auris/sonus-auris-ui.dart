@@ -30,13 +30,13 @@ const _arousal = SpectralFrame(
 );
 
 SleepCycleDetector _detector() => SleepCycleDetector(
-      frameSeconds: 60,
-      config: const SleepCycleConfig(
-        sleepOnsetMinutes: 3,
-        bucketSeconds: 60,
-        maxGapMinutes: 5,
-      ),
-    );
+  frameSeconds: 60,
+  config: const SleepCycleConfig(
+    sleepOnsetMinutes: 3,
+    bucketSeconds: 60,
+    maxGapMinutes: 5,
+  ),
+);
 
 bool _isCycle(AcousticDetection e) {
   if (e.kind != AcousticDetectionKind.sleepCycle &&

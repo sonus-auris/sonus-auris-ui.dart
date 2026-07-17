@@ -22,8 +22,8 @@ import 'segment_cipher.dart';
 /// The Rust desktop must implement this exact wire format to interoperate.
 class AccountRecipient {
   AccountRecipient({X25519? x25519, AesGcm? aead})
-      : _x25519 = x25519 ?? X25519(),
-        _aead = aead ?? AesGcm.with256bits();
+    : _x25519 = x25519 ?? X25519(),
+      _aead = aead ?? AesGcm.with256bits();
 
   static const int publicKeyLength = 32;
   static const List<int> _info = [
@@ -61,8 +61,7 @@ class AccountRecipient {
     final ephemeralPub = await ephemeral.extractPublicKey();
     final shared = await _x25519.sharedSecretKey(
       keyPair: ephemeral,
-      remotePublicKey:
-          SimplePublicKey(publicKey, type: KeyPairType.x25519),
+      remotePublicKey: SimplePublicKey(publicKey, type: KeyPairType.x25519),
     );
     final key = await _deriveKey(shared);
     final box = await _aead.encrypt(dekBytes, secretKey: key);
@@ -79,17 +78,16 @@ class AccountRecipient {
     required Uint8List privateSeed,
     required Uint8List blob,
   }) async {
-    if (blob.length < publicKeyLength + SegmentCipher.nonceLength + SegmentCipher.macLength) {
+    if (blob.length <
+        publicKeyLength + SegmentCipher.nonceLength + SegmentCipher.macLength) {
       throw const FormatException('Account-sealed DEK is truncated.');
     }
-    final ephemeralPub =
-        Uint8List.sublistView(blob, 0, publicKeyLength);
+    final ephemeralPub = Uint8List.sublistView(blob, 0, publicKeyLength);
     final rest = Uint8List.sublistView(blob, publicKeyLength);
     final keyPair = await _x25519.newKeyPairFromSeed(privateSeed);
     final shared = await _x25519.sharedSecretKey(
       keyPair: keyPair,
-      remotePublicKey:
-          SimplePublicKey(ephemeralPub, type: KeyPairType.x25519),
+      remotePublicKey: SimplePublicKey(ephemeralPub, type: KeyPairType.x25519),
     );
     final key = await _deriveKey(shared);
     final secretBox = SecretBox.fromConcatenation(
@@ -102,8 +100,10 @@ class AccountRecipient {
   }
 
   Future<SecretKey> _deriveKey(SecretKey shared) {
-    final hkdf =
-        Hkdf(hmac: Hmac.sha256(), outputLength: SegmentCipher.dekLength);
+    final hkdf = Hkdf(
+      hmac: Hmac.sha256(),
+      outputLength: SegmentCipher.dekLength,
+    );
     return hkdf.deriveKey(secretKey: shared, nonce: const [], info: _info);
   }
 }

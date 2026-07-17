@@ -55,9 +55,7 @@ class GeminiLlmClient implements LlmClient {
     try {
       response = await _http
           .post(
-            Uri.parse(
-              '$baseUrl/v1beta/models/$resolvedModel:generateContent',
-            ),
+            Uri.parse('$baseUrl/v1beta/models/$resolvedModel:generateContent'),
             headers: {
               'content-type': 'application/json',
               'x-goog-api-key': apiKey,
@@ -77,11 +75,12 @@ class GeminiLlmClient implements LlmClient {
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
     final candidates = (json['candidates'] as List?) ?? const [];
-    final first =
-        candidates.isEmpty ? null : candidates.first as Map<String, dynamic>;
+    final first = candidates.isEmpty
+        ? null
+        : candidates.first as Map<String, dynamic>;
     final parts =
         ((first?['content'] as Map<String, dynamic>?)?['parts'] as List?) ??
-            const [];
+        const [];
     final text = parts
         .whereType<Map<String, dynamic>>()
         .map((part) => part['text'] as String? ?? '')
@@ -92,7 +91,8 @@ class GeminiLlmClient implements LlmClient {
       model: json['modelVersion'] as String? ?? resolvedModel,
       inputTokens: (usage?['promptTokenCount'] as num?)?.toInt(),
       outputTokens: (usage?['candidatesTokenCount'] as num?)?.toInt(),
-      refused: first?['finishReason'] == 'SAFETY' ||
+      refused:
+          first?['finishReason'] == 'SAFETY' ||
           json['promptFeedback']?['blockReason'] != null,
     );
   }

@@ -49,8 +49,7 @@ class LlmException implements Exception {
       statusCode == 429 || (statusCode != null && statusCode! >= 500);
 
   @override
-  String toString() =>
-      'LlmException(${statusCode ?? 'network'}): $message';
+  String toString() => 'LlmException(${statusCode ?? 'network'}): $message';
 }
 
 /// A chat-completion client for one LLM provider. All implementations use the

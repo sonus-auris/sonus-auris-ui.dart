@@ -8,10 +8,12 @@ import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 class MusicOAuthConstants {
   static const String callbackScheme = 'sonusauris';
   static const String redirectUri = 'sonusauris://oauth/callback';
-  static const String spotifyClientId =
-      String.fromEnvironment('SPOTIFY_CLIENT_ID');
-  static const String soundCloudClientId =
-      String.fromEnvironment('SOUNDCLOUD_CLIENT_ID');
+  static const String spotifyClientId = String.fromEnvironment(
+    'SPOTIFY_CLIENT_ID',
+  );
+  static const String soundCloudClientId = String.fromEnvironment(
+    'SOUNDCLOUD_CLIENT_ID',
+  );
 }
 
 /// Runs the browser leg of an OAuth flow and returns the redirect URL (with the

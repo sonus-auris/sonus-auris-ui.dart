@@ -83,7 +83,8 @@ class SnoreDetector {
     _lastFrameAt = atUtc;
     final out = <AcousticDetection>[];
     final loud = frame.db >= config.loudDb;
-    final snoreLike = frame.lowBandRatio >= config.lowBandRatioMin &&
+    final snoreLike =
+        frame.lowBandRatio >= config.lowBandRatioMin &&
         frame.centroidHz <= config.centroidMaxHz &&
         frame.flatness <= config.flatnessMax;
 

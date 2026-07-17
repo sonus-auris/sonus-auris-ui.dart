@@ -108,12 +108,14 @@ class RecognitionOrchestrator {
           channels: 1,
         );
         if (match != null) {
-          _results.add(RecognitionResult(
-            kind: RecognitionKind.song,
-            detection: detection.copyWith(
-              details: {...detection.details, ...match.toDetails()},
+          _results.add(
+            RecognitionResult(
+              kind: RecognitionKind.song,
+              detection: detection.copyWith(
+                details: {...detection.details, ...match.toDetails()},
+              ),
             ),
-          ));
+          );
           return;
         }
       }
@@ -139,19 +141,19 @@ class RecognitionOrchestrator {
     if (matches.isEmpty) {
       return;
     }
-    _results.add(RecognitionResult(
-      kind: RecognitionKind.birdCall,
-      detection: detection.copyWith(
-        details: {
-          ...detection.details,
-          ...matches.first.toDetails(),
-          if (matches.length > 1)
-            'alternates': [
-              for (final m in matches.skip(1)) m.toDetails(),
-            ],
-        },
+    _results.add(
+      RecognitionResult(
+        kind: RecognitionKind.birdCall,
+        detection: detection.copyWith(
+          details: {
+            ...detection.details,
+            ...matches.first.toDetails(),
+            if (matches.length > 1)
+              'alternates': [for (final m in matches.skip(1)) m.toDetails()],
+          },
+        ),
       ),
-    ));
+    );
   }
 
   Future<void> dispose() async {

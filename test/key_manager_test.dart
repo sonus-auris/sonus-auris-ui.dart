@@ -23,21 +23,28 @@ void main() {
     expect(await mk1.extractBytes(), equals(await mk2.extractBytes()));
   });
 
-  test('passphrase recovery restores the same master key on a new device',
-      () async {
-    final originalStore = InMemoryKeyStore();
-    final original = KeyManager(store: originalStore);
-    await original.getOrCreateMasterKey();
-    final recovery = await original.exportPassphraseRecovery('correct horse staple');
+  test(
+    'passphrase recovery restores the same master key on a new device',
+    () async {
+      final originalStore = InMemoryKeyStore();
+      final original = KeyManager(store: originalStore);
+      await original.getOrCreateMasterKey();
+      final recovery = await original.exportPassphraseRecovery(
+        'correct horse staple',
+      );
 
-    // New device: empty store, import from the blob + passphrase.
-    final fresh = KeyManager(store: InMemoryKeyStore());
-    await fresh.restoreFromPassphraseRecovery('correct horse staple', recovery);
+      // New device: empty store, import from the blob + passphrase.
+      final fresh = KeyManager(store: InMemoryKeyStore());
+      await fresh.restoreFromPassphraseRecovery(
+        'correct horse staple',
+        recovery,
+      );
 
-    final a = await original.getOrCreateMasterKey();
-    final b = await fresh.getOrCreateMasterKey();
-    expect(await a.extractBytes(), equals(await b.extractBytes()));
-  });
+      final a = await original.getOrCreateMasterKey();
+      final b = await fresh.getOrCreateMasterKey();
+      expect(await a.extractBytes(), equals(await b.extractBytes()));
+    },
+  );
 
   test('wrong passphrase fails to recover', () async {
     final km = KeyManager(store: InMemoryKeyStore());
@@ -46,7 +53,8 @@ void main() {
 
     final fresh = KeyManager(store: InMemoryKeyStore());
     expect(
-      () => fresh.restoreFromPassphraseRecovery('the-wrong-passphrase', recovery),
+      () =>
+          fresh.restoreFromPassphraseRecovery('the-wrong-passphrase', recovery),
       throwsA(isA<Object>()),
     );
   });
@@ -57,36 +65,40 @@ void main() {
     expect(() => km.exportPassphraseRecovery('short'), throwsArgumentError);
   });
 
-  test('account-escrow recovery restores the master key with its secret',
-      () async {
-    final original = KeyManager(store: InMemoryKeyStore());
-    await original.getOrCreateMasterKey();
-    final material = await original.exportAccountRecovery();
+  test(
+    'account-escrow recovery restores the master key with its secret',
+    () async {
+      final original = KeyManager(store: InMemoryKeyStore());
+      await original.getOrCreateMasterKey();
+      final material = await original.exportAccountRecovery();
 
-    final fresh = KeyManager(store: InMemoryKeyStore());
-    await fresh.restoreFromAccountRecovery(
-      material.recoverySecretBase64,
-      material.blob,
-    );
+      final fresh = KeyManager(store: InMemoryKeyStore());
+      await fresh.restoreFromAccountRecovery(
+        material.recoverySecretBase64,
+        material.blob,
+      );
 
-    final a = await original.getOrCreateMasterKey();
-    final b = await fresh.getOrCreateMasterKey();
-    expect(await a.extractBytes(), equals(await b.extractBytes()));
-  });
+      final a = await original.getOrCreateMasterKey();
+      final b = await fresh.getOrCreateMasterKey();
+      expect(await a.extractBytes(), equals(await b.extractBytes()));
+    },
+  );
 
-  test('account-escrow blob is useless without the secret (zero-knowledge)',
-      () async {
-    final original = KeyManager(store: InMemoryKeyStore());
-    await original.getOrCreateMasterKey();
-    final material = await original.exportAccountRecovery();
+  test(
+    'account-escrow blob is useless without the secret (zero-knowledge)',
+    () async {
+      final original = KeyManager(store: InMemoryKeyStore());
+      await original.getOrCreateMasterKey();
+      final material = await original.exportAccountRecovery();
 
-    final attacker = KeyManager(store: InMemoryKeyStore());
-    final wrongSecret = base64Wrong(material.recoverySecretBase64);
-    expect(
-      () => attacker.restoreFromAccountRecovery(wrongSecret, material.blob),
-      throwsA(isA<Object>()),
-    );
-  });
+      final attacker = KeyManager(store: InMemoryKeyStore());
+      final wrongSecret = base64Wrong(material.recoverySecretBase64);
+      expect(
+        () => attacker.restoreFromAccountRecovery(wrongSecret, material.blob),
+        throwsA(isA<Object>()),
+      );
+    },
+  );
 
   test('wrapped DEK is the expected envelope size', () async {
     final km = KeyManager(store: InMemoryKeyStore());

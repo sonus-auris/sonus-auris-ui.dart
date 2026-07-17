@@ -49,12 +49,14 @@ class OpenAiLlmClient implements LlmClient {
     final http.Response response;
     try {
       response = await _http
-          .post(Uri.parse('$baseUrl/v1/chat/completions'),
-              headers: {
-                'content-type': 'application/json',
-                'authorization': 'Bearer $apiKey',
-              },
-              body: jsonEncode(body))
+          .post(
+            Uri.parse('$baseUrl/v1/chat/completions'),
+            headers: {
+              'content-type': 'application/json',
+              'authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode(body),
+          )
           .timeout(timeout);
     } on Exception catch (e) {
       throw LlmException('OpenAI request failed: $e');
@@ -68,7 +70,9 @@ class OpenAiLlmClient implements LlmClient {
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
     final choices = (json['choices'] as List?) ?? const [];
-    final first = choices.isEmpty ? null : choices.first as Map<String, dynamic>;
+    final first = choices.isEmpty
+        ? null
+        : choices.first as Map<String, dynamic>;
     final message = first?['message'] as Map<String, dynamic>?;
     final usage = json['usage'] as Map<String, dynamic>?;
     return LlmResponse(
@@ -76,7 +80,8 @@ class OpenAiLlmClient implements LlmClient {
       model: json['model'] as String? ?? resolvedModel,
       inputTokens: (usage?['prompt_tokens'] as num?)?.toInt(),
       outputTokens: (usage?['completion_tokens'] as num?)?.toInt(),
-      refused: message?['refusal'] != null ||
+      refused:
+          message?['refusal'] != null ||
           first?['finish_reason'] == 'content_filter',
     );
   }

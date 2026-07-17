@@ -65,8 +65,9 @@ class SegmentCipher {
   }) async {
     final dek = await _aead.newSecretKey();
     final wrappedDek = await wrapDek(dek);
-    final accountWrapped =
-        wrapForAccount == null ? null : await wrapForAccount(dek);
+    final accountWrapped = wrapForAccount == null
+        ? null
+        : await wrapForAccount(dek);
     if (wrappedDek.length > 0xFFFF ||
         (accountWrapped != null && accountWrapped.length > 0xFFFF)) {
       throw ArgumentError('Wrapped DEK is too large to encode.');
@@ -132,8 +133,11 @@ class SegmentCipher {
     if (container.length < offset + 2) {
       throw const FormatException('Encrypted segment is truncated.');
     }
-    final wrappedDek =
-        Uint8List.sublistView(container, _headerFixedLength, offset);
+    final wrappedDek = Uint8List.sublistView(
+      container,
+      _headerFixedLength,
+      offset,
+    );
 
     Uint8List? accountWrappedDek;
     if (ver == versionMultiRecipient && (flags & _flagAccountRecipient) != 0) {
@@ -143,8 +147,11 @@ class SegmentCipher {
       if (container.length < accountEnd) {
         throw const FormatException('Encrypted segment is truncated.');
       }
-      accountWrappedDek =
-          Uint8List.sublistView(container, accountStart, accountEnd);
+      accountWrappedDek = Uint8List.sublistView(
+        container,
+        accountStart,
+        accountEnd,
+      );
       offset = accountEnd;
     }
     if (container.length < offset + nonceLength + macLength) {

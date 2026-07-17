@@ -230,10 +230,24 @@ class RecordingSchedule {
       final date = DateTime(from.year, from.month, from.day + dayOffset);
       for (final w in days[dayIndexFor(date)].effectiveWindows()) {
         candidates
-          ..add(DateTime(date.year, date.month, date.day,
-              w.startMinute ~/ 60, w.startMinute % 60))
-          ..add(DateTime(date.year, date.month, date.day,
-              w.endMinute ~/ 60, w.endMinute % 60));
+          ..add(
+            DateTime(
+              date.year,
+              date.month,
+              date.day,
+              w.startMinute ~/ 60,
+              w.startMinute % 60,
+            ),
+          )
+          ..add(
+            DateTime(
+              date.year,
+              date.month,
+              date.day,
+              w.endMinute ~/ 60,
+              w.endMinute % 60,
+            ),
+          );
       }
     }
     candidates.sort();

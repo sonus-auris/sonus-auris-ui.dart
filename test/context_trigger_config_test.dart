@@ -11,16 +11,16 @@ void main() {
   });
 
   test('hasContextTriggers requires enabled + a kind', () {
-    final enabledNoKinds =
-        const AppConfig(deviceId: 'd').copyWith(contextTriggersEnabled: true);
+    final enabledNoKinds = const AppConfig(
+      deviceId: 'd',
+    ).copyWith(contextTriggersEnabled: true);
     expect(enabledNoKinds.hasContextTriggers, isFalse);
 
     final armed = enabledNoKinds.copyWith(
       contextTriggerKinds: [ContextTriggerKind.bluetoothConnect.wireName],
     );
     expect(armed.hasContextTriggers, isTrue);
-    expect(armed.contextTriggerKindSet,
-        {ContextTriggerKind.bluetoothConnect});
+    expect(armed.contextTriggerKindSet, {ContextTriggerKind.bluetoothConnect});
   });
 
   test('round-trips trigger config through JSON', () {
@@ -53,9 +53,9 @@ void main() {
   });
 
   test('unknown trigger wire names are ignored', () {
-    final config = const AppConfig(deviceId: 'd').copyWith(
-      contextTriggerKinds: ['network_change', 'bogus_sensor'],
-    );
+    final config = const AppConfig(
+      deviceId: 'd',
+    ).copyWith(contextTriggerKinds: ['network_change', 'bogus_sensor']);
     expect(config.contextTriggerKindSet, {ContextTriggerKind.networkChange});
   });
 }
