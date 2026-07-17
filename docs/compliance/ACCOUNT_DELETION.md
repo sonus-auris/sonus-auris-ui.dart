@@ -23,16 +23,17 @@ Before submitting, ensure:
 2. **In-app:** verify the production build has `SONUS_BACKEND_BASE_URL`,
    `SONUS_SUPABASE_URL`, and `SONUS_SUPABASE_ANON_KEY` so account creation and
    deletion work without developer project fields.
-3. **Web:** host the request page below at a public URL and put it in the Play
-   "Data deletion" field and the App Store privacy section.
+3. **Web:** the public request page is
+   `https://sonusauris.app/account-deletion/`; put it in the Play "Data
+   deletion" field and App Store privacy section after replacing its contact placeholder.
 
 ## What gets deleted vs. retained
 
 | Data | On deletion |
 |---|---|
 | Account record, Supabase Auth user, auth/device tokens | Deleted |
-| Clip metadata held by the backend | Deleted |
-| On-device recordings, keys, tokens | Wiped from the device |
+| Clip metadata and encrypted backups held by Sonus Auris | Deleted |
+| On-device recordings, keys, tokens | Wiped by in-app deletion; a web/email request cannot remotely erase a device |
 | Clips you backed up to **your own** storage (S3/Drive/OneDrive/iCloud) | You control these; delete them in that service |
 | Minimal transaction logs required by law | Retained only as long as legally required, then deleted |
 
@@ -49,8 +50,10 @@ Target: complete deletion within 30 days of a verified request.
 > from the address associated with your account (or the device/account ID shown in
 > the app's Settings) with the subject "Delete my account".
 >
-> We will verify the request and delete your account, authentication tokens, and
-> the clip metadata we hold, normally within 30 days. Recordings you backed up to
-> your own cloud storage are under your control — delete them in that service.
+> We will verify the request and delete your account, authentication tokens, clip
+> metadata, and encrypted backups held by Sonus Auris, normally within 30 days.
+> Recordings you backed up to your own cloud storage are under your control —
+> delete them in that service. A request made outside the app cannot remotely
+> erase recordings stored only on your device.
 >
 > Questions: **<privacy@yourdomain>**.

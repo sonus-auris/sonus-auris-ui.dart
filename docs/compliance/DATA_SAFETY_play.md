@@ -20,14 +20,16 @@ device is still declared honestly below.
 | **Audio (voice/sound recordings)** | Yes (only if you back up / use backend) | No | App functionality | Optional (off until you record/back up) |
 | **Precise location** | Yes (only if geotagging on) | No | App functionality | Optional (off by default) |
 | **Approximate location** | Yes (only if geotagging on) | No | App functionality | Optional (off by default) |
-| **User IDs / Device IDs** | Yes (if using the backend account) | No | App functionality, Authentication | Optional |
-| **App activity / diagnostics (crash, performance)** | Yes (minimal, on-device logs) | No | App functionality, diagnostics | — |
+| **Email address** | Yes (if creating/signing into an account) | No | Account management, Authentication | Optional |
+| **User IDs / Device or other IDs** | Yes (if using the backend account) | No | App functionality, Authentication | Optional |
+| **Crash logs / Diagnostics** | Yes (signed-in client telemetry) | No | App functionality, diagnostics | Optional (only after sign-in) |
 
 Notes for the reviewer/console:
 - We do **not** select "Data is processed ephemerally" for audio unless true for
   your config; default above assumes optional backup.
 - No data is used for **advertising or marketing**, and no data is **sold/shared**
-  with third parties. No third-party ads/analytics SDKs are bundled.
+  with third parties. Supabase and connected object stores act as service
+  providers or user-directed destinations. No third-party ads/analytics SDKs are bundled.
 - Audio sent to your own connected storage (S3/Drive/OneDrive/iCloud) is governed
   by that provider; for Play purposes we declare audio as "collected" because it
   can leave the device, and "not shared" because we don't hand it to third parties.

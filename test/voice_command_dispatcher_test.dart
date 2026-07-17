@@ -102,6 +102,112 @@ void main() {
       expect(result.success, isTrue);
       expect(result.spokenResponse, contains('Already recording'));
     });
+
+    test('confirm recording speaks the live state back', () async {
+      var recording = true;
+      final control = RecorderControl(
+        start: () async => recording = true,
+        stop: () async => recording = false,
+        isRecording: () => recording,
+      );
+      final dispatcher = VoiceCommandDispatcher(recorderControl: control);
+      addTearDown(dispatcher.dispose);
+
+      final active = await dispatcher.dispatch('confirm recording');
+      expect(active.success, isTrue);
+      expect(active.spokenResponse, contains('recording'));
+      expect(active.data['recording'], isTrue);
+
+      recording = false;
+      final stopped = await dispatcher.dispatch('hey sonus, am I recording?');
+      expect(stopped.success, isTrue);
+      expect(stopped.data['recording'], isFalse);
+    });
+
+    test('pause with a spoken duration pauses immediately', () async {
+      var recording = true;
+      Duration? pausedFor;
+      final control = RecorderControl(
+        start: () async => recording = true,
+        stop: () async => recording = false,
+        isRecording: () => recording,
+        pauseFor: (duration) async {
+          pausedFor = duration;
+          recording = false;
+        },
+        isPaused: () => pausedFor != null && !recording,
+      );
+      final dispatcher = VoiceCommandDispatcher(recorderControl: control);
+      addTearDown(dispatcher.dispose);
+
+      final result = await dispatcher.dispatch(
+        'pause recording for 10 minutes',
+      );
+      expect(result.success, isTrue);
+      expect(pausedFor, const Duration(minutes: 10));
+      expect(result.spokenResponse, contains('10 minutes'));
+    });
+
+    test(
+      'pause without a duration asks, then the next utterance answers',
+      () async {
+        var recording = true;
+        Duration? pausedFor;
+        final control = RecorderControl(
+          start: () async => recording = true,
+          stop: () async => recording = false,
+          isRecording: () => recording,
+          pauseFor: (duration) async {
+            pausedFor = duration;
+            recording = false;
+          },
+          isPaused: () => pausedFor != null && !recording,
+        );
+        final dispatcher = VoiceCommandDispatcher(recorderControl: control);
+        addTearDown(dispatcher.dispose);
+
+        final question = await dispatcher.dispatch('pause recording');
+        expect(question.handled, isFalse);
+        expect(question.spokenResponse, contains('how long'));
+        expect(pausedFor, isNull);
+
+        final answer = await dispatcher.dispatch('twenty minutes');
+        expect(answer.success, isTrue);
+        expect(pausedFor, const Duration(minutes: 20));
+      },
+    );
+
+    test('a non-answer mid-dialogue falls through to normal parsing', () async {
+      var recording = true;
+      final control = RecorderControl(
+        start: () async => recording = true,
+        stop: () async => recording = false,
+        isRecording: () => recording,
+        pauseFor: (_) async => recording = false,
+      );
+      final dispatcher = VoiceCommandDispatcher(recorderControl: control);
+      addTearDown(dispatcher.dispose);
+
+      await dispatcher.dispatch('pause recording');
+      final result = await dispatcher.dispatch('stop recording');
+      expect(result.success, isTrue);
+      expect(recording, isFalse);
+      expect(result.command.intent, VoiceIntent.stopRecording);
+    });
+
+    test('pause without a wired pauseFor stays unavailable', () async {
+      final control = RecorderControl(
+        start: () async {},
+        stop: () async {},
+        isRecording: () => true,
+      );
+      final dispatcher = VoiceCommandDispatcher(recorderControl: control);
+      addTearDown(dispatcher.dispose);
+
+      final result = await dispatcher.dispatch('pause recording for 5 minutes');
+      expect(result.handled, isFalse);
+      expect(result.success, isFalse);
+    });
   });
 
   group('capability registration & fallbacks', () {

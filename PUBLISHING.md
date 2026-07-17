@@ -10,6 +10,10 @@ produce signed artifacts locally; uploading is an explicit, separate, manual
 - Android applicationId: `com.ores.audio_dashcam`
 - iOS bundle id: `com.ores.audioDashcam`
 - Version source of truth: `pubspec.yaml` → `version: <name>+<build>` (e.g. `1.0.0+1`)
+- Website / marketing URL: `https://sonusauris.app/`
+- Support URL: `https://sonusauris.app/support/`
+- Privacy policy URL: `https://sonusauris.app/privacy/`
+- Account deletion URL: `https://sonusauris.app/account-deletion/`
 
 ## What's in this repo to support release
 
@@ -44,13 +48,15 @@ These require a human with the right accounts; do them once.
 
 ## Compliance gates ("the wing dings") — required before either store will approve
 
-- [ ] **Privacy policy hosted at a public URL.** Draft: `docs/compliance/PRIVACY_POLICY.md`. Host it on the existing `sonus-auris-site.web` (GitHub Pages) and paste the URL into both stores.
+- [ ] **Privacy policy hosted and finalized.** The live page is `https://sonusauris.app/privacy/`; replace its legal-entity/contact/address placeholders before submission.
 - [ ] **Account deletion pathway.** In-app deletion is wired through `DELETE /api/mobile/v1/account`; deploy the backend with `SOUND_RECORDER_SUPABASE_SERVICE_ROLE_KEY`, then host the public deletion URL from `docs/compliance/ACCOUNT_DELETION.md` before submission.
 - [ ] **Google Play Data Safety** form filled from `docs/compliance/DATA_SAFETY_play.md`.
 - [ ] **Apple Privacy "Nutrition Labels"** filled from `docs/compliance/PRIVACY_LABELS_appstore.md`.
+- [x] **Apple privacy manifest** bundled at `ios/Runner/PrivacyInfo.xcprivacy` and kept aligned with those labels.
 - [ ] **Permissions rationale** ready for reviewers (`docs/compliance/PERMISSIONS_RATIONALE.md`) — mic + **background audio** + location + Bluetooth are all high-scrutiny. Record a demo video showing the recording flow for App Review.
-- [ ] **iOS export compliance** decided (`docs/compliance/EXPORT_COMPLIANCE.md`) — the app does its own AES-256-GCM E2E encryption, so this is **not** an automatic "exempt". `ITSAppUsesNonExemptEncryption` is set in `Info.plist` per that doc; confirm the determination.
+- [ ] **iOS export compliance** confirmed (`docs/compliance/EXPORT_COMPLIANCE.md`) — the documented determination self-classifies the app's standard AES-256-GCM protection as exempt and sets `ITSAppUsesNonExemptEncryption = false`; have the publisher or counsel confirm that determination for the intended countries.
 - [ ] **Foreground-service / background-audio justification** (Play "Foreground Service" declaration + Apple background `audio` mode review).
+- [x] Android targets API 36, omits restricted exact-alarm/full-screen permissions, and requests user-grantable exact-alarm access only when a schedule is armed.
 
 ## Store-console-only items (no file in repo — done in the dashboards)
 

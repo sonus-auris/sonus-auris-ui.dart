@@ -8,6 +8,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Handler
 import android.os.Looper
+import android.os.StatFs
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodChannel
@@ -26,6 +27,26 @@ class MainActivity : FlutterActivity() {
                     val motion = call.argument<Boolean>("motion") ?: false
                     val ambientLight = call.argument<Boolean>("ambientLight") ?: false
                     sampleSleepSignals(motion, ambientLight, result)
+                }
+                else -> result.notImplemented()
+            }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "audio_dashcam/device_storage"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "freeBytes" -> {
+                    val path = call.argument<String>("path")
+                    if (path.isNullOrEmpty()) {
+                        result.error("bad_args", "path is required", null)
+                    } else {
+                        try {
+                            result.success(StatFs(path).availableBytes)
+                        } catch (error: Exception) {
+                            result.error("statfs_failed", error.message, null)
+                        }
+                    }
                 }
                 else -> result.notImplemented()
             }

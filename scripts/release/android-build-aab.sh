@@ -9,10 +9,19 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 if [[ ! -f android/key.properties ]]; then
-  echo "WARNING: android/key.properties missing — the bundle will be DEBUG-signed and" >&2
-  echo "         Play will reject it. Run scripts/release/android-generate-keystore.sh first." >&2
-  read -r -p "Continue with a debug-signed (non-uploadable) build anyway? [y/N] " ans
-  [[ "${ans:-N}" == "y" || "${ans:-N}" == "Y" ]] || exit 1
+  echo "android/key.properties is missing; refusing to create a non-uploadable bundle." >&2
+  echo "Run scripts/release/android-generate-keystore.sh first." >&2
+  exit 1
+fi
+
+missing_config=()
+for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
+  [[ -n "${!name:-}" ]] || missing_config+=("$name")
+done
+if (( ${#missing_config[@]} > 0 )); then
+  echo "Missing production release config: ${missing_config[*]}" >&2
+  echo "A store bundle must never expose developer project fields or a broken deletion path." >&2
+  exit 1
 fi
 
 echo "Flutter: $(flutter --version | head -1)"

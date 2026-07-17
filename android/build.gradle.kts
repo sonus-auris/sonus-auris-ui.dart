@@ -42,6 +42,17 @@ subprojects {
     }
 }
 
+// tflite_flutter compiles Java at 1.8 but Kotlin at 17, which Gradle rejects
+// as inconsistent JVM targets. Raise its Java compilation to 17 to match.
+subprojects {
+    if (name == "tflite_flutter") {
+        tasks.withType<JavaCompile>().configureEach {
+            sourceCompatibility = JavaVersion.VERSION_17.toString()
+            targetCompatibility = JavaVersion.VERSION_17.toString()
+        }
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }

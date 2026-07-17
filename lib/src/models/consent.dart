@@ -11,8 +11,11 @@ enum ConsentItem {
     key: 'microphone',
     title: 'Microphone & audio recording',
     rationale:
-        'Sonus Auris records a rolling on-device audio buffer. Audio is '
-        'encrypted on your device. This is required for the app to work.',
+        'After you start recording or arm a schedule, Sonus Auris records a '
+        'rolling on-device audio buffer and may continue while the screen is '
+        'locked or you use another app. Android shows a persistent recording '
+        'notification and iOS shows its microphone indicator. Audio is '
+        'encrypted on your device. This is required for recording to work.',
     required: true,
   ),
 
@@ -131,12 +134,12 @@ class ConsentRecord {
   }
 
   Map<String, dynamic> toJson() => {
-        'consentVersion': consentVersion,
-        'acceptedAtUtc': acceptedAtUtc.toIso8601String(),
-        'platform': platform,
-        'grants': grants,
-        'synced': synced,
-      };
+    'consentVersion': consentVersion,
+    'acceptedAtUtc': acceptedAtUtc.toIso8601String(),
+    'platform': platform,
+    'grants': grants,
+    'synced': synced,
+  };
 
   factory ConsentRecord.fromJson(Map<String, dynamic> json) {
     final rawGrants = json['grants'];
@@ -152,7 +155,7 @@ class ConsentRecord {
       consentVersion: json['consentVersion'] as String? ?? '',
       acceptedAtUtc:
           DateTime.tryParse(json['acceptedAtUtc'] as String? ?? '')?.toUtc() ??
-              DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       grants: grants,
       platform: json['platform'] as String? ?? '',
       synced: json['synced'] as bool? ?? false,
@@ -163,10 +166,10 @@ class ConsentRecord {
   /// resolved server-side from the access token (RLS `auth.uid()`), so no user
   /// id is sent from the client. [deviceId] ties the consent to this install.
   Map<String, dynamic> toSupabaseRow(String deviceId) => {
-        'device_id': deviceId,
-        'consent_version': consentVersion,
-        'platform': platform,
-        'granted': grants,
-        'accepted_at': acceptedAtUtc.toIso8601String(),
-      };
+    'device_id': deviceId,
+    'consent_version': consentVersion,
+    'platform': platform,
+    'granted': grants,
+    'accepted_at': acceptedAtUtc.toIso8601String(),
+  };
 }

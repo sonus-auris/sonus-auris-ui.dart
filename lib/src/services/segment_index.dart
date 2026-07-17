@@ -179,6 +179,56 @@ class SegmentIndex {
     return updated;
   }
 
+  /// "Space permitting": the rolling window keeps up to the configured hours,
+  /// but never at the cost of filling the disk. When free space on the
+  /// segments volume is below [minFreeBytes], the oldest local copies that are
+  /// safe to drop (uploaded or permanently saved — the same eligibility rule
+  /// as [enforceDeviceRetention]) are deleted oldest-first until the floor is
+  /// met or nothing eligible remains. An unknown free-space reading (null)
+  /// prunes nothing.
+  Future<List<RecordingSegment>> enforceFreeSpaceFloor({
+    required List<RecordingSegment> segments,
+    required int minFreeBytes,
+    required Future<int?> Function(String path) freeBytes,
+  }) async {
+    final directory = await segmentsDirectory;
+    final free = await freeBytes(directory.path);
+    if (free == null || free >= minFreeBytes) {
+      return segments;
+    }
+    var reclaimed = 0;
+    final byAge = [...segments]
+      ..sort((a, b) => a.endedAtUtc.compareTo(b.endedAtUtc));
+    final replacements = <String, RecordingSegment>{};
+    for (final segment in byAge) {
+      if (free + reclaimed >= minFreeBytes) {
+        break;
+      }
+      if (!segment.isLocal ||
+          !(segment.isUploaded || segment.isPermanentlySaved)) {
+        continue;
+      }
+      final file = File(segment.localPath!);
+      var bytes = segment.byteSize;
+      if (await file.exists()) {
+        try {
+          bytes = await file.length();
+        } catch (_) {}
+        await file.delete();
+      }
+      reclaimed += bytes;
+      replacements[segment.id] = segment.copyWith(localPath: null);
+    }
+    if (replacements.isEmpty) {
+      return segments;
+    }
+    final updated = segments
+        .map((segment) => replacements[segment.id] ?? segment)
+        .toList();
+    await saveSegments(updated);
+    return updated;
+  }
+
   Future<List<RecordingSegment>> dropCloudExpiredRecords({
     required List<RecordingSegment> segments,
     required DateTime cutoffUtc,

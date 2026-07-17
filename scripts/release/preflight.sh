@@ -26,22 +26,55 @@ else bad "flutter test failed (see /tmp/sa-preflight-test.log)"; fi
 
 echo "== Android signing =="
 if [[ -f android/key.properties && -f android/app/upload-keystore.jks ]]; then ok "upload keystore + key.properties present"
-else soft "no upload keystore/key.properties — release .aab would be debug-signed (run android-generate-keystore.sh)"; fi
+else soft "no upload keystore/key.properties — store bundle is blocked (run android-generate-keystore.sh)"; fi
+
+echo "== Android policy contract =="
+grep -q 'targetSdk = 36' android/app/build.gradle.kts && ok "targets Android API 36" || bad "targetSdk 36 is required for the 2026 Play deadline"
+if grep -qE 'android.permission.(USE_EXACT_ALARM|USE_FULL_SCREEN_INTENT)' android/app/src/main/AndroidManifest.xml; then
+  bad "restricted/unused exact-alarm or full-screen-intent permission is present"
+else
+  ok "restricted USE_EXACT_ALARM / USE_FULL_SCREEN_INTENT permissions absent"
+fi
+grep -q 'foregroundServiceType="microphone"' android/app/src/main/AndroidManifest.xml && ok "microphone foreground-service type declared" || bad "microphone foreground-service type missing"
 
 echo "== iOS export config =="
 [[ -f ios/ExportOptions.plist ]] && ok "ios/ExportOptions.plist present" || soft "ios/ExportOptions.plist missing"
 if grep -q ITSAppUsesNonExemptEncryption ios/Runner/Info.plist; then ok "export-compliance key set in Info.plist"
 else soft "ITSAppUsesNonExemptEncryption missing (uploads will prompt) — see docs/compliance/EXPORT_COMPLIANCE.md"; fi
+[[ -f ios/Runner/PrivacyInfo.xcprivacy ]] && ok "app privacy manifest present" || bad "ios/Runner/PrivacyInfo.xcprivacy missing"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q 'Apple Distribution'; then
+  ok "Apple Distribution identity available"
+else
+  soft "Apple Distribution identity unavailable — signed IPA requires the Apple account"
+fi
 
 echo "== Release auth config =="
-[[ -n "${SONUS_BACKEND_BASE_URL:-}" ]] && ok "SONUS_BACKEND_BASE_URL set" || soft "SONUS_BACKEND_BASE_URL missing — release builds will need manual backend config"
-[[ -n "${SONUS_SUPABASE_URL:-}" ]] && ok "SONUS_SUPABASE_URL set" || soft "SONUS_SUPABASE_URL missing — sign-in form will show developer project fields"
-[[ -n "${SONUS_SUPABASE_ANON_KEY:-}" ]] && ok "SONUS_SUPABASE_ANON_KEY set" || soft "SONUS_SUPABASE_ANON_KEY missing — sign-in form will show developer project fields"
+[[ -n "${SONUS_BACKEND_BASE_URL:-}" ]] && ok "SONUS_BACKEND_BASE_URL set" || bad "SONUS_BACKEND_BASE_URL missing — account deletion cannot ship broken"
+[[ -n "${SONUS_SUPABASE_URL:-}" ]] && ok "SONUS_SUPABASE_URL set" || bad "SONUS_SUPABASE_URL missing — sign-in would expose developer project fields"
+[[ -n "${SONUS_SUPABASE_ANON_KEY:-}" ]] && ok "SONUS_SUPABASE_ANON_KEY set" || bad "SONUS_SUPABASE_ANON_KEY missing — sign-in would expose developer project fields"
 
 echo "== Compliance artifacts (store gates) =="
 for f in PRIVACY_POLICY ACCOUNT_DELETION DATA_SAFETY_play PRIVACY_LABELS_appstore PERMISSIONS_RATIONALE EXPORT_COMPLIANCE; do
   [[ -f "docs/compliance/$f.md" ]] && ok "docs/compliance/$f.md" || soft "missing docs/compliance/$f.md"
 done
+
+echo "== Public store URLs =="
+for url in \
+  https://sonusauris.app/ \
+  https://sonusauris.app/privacy/ \
+  https://sonusauris.app/account-deletion/ \
+  https://sonusauris.app/support/; do
+  if curl -fsSL --max-time 15 "$url" >/tmp/sa-preflight-public-page.html 2>/dev/null; then
+    ok "$url reachable"
+  else
+    bad "$url is not publicly reachable"
+  fi
+done
+if curl -fsSL --max-time 15 https://sonusauris.app/privacy/ 2>/dev/null | grep -qE '<LEGAL ENTITY NAME>|privacy@yourdomain|<postal address>'; then
+  bad "live privacy policy still contains publisher/contact placeholders"
+else
+  ok "live privacy policy has no known placeholders"
+fi
 
 echo
 if [[ $fail -ne 0 ]]; then echo "PREFLIGHT: FAIL (hard gate). Fix the ✗ items."; exit 1

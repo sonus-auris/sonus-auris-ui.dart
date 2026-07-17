@@ -19,7 +19,7 @@ class AppConfig {
 
   const AppConfig({
     required this.deviceId,
-    this.deviceRetentionHours = 50,
+    this.deviceRetentionHours = 100,
     this.cloudRetentionHours = 500,
     this.segmentMinutes = 1,
     this.overlapSeconds = 2,
@@ -71,6 +71,8 @@ class AppConfig {
     this.keywords = const [],
     this.sttEnabled = false,
     this.sttEndpoint = '',
+    this.voiceIdEnabled = false,
+    this.voiceCommandsEnabled = false,
     this.adaptiveQualityEnabled = false,
     this.captureSampleRate = 48000,
     this.quietSampleRate = 16000,
@@ -227,6 +229,15 @@ class AppConfig {
   /// leaves the device while this is enabled.
   final bool sttEnabled;
   final String sttEndpoint;
+
+  /// "Knows your voice": match transcribed speech windows against the enrolled
+  /// on-device voice samples. Fingerprints and clips never leave the device.
+  final bool voiceIdEnabled;
+
+  /// Hands-free voice commands ("confirm recording", "pause recording ...").
+  /// Utterances must start with a wake word, and when [voiceIdEnabled] and at
+  /// least one voice sample is enrolled, only the enrolled voice is obeyed.
+  final bool voiceCommandsEnabled;
 
   /// Adaptive recording quality: capture at [captureSampleRate] always (so the
   /// FFT engine and sample continuity are preserved) but store *quiet* segments
@@ -400,6 +411,8 @@ class AppConfig {
     List<String>? keywords,
     bool? sttEnabled,
     String? sttEndpoint,
+    bool? voiceIdEnabled,
+    bool? voiceCommandsEnabled,
     bool? adaptiveQualityEnabled,
     int? captureSampleRate,
     int? quietSampleRate,
@@ -481,6 +494,8 @@ class AppConfig {
       keywords: keywords ?? this.keywords,
       sttEnabled: sttEnabled ?? this.sttEnabled,
       sttEndpoint: sttEndpoint ?? this.sttEndpoint,
+      voiceIdEnabled: voiceIdEnabled ?? this.voiceIdEnabled,
+      voiceCommandsEnabled: voiceCommandsEnabled ?? this.voiceCommandsEnabled,
       adaptiveQualityEnabled:
           adaptiveQualityEnabled ?? this.adaptiveQualityEnabled,
       captureSampleRate: captureSampleRate ?? this.captureSampleRate,
@@ -550,6 +565,8 @@ class AppConfig {
       'keywords': keywords,
       'sttEnabled': sttEnabled,
       'sttEndpoint': sttEndpoint,
+      'voiceIdEnabled': voiceIdEnabled,
+      'voiceCommandsEnabled': voiceCommandsEnabled,
       'adaptiveQualityEnabled': adaptiveQualityEnabled,
       'captureSampleRate': captureSampleRate,
       'quietSampleRate': quietSampleRate,
@@ -565,7 +582,7 @@ class AppConfig {
     final useCase = json['useCase'] as String? ?? 'security';
     return AppConfig(
       deviceId: json['deviceId'] as String,
-      deviceRetentionHours: _asInt(json['deviceRetentionHours'], 50),
+      deviceRetentionHours: _asInt(json['deviceRetentionHours'], 100),
       cloudRetentionHours: _asInt(json['cloudRetentionHours'], 500),
       segmentMinutes: _asInt(json['segmentMinutes'], 1).clamp(1, 60),
       overlapSeconds: _asInt(json['overlapSeconds'], 2).clamp(0, 30),
@@ -652,6 +669,8 @@ class AppConfig {
       keywords: _asStringList(json['keywords']),
       sttEnabled: json['sttEnabled'] as bool? ?? false,
       sttEndpoint: json['sttEndpoint'] as String? ?? '',
+      voiceIdEnabled: json['voiceIdEnabled'] as bool? ?? false,
+      voiceCommandsEnabled: json['voiceCommandsEnabled'] as bool? ?? false,
       adaptiveQualityEnabled: json['adaptiveQualityEnabled'] as bool? ?? false,
       captureSampleRate: _asInt(
         json['captureSampleRate'],

@@ -114,6 +114,28 @@ class LocalNotificationsService {
     return true;
   }
 
+  /// Requests Android's user-controlled "Alarms & reminders" access only when
+  /// a user actually arms a recording schedule. This deliberately uses
+  /// SCHEDULE_EXACT_ALARM; the auto-granted USE_EXACT_ALARM permission is
+  /// restricted by Google Play to alarm/timer/calendar apps.
+  Future<bool> requestExactAlarmPermission() async {
+    await ensureInitialized();
+    if (!Platform.isAndroid) {
+      return true;
+    }
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    if (android == null) {
+      return false;
+    }
+    if (await android.canScheduleExactNotifications() ?? false) {
+      return true;
+    }
+    return await android.requestExactAlarmsPermission() ?? false;
+  }
+
   static const NotificationDetails _details = NotificationDetails(
     android: AndroidNotificationDetails(
       'sonus_auris_schedule',

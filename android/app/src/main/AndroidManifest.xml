@@ -1,22 +1,18 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Resume the capture foreground service automatically after a reboot, so
-         the rolling window keeps running without the user re-opening the app. -->
+    <!-- Re-arm user-configured recording schedules after a reboot. The app does
+         not auto-start the microphone foreground service from the boot receiver. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Recording schedule: exact alarms fire start/stop at window barriers even
-         when the app is idle/killed (android_alarm_manager_plus). USE_EXACT_ALARM
-         is auto-granted for an alarm-clock-style app; SCHEDULE_EXACT_ALARM is the
-         pre-Android-14 equivalent the user can revoke under "Alarms & reminders". -->
+    <!-- Recording schedule: SCHEDULE_EXACT_ALARM is user-grantable under
+         "Alarms & reminders". Do not add USE_EXACT_ALARM: Play restricts that
+         auto-granted permission to alarm/timer/calendar apps. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <!-- Cycle-aware sleep alarm: full-screen alarm UI so the wake-up can rouse a
-         sleeper even over the lock screen (Android 14+ gates this permission). -->
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- Optional GPS evidence tagging (off by default). -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -35,7 +31,8 @@
         android:maxSdkVersion="30" />
     <!-- Read the joined Wi-Fi SSID (home/away detection) + Android-13 nearby-Wi-Fi. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation" />
 
     <application
         android:label="Sonus Auris"
@@ -71,12 +68,14 @@
             android:exported="false"
             android:foregroundServiceType="microphone"
             android:stopWithTask="false" />
-        <!-- The boot receiver that restarts capture after a reboot is declared by
-             flutter_foreground_task's own manifest (with the correct
-             android:exported="true" for a BOOT_COMPLETED receiver). Re-declaring
-             it here caused a manifest-merger conflict on @exported, so we rely on
-             the plugin's declaration; we keep the RECEIVE_BOOT_COMPLETED
-             permission above. -->
+        <!-- geolocator binds this service even for one-shot foreground fixes. We
+             never enable its background/notification mode, so remove the plugin's
+             unused location FGS type while preserving the bound service itself. -->
+        <service
+            android:name="com.baseflow.geolocator.GeolocatorLocationService"
+            tools:remove="android:foregroundServiceType" />
+        <!-- flutter_foreground_task contributes a boot receiver, but its
+             auto-restart options are disabled for microphone-policy compliance. -->
         <!-- android_alarm_manager_plus reboot receiver: re-arms scheduled
              recording alarms after a reboot (we register them with
              rescheduleOnReboot: true). The plugin contributes the AlarmService

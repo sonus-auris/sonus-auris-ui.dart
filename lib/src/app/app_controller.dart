@@ -42,6 +42,7 @@ import '../services/recording_scheduler.dart';
 import '../services/recording_schedule_platform.dart';
 import '../services/spectral_sidecar.dart';
 import '../services/s3_storage_client.dart';
+import '../services/device_storage_info.dart';
 import '../services/segment_index.dart';
 import '../services/segment_recorder.dart';
 import '../services/settings_store.dart';
@@ -57,12 +58,17 @@ import '../services/speech_to_text_client.dart';
 import '../services/on_device_speech_client.dart';
 import '../services/supabase_auth_client.dart';
 import '../services/supabase_rest_client.dart';
+import '../services/acoustic/spectral_features.dart';
+import '../services/voice/handlers/recording_command_handler.dart';
+import '../services/voice/voice_command_dispatcher.dart';
+import '../services/voice/voice_command_parser.dart';
+import '../services/voice_id/voice_profile_service.dart';
 import 'app_view_model.dart';
 
 /// Consent string recorded against the device on registration. Bump when the
 /// recording/privacy disclosure shown to the user materially changes. Bumping
 /// this also re-triggers the onboarding consent flow.
-const String kConsentVersion = 'audio-dashcam-consent-v1';
+const String kConsentVersion = 'audio-dashcam-consent-v2';
 
 /// App-level Supabase project, injected at build time so the onboarding
 /// login/sign-up works out of the box:
@@ -307,6 +313,41 @@ class AppController {
   final LocationService _locationService;
   final PowerNetworkGate _powerNetworkGate;
   final SupabaseRestClient _supabaseRestClient;
+
+  /// Free-disk-space probe backing the "space permitting" retention floor.
+  /// Field (not constructor-injected) so tests can swap in a fake.
+  DeviceStorageInfo deviceStorageInfo = DeviceStorageInfo();
+
+  /// On-device "Knows your voice" store: up to five enrolled voice samples
+  /// plus their FFT/MFCC fingerprints. Field so tests can swap in a fake.
+  VoiceProfileService voiceProfiles = VoiceProfileService();
+
+  /// Hands-free command pipeline (transcript → intent → recorder control),
+  /// wired to this controller's transport and spoken back through TTS.
+  late final VoiceCommandDispatcher _voiceCommands = VoiceCommandDispatcher(
+    recorderControl: RecorderControl(
+      start: () => startRecording(),
+      stop: stopRecording,
+      isRecording: () => _recorder.isRecording,
+      pauseFor: pauseRecordingFor,
+      isPaused: () => isRecordingPaused,
+    ),
+    speak: (phrase) => _feedback.say(phrase),
+  );
+
+  Timer? _pauseResumeTimer;
+  DateTime? _pauseResumeAtUtc;
+
+  /// True while capture is voice/user-paused awaiting the auto-resume.
+  bool get isRecordingPaused => _pauseResumeTimer != null;
+
+  /// When the current pause will auto-resume (null when not paused).
+  DateTime? get pauseResumeAtUtc => _pauseResumeAtUtc;
+
+  /// Keep at least this much free on the segments volume. The rolling window
+  /// advertises "the last 100 hours, space permitting" — when the device runs
+  /// low, the oldest uploaded/saved local copies are dropped first.
+  static const int minFreeDiskBytes = 2 * 1024 * 1024 * 1024;
 
   /// The onboarding consent the user accepted (null until first onboarding).
   ConsentRecord? _consentRecord;
@@ -1501,6 +1542,8 @@ class AppController {
   }
 
   Future<void> startRecording({bool scheduleInitiated = false}) async {
+    // Any start — manual, voice, or scheduled — supersedes a pending pause.
+    _cancelPendingPauseResume();
     // Ownership: a manual start clears schedule ownership, a schedule-driven
     // start claims it. Only a schedule-owned session is auto-stopped at a window
     // barrier (see [_applyScheduleState]).
@@ -1542,6 +1585,8 @@ class AppController {
 
   Future<void> stopRecording() async {
     _diagnostics.add('Stop recording requested.');
+    // An explicit stop supersedes a pending pause auto-resume.
+    _cancelPendingPauseResume();
     // Clear intent first so an in-flight resume request does not re-start us.
     _intendRecording = false;
     Object? recorderError;
@@ -1565,6 +1610,39 @@ class AppController {
     // Idle again — if we're still inside a window, re-arm context sources so a
     // later event can offer to resume.
     await _updateContextTriggers();
+  }
+
+  void _cancelPendingPauseResume() {
+    _pauseResumeTimer?.cancel();
+    _pauseResumeTimer = null;
+    _pauseResumeAtUtc = null;
+  }
+
+  /// Temporarily stops capture and auto-resumes after [duration]. This is the
+  /// "pause recording for ten minutes" voice command's executor, but is also
+  /// callable from UI. A manual start or stop during the pause cancels the
+  /// scheduled resume.
+  Future<void> pauseRecordingFor(Duration duration) async {
+    _cancelPendingPauseResume();
+    if (_recorder.isRecording) {
+      await stopRecording();
+    }
+    final resumeAt = DateTime.now().toUtc().add(duration);
+    _pauseResumeAtUtc = resumeAt;
+    _pauseResumeTimer = Timer(duration, () {
+      _pauseResumeTimer = null;
+      _pauseResumeAtUtc = null;
+      _diagnostics.add('Pause elapsed; resuming recording.');
+      unawaited(startRecording());
+    });
+    _diagnostics.add(
+      'Recording paused until ${resumeAt.toIso8601String()} '
+      '(${duration.inSeconds}s).',
+    );
+    _message.add(
+      'Recording paused; resuming automatically in '
+      '${describeSpokenDuration(duration.inSeconds)}.',
+    );
   }
 
   /// Android's microphone permission is "while in use"; recent Android versions
@@ -2231,6 +2309,8 @@ class AppController {
       _diagnosticTelemetrySubscription?.cancel() ?? Future<void>.value(),
     ]);
     _telemetryFlushTimer?.cancel();
+    _cancelPendingPauseResume();
+    await _voiceCommands.dispose();
 
     // 2. Synchronous client/scheduler closes — fire them off together.
     _scheduler.dispose();
@@ -2921,6 +3001,17 @@ class AppController {
       if (transcript == null) {
         return;
       }
+      // "Knows your voice": one fingerprint match of this window serves both
+      // the command gate and detection annotation. Null when disabled, nothing
+      // is enrolled, or the window holds too little speech to judge.
+      VoiceMatch? speakerMatch;
+      if (config.voiceIdEnabled) {
+        speakerMatch = await voiceProfiles.match(
+          mono: pcm16BytesToMonoDoubles(clip.bytes, clip.channels),
+          sampleRate: clip.sampleRate,
+        );
+      }
+      await _maybeHandleVoiceCommand(config, transcript, speakerMatch);
       final match = _speechToTextClient.matchKeyword(config, transcript);
       if (match == null) {
         return;
@@ -2931,7 +3022,11 @@ class AppController {
         endedAtUtc: speech.endedAtUtc,
         confidence: 1.0,
         captureSessionId: speech.captureSessionId,
-        details: {'keyword': match.keyword, 'transcript': match.transcript},
+        details: {
+          'keyword': match.keyword,
+          'transcript': match.transcript,
+          if (speakerMatch != null) 'knownVoice': speakerMatch.isMatch,
+        },
       );
       _appendDetection(keywordEvent);
       await _storeDetections([keywordEvent]);
@@ -2949,6 +3044,67 @@ class AppController {
       _diagnostics.add('Speech-to-text scan failed: $error');
     }
   }
+
+  /// Routes a transcript into the voice-command pipeline when enabled.
+  ///
+  /// Guards, in order: the feature flag; a leading wake word ("hey sonus, …")
+  /// unless the dispatcher is mid-dialogue awaiting a follow-up answer; and —
+  /// when "Knows your voice" is on with enrolled samples — the speaker must
+  /// match an enrolled fingerprint, so a stranger saying "hey sonus, stop
+  /// recording" is ignored. An inconclusive match (too little speech in the
+  /// window) is allowed through: voice ID is a convenience gate, not
+  /// authentication.
+  Future<void> _maybeHandleVoiceCommand(
+    AppConfig config,
+    String transcript,
+    VoiceMatch? speakerMatch,
+  ) async {
+    if (!config.voiceCommandsEnabled) {
+      return;
+    }
+    final normalized = transcript.trim().toLowerCase();
+    final hasWakeWord = VoiceCommandParser.wakeWords.any(normalized.startsWith);
+    if (!hasWakeWord && !_voiceCommands.hasPendingFollowUp) {
+      return;
+    }
+    if (speakerMatch != null && !speakerMatch.isMatch) {
+      _diagnostics.add(
+        'Voice command ignored: speaker similarity '
+        '${speakerMatch.similarity.toStringAsFixed(2)} is below the enrolled '
+        'voice threshold.',
+      );
+      return;
+    }
+    final result = await _voiceCommands.dispatch(transcript);
+    _diagnostics.add(
+      'Voice command ${result.command.intent.name}: '
+      '${result.handled ? (result.success ? 'ok' : 'failed') : 'unavailable'}.',
+    );
+    if (result.spokenResponse.isNotEmpty) {
+      _message.add(result.spokenResponse);
+    }
+  }
+
+  /// Enrolls the last few seconds of live audio as a "Knows your voice"
+  /// sample. Returns a user-facing status/error message.
+  Future<String> enrollVoiceSample() async {
+    final clip = _recorder.recentAudio(window: const Duration(seconds: 5));
+    if (clip == null) {
+      return 'Start recording, speak normally for a few seconds, then add '
+          'the sample.';
+    }
+    final result = await voiceProfiles.enroll(
+      mono: pcm16BytesToMonoDoubles(clip.bytes, clip.channels),
+      sampleRate: clip.sampleRate,
+    );
+    if (result.error != null) {
+      return result.error!;
+    }
+    return 'Voice sample added '
+        '(${voiceProfiles.samples.length}/${VoiceProfileService.maxSamples}).';
+  }
+
+  Future<void> removeVoiceSample(String id) => voiceProfiles.removeSample(id);
 
   void _appendDetection(AcousticDetection detection) {
     if (_detectionsList.isClosed) {
@@ -3128,6 +3284,13 @@ class AppController {
     var segments = await _segmentIndex.enforceDeviceRetention(
       segments: await _segmentIndex.loadSegments(),
       cutoffUtc: now.subtract(Duration(hours: config.deviceRetentionHours)),
+    );
+    // "Space permitting": within the retention window, still yield local disk
+    // back to the OS before the device runs out, oldest uploaded/saved first.
+    segments = await _segmentIndex.enforceFreeSpaceFloor(
+      segments: segments,
+      minFreeBytes: minFreeDiskBytes,
+      freeBytes: deviceStorageInfo.freeBytes,
     );
     if (!_backendClient.canUseBackend(config, _secrets.value) &&
         config.cloudProvider == CloudProvider.s3 &&

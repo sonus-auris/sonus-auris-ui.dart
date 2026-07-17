@@ -8,10 +8,12 @@ default_platform(:ios)
 
 def asc_api_key
   return nil unless ENV["ASC_KEY_ID"] && ENV["ASC_ISSUER_ID"]
+  key_file = Dir["fastlane/AuthKey_*.p8"].first
+  UI.user_error!("ASC_KEY_ID/ASC_ISSUER_ID are set but fastlane/AuthKey_*.p8 is missing") unless key_file
   app_store_connect_api_key(
     key_id: ENV["ASC_KEY_ID"],
     issuer_id: ENV["ASC_ISSUER_ID"],
-    key_filepath: Dir["fastlane/AuthKey_*.p8"].first,
+    key_filepath: key_file,
     in_house: false,
   )
 end

@@ -56,6 +56,17 @@ stays unit-testable without a device.
 - **[crypto/](crypto/)** — the zero-knowledge segment encryption. See
   [crypto/README.md](crypto/README.md).
 
+### Recognition & LLMs
+- **[recognition/](recognition/)** — routes FFT-gate detections to the heavy
+  recognizers: `recognition_orchestrator.dart` (music → ShazamKit, tonal
+  non-music → bird ID), `bird_classifier.dart` (Google Perch v2 via TFLite,
+  fully on-device), and `model_manager.dart` (models are downloaded on demand
+  and checksum-verified — never bundled, so the store binary stays small).
+- **[llm/](llm/)** — provider-agnostic chat-completion clients over plain
+  HTTP: `anthropic_llm_client.dart` (Claude Fable 5 / Opus 4.8, with
+  server-side refusal fallbacks on Fable), `openai_llm_client.dart`, and
+  `gemini_llm_client.dart`, behind the shared `LlmClient` interface.
+
 ### Playback, voice & extras
 - **[playback_service.dart](playback_service.dart)** — local segment playback.
 - **[voice/](voice/)** — hands-free voice commands. See [voice/README.md](voice/README.md).

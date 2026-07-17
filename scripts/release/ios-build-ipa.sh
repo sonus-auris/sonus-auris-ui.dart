@@ -14,15 +14,22 @@ command -v xcodebuild >/dev/null || { echo "Xcode (xcodebuild) not found." >&2; 
 
 export_opts="ios/ExportOptions.plist"
 [[ -f "$export_opts" ]] || { echo "Missing $export_opts" >&2; exit 1; }
+: "${DEVELOPMENT_TEAM:?Set DEVELOPMENT_TEAM to the Apple Developer Team ID used for com.ores.audioDashcam}"
+
+missing_config=()
+for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
+  [[ -n "${!name:-}" ]] || missing_config+=("$name")
+done
+if (( ${#missing_config[@]} > 0 )); then
+  echo "Missing production release config: ${missing_config[*]}" >&2
+  echo "A store IPA must never expose developer project fields or a broken deletion path." >&2
+  exit 1
+fi
 
 echo "Flutter: $(flutter --version | head -1)"
 flutter pub get
 ( cd ios && pod install )
 
-# If DEVELOPMENT_TEAM is exported, thread it through; otherwise rely on the
-# team configured in the Xcode project / ExportOptions.plist.
-team_args=()
-[[ -n "${DEVELOPMENT_TEAM:-}" ]] && team_args=(--dart-define=TEAM="$DEVELOPMENT_TEAM")
 dart_define_args=()
 for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
   value="${!name:-}"
@@ -34,8 +41,7 @@ flutter build ipa \
   --obfuscate \
   --split-debug-info=build/symbols \
   --export-options-plist="$export_opts" \
-  "${dart_define_args[@]}" \
-  "${team_args[@]}"
+  "${dart_define_args[@]}"
 
 echo
 echo "Built IPA(s):"; ls -la build/ios/ipa/*.ipa 2>/dev/null || echo "  (none — check signing/profile errors above)"

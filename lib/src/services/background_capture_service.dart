@@ -37,6 +37,12 @@ class BackgroundCaptureService {
   final DiagnosticLog? _diagnostics;
 
   void init() {
+    if (!Platform.isAndroid) {
+      _diagnostics?.add(
+        'Foreground task initialization skipped: platform is not Android.',
+      );
+      return;
+    }
     _diagnostics?.add('Initializing Android foreground task options.');
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
@@ -56,7 +62,12 @@ class BackgroundCaptureService {
         eventAction: ForegroundTaskEventAction.repeat(30000),
         allowWakeLock: true,
         allowWifiLock: false,
-        allowAutoRestart: true,
+        // Android 14+ forbids starting a microphone-typed foreground service
+        // from a boot/restart receiver (ForegroundServiceStartNotAllowedException),
+        // and Play policy treats it as background mic access. After reboot the
+        // alarm-manager receiver re-arms schedules instead, and capture resumes
+        // from a user-visible trigger.
+        allowAutoRestart: false,
         stopWithTask: false,
       ),
     );

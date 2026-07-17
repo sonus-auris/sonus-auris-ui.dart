@@ -63,9 +63,10 @@ class VoiceCommandParser {
     // Bound the work the rule regexes do: an utterance is never this long, so
     // truncating only ever clips a pathological/abusive transcript (ReDoS / CPU
     // guard) before any matching runs.
-    var text = VoiceLimits.clip(input, VoiceLimits.maxTranscriptChars)
-        .trim()
-        .toLowerCase();
+    var text = VoiceLimits.clip(
+      input,
+      VoiceLimits.maxTranscriptChars,
+    ).trim().toLowerCase();
     text = text.replaceAll(RegExp(r'\s+'), ' ');
     for (final wake in wakeWords) {
       if (text.startsWith(wake)) {
@@ -89,15 +90,15 @@ class VoiceCommandParser {
     _Rule(
       VoiceIntent.startFocusSession,
       RegExp(r'\bfocus session\b'),
-      (m, text) => {
-        'durationSeconds': _firstDurationSeconds(text) ?? '1500',
-      },
+      (m, text) => {'durationSeconds': _firstDurationSeconds(text) ?? '1500'},
     ),
     // Note: "take a note: ...", "note that ...", "save this idea ...".
     _Rule(
       VoiceIntent.takeNote,
-      RegExp(r'\b(?:take|make|write|jot|save) (?:a |this |an )?'
-          r'(?:note|idea)s?\b[:\s]*(.*)'),
+      RegExp(
+        r'\b(?:take|make|write|jot|save) (?:a |this |an )?'
+        r'(?:note|idea)s?\b[:\s]*(.*)',
+      ),
       (m, _) => {'text': (m.group(1) ?? '').trim()},
     ),
     _Rule(
@@ -117,7 +118,21 @@ class VoiceCommandParser {
       RegExp(r'\b(?:record|capture) (?:a )?voice memo\b[:\s]*(.*)'),
       (m, _) => {'text': (m.group(1) ?? '').trim()},
     ),
-    // App-native recording control.
+    // App-native recording control. Order matters: confirm/pause are more
+    // specific than the stop rule and must win first.
+    _Rule(
+      VoiceIntent.confirmRecording,
+      RegExp(
+        r'\b(?:confirm|verify|check)(?: the| that(?: the)?)? recording\b'
+        r'|\b(?:am i|are you|is it) (?:still )?recording\b',
+      ),
+      (_, _) => const {},
+    ),
+    _Rule(
+      VoiceIntent.pauseRecording,
+      RegExp(r'\b(?:pause|suspend|hold) (?:the )?recording\b'),
+      (_, text) => {'durationSeconds': ?_firstDurationSeconds(text)},
+    ),
     _Rule(
       VoiceIntent.startRecording,
       RegExp(r'\b(?:start|begin|resume) (?:the )?recording\b'),
@@ -125,7 +140,7 @@ class VoiceCommandParser {
     ),
     _Rule(
       VoiceIntent.stopRecording,
-      RegExp(r'\b(?:stop|end|pause) (?:the )?recording\b'),
+      RegExp(r'\b(?:stop|end) (?:the )?recording\b'),
       (_, _) => const {},
     ),
     // Reminder: "remind me to call John tomorrow at 9am".
@@ -232,16 +247,14 @@ class VoiceCommandParser {
     // Smart home.
     _Rule(
       VoiceIntent.smartHomeControl,
-      RegExp(r'\b(?:turn (?:on|off)|lock|unlock|open|close|set)\b.*'
-          r'\b(lights?|thermostat|door|garage|lock)\b'),
+      RegExp(
+        r'\b(?:turn (?:on|off)|lock|unlock|open|close|set)\b.*'
+        r'\b(lights?|thermostat|door|garage|lock)\b',
+      ),
       (m, text) => {'device': m.group(1) ?? '', 'utterance': text},
     ),
     // Media.
-    _Rule(
-      VoiceIntent.mediaPause,
-      RegExp(r'^\s*pause\s*$'),
-      (_, _) => const {},
-    ),
+    _Rule(VoiceIntent.mediaPause, RegExp(r'^\s*pause\s*$'), (_, _) => const {}),
     _Rule(
       VoiceIntent.mediaSkip,
       RegExp(r'\bskip\b|\bnext (?:song|track)\b'),
@@ -291,8 +304,8 @@ class VoiceCommandParser {
     final n = parsed < 0
         ? 0
         : (parsed > VoiceLimits.maxTimerSeconds
-            ? VoiceLimits.maxTimerSeconds
-            : parsed);
+              ? VoiceLimits.maxTimerSeconds
+              : parsed);
     switch (unit) {
       case 'hour':
         return (n * 3600).toString();
@@ -304,19 +317,68 @@ class VoiceCommandParser {
   }
 
   static String? _firstDurationSeconds(String text) {
-    final m =
-        RegExp(r'(\d+)\s*(second|minute|hour)s?').firstMatch(text);
-    if (m == null) {
-      return null;
-    }
-    return _toSeconds(m.group(1)!, m.group(2)!);
+    return spokenDurationSeconds(text)?.toString();
   }
+
+  /// Parses a spoken duration ("10 minutes", "90 seconds", "an hour",
+  /// "half an hour", "five minutes") into whole seconds, or null when the
+  /// text contains none. Also used by the dispatcher's follow-up turn, where
+  /// the whole utterance is expected to be a duration ("For how long?" →
+  /// "twenty minutes").
+  static int? spokenDurationSeconds(String rawText) {
+    final text = VoiceLimits.clip(
+      rawText,
+      VoiceLimits.maxTranscriptChars,
+    ).toLowerCase();
+    final numeric = RegExp(r'(\d+)\s*(second|minute|hour)s?').firstMatch(text);
+    if (numeric != null) {
+      return int.parse(_toSeconds(numeric.group(1)!, numeric.group(2)!));
+    }
+    // Idioms before the worded match: "half an hour" contains "an hour".
+    if (RegExp(r'\bhalf an? hour\b').hasMatch(text)) {
+      return 1800;
+    }
+    if (RegExp(r'\bquarter of an hour\b').hasMatch(text)) {
+      return 900;
+    }
+    final worded = RegExp(
+      r'\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|'
+      r'twenty|thirty|forty[ -]five|forty|fifty|sixty|ninety)\s+'
+      r'(second|minute|hour)s?\b',
+    ).firstMatch(text);
+    if (worded != null) {
+      final count = _numberWords[worded.group(1)!.replaceAll('-', ' ')] ?? 1;
+      return int.parse(_toSeconds('$count', worded.group(2)!));
+    }
+    return null;
+  }
+
+  static const Map<String, int> _numberWords = {
+    'a': 1,
+    'an': 1,
+    'one': 1,
+    'two': 2,
+    'three': 3,
+    'four': 4,
+    'five': 5,
+    'six': 6,
+    'seven': 7,
+    'eight': 8,
+    'nine': 9,
+    'ten': 10,
+    'fifteen': 15,
+    'twenty': 20,
+    'thirty': 30,
+    'forty': 40,
+    'forty five': 45,
+    'fifty': 50,
+    'sixty': 60,
+    'ninety': 90,
+  };
 }
 
-typedef _SlotExtractor = Map<String, String> Function(
-  RegExpMatch match,
-  String text,
-);
+typedef _SlotExtractor =
+    Map<String, String> Function(RegExpMatch match, String text);
 
 class _Rule {
   _Rule(this.intent, this.pattern, this.extract, {this.confidence = 0.9});

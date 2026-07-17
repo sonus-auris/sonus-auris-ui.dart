@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 // `show DateFormat` so intl's TextDirection enum doesn't shadow dart:ui's.
 import 'package:intl/intl.dart' show DateFormat;
+import 'package:url_launcher/url_launcher.dart';
 
 import 'src/app/app_controller.dart';
 import 'src/app/app_view_model.dart';
@@ -24,13 +25,32 @@ import 'src/models/recording_schedule.dart';
 import 'src/models/storage_estimate.dart';
 import 'src/models/transfer_gate_status.dart';
 import 'src/models/upload_network_policy.dart';
+import 'src/services/voice_id/voice_profile_service.dart';
 import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
 import 'src/widgets/supabase_auth_form.dart';
 
+const String _privacyPolicyUrl = 'https://sonusauris.app/privacy/';
+const String _accountDeletionUrl = 'https://sonusauris.app/account-deletion/';
+const String _supportUrl = 'https://sonusauris.app/support/';
+
+Future<void> _openPublicPage(BuildContext context, String url) async {
+  final opened = await launchUrl(
+    Uri.parse(url),
+    mode: LaunchMode.externalApplication,
+  );
+  if (!opened && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not open the Sonus Auris website.')),
+    );
+  }
+}
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  FlutterForegroundTask.initCommunicationPort();
+  if (Platform.isAndroid) {
+    FlutterForegroundTask.initCommunicationPort();
+  }
   // Native alarm-manager readiness is owned by PluginSchedulePlatform's
   // bounded gate. Never hold the first Flutter frame behind a plugin channel:
   // Android services can legitimately lag just after a cold reboot.
@@ -511,6 +531,8 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
           'recorder working; everything else is optional and off by default.',
           style: TextStyle(color: SonusColors.inkSoft),
         ),
+        const SizedBox(height: 12),
+        const _RecordingDisclosure(),
         const SizedBox(height: 8),
         for (final item in ConsentItem.values)
           Card(
@@ -530,6 +552,23 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                   : (v) => setState(() => _grants[item] = v),
             ),
           ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            TextButton.icon(
+              onPressed: () => _openPublicPage(context, _privacyPolicyUrl),
+              icon: const Icon(Icons.privacy_tip_outlined),
+              label: const Text('Privacy policy'),
+            ),
+            TextButton.icon(
+              onPressed: () => _openPublicPage(context, _accountDeletionUrl),
+              icon: const Icon(Icons.manage_accounts_outlined),
+              label: const Text('Account & data deletion'),
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -638,6 +677,45 @@ class _ProgressDots extends StatelessWidget {
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecordingDisclosure extends StatelessWidget {
+  const _RecordingDisclosure();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: 'Important recording disclosure',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF5EA),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: SonusColors.orange200),
+        ),
+        child: const Padding(
+          padding: EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.mic_outlined, color: SonusColors.orange600),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Recording begins only after you tap Start, accept a prompt, '
+                  'or arm a schedule. Once active, it can continue in the '
+                  'background or while your phone is locked until you stop it '
+                  'or the scheduled window ends. Your phone always shows its '
+                  'system recording indicator or persistent notification.',
+                  style: TextStyle(color: SonusColors.ink, height: 1.35),
+                ),
+              ),
             ],
           ),
         ),
@@ -1937,6 +2015,11 @@ class _ConfigureView extends StatelessWidget {
                 onChanged: onAudioConfigChanged,
                 sttApiKeyController: sttApiKeyController,
               ),
+              _VoiceIdSection(
+                config: viewModel.config,
+                onChanged: onAudioConfigChanged,
+                controller: controller,
+              ),
               _MusicMemoriesSection(
                 config: viewModel.config,
                 onChanged: onAudioConfigChanged,
@@ -2249,6 +2332,30 @@ class _AccountSectionState extends State<_AccountSection> {
     }
   }
 
+  Widget _legalLinks() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        TextButton.icon(
+          onPressed: () => _openPublicPage(context, _privacyPolicyUrl),
+          icon: const Icon(Icons.privacy_tip_outlined),
+          label: const Text('Privacy'),
+        ),
+        TextButton.icon(
+          onPressed: () => _openPublicPage(context, _accountDeletionUrl),
+          icon: const Icon(Icons.manage_accounts_outlined),
+          label: const Text('Deletion help'),
+        ),
+        TextButton.icon(
+          onPressed: () => _openPublicPage(context, _supportUrl),
+          icon: const Icon(Icons.help_outline),
+          label: const Text('Support'),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -2308,6 +2415,8 @@ class _AccountSectionState extends State<_AccountSection> {
                 ),
               ],
             ),
+            const SizedBox(height: 8),
+            _legalLinks(),
           ],
         ),
       );
@@ -2334,6 +2443,8 @@ class _AccountSectionState extends State<_AccountSection> {
             onSignUp: widget.onSignUp,
             onPasswordReset: widget.onPasswordReset,
           ),
+          const SizedBox(height: 8),
+          _legalLinks(),
         ],
       ),
     );
@@ -2341,7 +2452,7 @@ class _AccountSectionState extends State<_AccountSection> {
 }
 
 /// Battery + network controls for cloud streaming. These never affect local
-/// capture (the rolling 50h+ window keeps recording); they only defer uploads,
+/// capture (the rolling 100h+ window keeps recording); they only defer uploads,
 /// which catch up automatically once conditions allow. Changes persist
 /// immediately via [onChanged]; [status] reflects the live gate decision.
 class _TransferPolicySection extends StatefulWidget {
@@ -2754,6 +2865,151 @@ class _AudioTuningSectionState extends State<_AudioTuningSection> {
 /// Links the user's SoundCloud / Spotify and toggles the opt-in "memories"
 /// features: a daily "Day of My Life" SoundCloud archive and an auto-built
 /// private Spotify playlist of songs heard. Both are off until linked + enabled.
+/// "Knows your voice" + voice commands: enroll up to five on-device voice
+/// samples (FFT/MFCC fingerprints, never uploaded) and control the hands-free
+/// command pipeline that only obeys the enrolled voice.
+class _VoiceIdSection extends StatefulWidget {
+  const _VoiceIdSection({
+    required this.config,
+    required this.onChanged,
+    required this.controller,
+  });
+
+  final AppConfig config;
+  final ValueChanged<AppConfig> onChanged;
+  final AppController controller;
+
+  @override
+  State<_VoiceIdSection> createState() => _VoiceIdSectionState();
+}
+
+class _VoiceIdSectionState extends State<_VoiceIdSection> {
+  List<VoiceProfileSample> _samples = const [];
+  bool _busy = false;
+  String? _status;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refresh());
+  }
+
+  Future<void> _refresh() async {
+    final samples = await widget.controller.voiceProfiles.load();
+    if (mounted) {
+      setState(() => _samples = samples);
+    }
+  }
+
+  Future<void> _addSample() async {
+    setState(() => _busy = true);
+    final message = await widget.controller.enrollVoiceSample();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _status = message;
+    });
+    await _refresh();
+  }
+
+  Future<void> _removeSample(String id) async {
+    await widget.controller.removeVoiceSample(id);
+    if (mounted) {
+      setState(() => _status = 'Voice sample removed.');
+    }
+    await _refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final config = widget.config;
+    return _Section(
+      title: 'Knows Your Voice',
+      icon: Icons.record_voice_over_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Recognize my voice'),
+            subtitle: const Text(
+              'Match speech against your enrolled samples so insights and '
+              'commands are about you. Samples and voiceprints stay on this '
+              'device.',
+            ),
+            value: config.voiceIdEnabled,
+            onChanged: (v) =>
+                widget.onChanged(config.copyWith(voiceIdEnabled: v)),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Voice commands'),
+            subtitle: const Text(
+              'Say "Hey Sonus, confirm recording", "pause recording for 10 '
+              'minutes", "start recording", "stop recording". With voice '
+              'recognition on, only your enrolled voice is obeyed.',
+            ),
+            value: config.voiceCommandsEnabled,
+            onChanged: (v) =>
+                widget.onChanged(config.copyWith(voiceCommandsEnabled: v)),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Voice samples (${_samples.length}/${VoiceProfileService.maxSamples})',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          for (final sample in _samples)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              leading: const Icon(Icons.graphic_eq),
+              title: Text(
+                'Sample from '
+                '${sample.createdAtUtc.toLocal().toString().split('.').first}',
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Remove this voice sample',
+                onPressed: () => _removeSample(sample.id),
+              ),
+            ),
+          const SizedBox(height: 4),
+          FilledButton.icon(
+            onPressed:
+                _busy || _samples.length >= VoiceProfileService.maxSamples
+                ? null
+                : _addSample,
+            icon: _busy
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.mic),
+            label: const Text('Add voice sample (last 5 seconds)'),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'While recording, speak normally for a few seconds, then tap. '
+            'Three to five samples in different rooms give the best match.',
+            style: TextStyle(fontSize: 12),
+          ),
+          if (_status != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                _status!,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MusicMemoriesSection extends StatefulWidget {
   const _MusicMemoriesSection({
     required this.config,
@@ -4364,8 +4620,10 @@ class _NumberField extends StatelessWidget {
 
 /// Weekly recording schedule editor. Each day gets a horizontal 0–24h timeline
 /// the user paints recording windows onto; pre-defining the windows is the
-/// consent to record during them, and [AppController] registers OS alarms /
-/// iOS notifications at the barriers so capture starts/stops on time.
+/// consent to record during them. [AppController] registers exact Android
+/// alarms and iOS reminders at the barriers; iOS transitions are exact while
+/// the app remains alive, while a suspended or terminated app requires the
+/// user to reopen it from the reminder.
 class _ScheduleSection extends StatefulWidget {
   const _ScheduleSection({required this.config, required this.onChanged});
 

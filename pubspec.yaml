@@ -53,6 +53,8 @@ dependencies:
   geocoding: ^3.0.0
   # Browser-based OAuth (PKCE) for linking SoundCloud / Spotify.
   flutter_web_auth_2: ^4.1.0
+  # Public privacy, account-deletion, and support links required by both stores.
+  url_launcher: ^6.3.2
   # Desktop launch-at-login (macOS/Windows/Linux) so the desktop build runs at
   # startup. No-op on mobile.
   launch_at_startup: ^0.5.1
@@ -65,6 +67,9 @@ dependencies:
   battery_plus: ^6.2.1
   connectivity_plus: ^6.1.0
   fftea: ^1.5.0+1
+  # On-device TFLite inference for recognition models (bird ID via Perch).
+  # Models are NOT bundled — downloaded on demand (see services/recognition/).
+  tflite_flutter: ^0.11.0
   # Scheduled recording: exact OS alarms (Android) fire at window barriers even
   # when the app is killed; a background isolate toggles the capture service.
   android_alarm_manager_plus: ^4.0.4

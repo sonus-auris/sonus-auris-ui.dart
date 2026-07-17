@@ -65,6 +65,14 @@ enum VoiceIntent {
   // --- App-native capture (the dashcam itself) ---
   startRecording(VoiceCommandCategory.capture),
   stopRecording(VoiceCommandCategory.capture),
+
+  /// "Confirm recording" — speak back whether capture is currently live.
+  confirmRecording(VoiceCommandCategory.capture),
+
+  /// "Pause recording (for 10 minutes)" — temporarily stop capture and
+  /// auto-resume. When the duration slot is missing the handler asks for it
+  /// and the dispatcher treats the next utterance as the answer.
+  pauseRecording(VoiceCommandCategory.capture),
   takeNote(VoiceCommandCategory.capture),
   recordVoiceMemo(VoiceCommandCategory.capture),
   createTask(VoiceCommandCategory.capture),

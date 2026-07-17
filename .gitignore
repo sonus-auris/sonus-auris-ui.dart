@@ -46,3 +46,6 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 /android/.kotlin/
+
+# Cloudflare Wrangler's local account/build cache (may contain account metadata).
+.wrangler/
