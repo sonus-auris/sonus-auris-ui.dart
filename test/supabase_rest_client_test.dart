@@ -177,12 +177,12 @@ void main() {
     expect(called, isFalse);
   });
 
-  test('posts client telemetry to the RLS-scoped telemetry table', () async {
+  test('posts client telemetry through the guarded organization RPC', () async {
     late http.Request captured;
     final client = SupabaseRestClient(
       httpClient: MockClient((request) async {
         captured = request;
-        return http.Response('', 201);
+        return http.Response('{"success":true,"inserted":1}', 200);
       }),
     );
     final error = await client.insertTelemetry(
@@ -204,19 +204,21 @@ void main() {
     expect(error, isNull);
     expect(
       captured.url.toString(),
-      'https://proj.supabase.co/rest/v1/client_telemetry',
+      'https://proj.supabase.co/rest/v1/rpc/ingest_sonus_log_entries',
     );
     expect(captured.headers['apikey'], 'anon-key');
     expect(captured.headers['authorization'], 'Bearer user-jwt');
-    final body = jsonDecode(captured.body) as List;
-    expect(body, hasLength(1));
-    final row = body.single as Map<String, dynamic>;
+    final body = jsonDecode(captured.body) as Map<String, dynamic>;
+    final rows = body['entries'] as List;
+    expect(rows, hasLength(1));
+    final row = rows.single as Map<String, dynamic>;
     expect(row['device_id'], 'device-xyz');
+    expect(row['client_event_id'], isNotEmpty);
     expect(row['level'], 'error');
-    expect(row['event'], 'flutter_error');
+    expect(row['category'], 'flutter_error');
     expect(row['message'], 'Widget exploded');
     expect(row['platform'], 'android');
-    expect((row['details'] as Map)['screen'], 'login');
+    expect((row['metadata'] as Map)['details'], {'screen': 'login'});
     expect(row, isNot(contains('user_id')));
   });
 
@@ -268,14 +270,15 @@ void main() {
     );
 
     expect(error, isNull);
-    final body = jsonDecode(captured.body) as List;
-    final row = body.single as Map<String, dynamic>;
+    final body = jsonDecode(captured.body) as Map<String, dynamic>;
+    final row = (body['entries'] as List).single as Map<String, dynamic>;
     expect(row['message'], contains('Bearer [redacted]'));
     expect(row['message'], contains('postgresql://[redacted]'));
     expect(row['message'], isNot(contains('abc.def.ghi')));
     expect(row['message'], isNot(contains('postgres:pw')));
     expect(row['stack'], contains('sb_[redacted]'));
-    final details = row['details'] as Map;
+    final metadata = row['metadata'] as Map;
+    final details = metadata['details'] as Map;
     expect(details['accessToken'], '[redacted]');
     expect(details['password'], '[redacted]');
     expect((details['nested'] as Map)['authorization'], '[redacted]');

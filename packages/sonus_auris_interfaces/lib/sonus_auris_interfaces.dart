@@ -6,7 +6,18 @@
 import 'dart:convert';
 
 const acousticEventsTable = "acoustic_events";
-const acousticEventsKindValues = <String>["snore", "apneaPattern", "music", "speech", "keyword", "sleepCycle", "sleepCycleAlarm", "suddenLoudNoise", "raisedVoice", "possibleArgumentPattern"];
+const acousticEventsKindValues = <String>[
+  "snore",
+  "apneaPattern",
+  "music",
+  "speech",
+  "keyword",
+  "sleepCycle",
+  "sleepCycleAlarm",
+  "suddenLoudNoise",
+  "raisedVoice",
+  "possibleArgumentPattern"
+];
 
 class AcousticEvent {
   const AcousticEvent({
@@ -23,20 +34,28 @@ class AcousticEvent {
 
   /// Server-generated row id.
   final String id;
+
   /// Owning user; defaulted from the access token (auth.uid()).
   final String userId;
+
   /// Opaque per-install device id (AppConfig.deviceId).
   final String deviceId;
+
   /// Detection kind (wire value matches the client AcousticDetectionKind name).
   final String kind;
+
   /// UTC start of the detection.
   final String startedAt;
+
   /// UTC end of the detection.
   final String endedAt;
+
   /// Heuristic confidence in 0..1.
   final double confidence;
+
   /// Kind-specific, JSON-serializable extras (no audio).
   final Map<String, Object?> details;
+
   /// Insert time.
   final String createdAt;
 
@@ -99,12 +118,16 @@ class UserConsent {
   final String id;
   final String userId;
   final String deviceId;
+
   /// The disclosure version the user agreed to (kConsentVersion).
   final String consentVersion;
+
   /// android / ios / other.
   final String? platform;
+
   /// Map of consent item key -> bool (microphone, cloud_backup, notifications, location, motion, bluetooth).
   final Map<String, Object?> granted;
+
   /// When the user accepted (client UTC).
   final String acceptedAt;
   final String createdAt;
@@ -149,8 +172,19 @@ class UserConsent {
 }
 
 const userSettingsTable = "user_settings";
-const userSettingsPreferredUseCaseValues = <String>["security", "music", "meeting", "voice_note", "ambient"];
-const userSettingsCloudProviderValues = <String>["s3", "googleDrive", "oneDrive", "iCloudDrive"];
+const userSettingsPreferredUseCaseValues = <String>[
+  "security",
+  "music",
+  "meeting",
+  "voice_note",
+  "ambient"
+];
+const userSettingsCloudProviderValues = <String>[
+  "s3",
+  "googleDrive",
+  "oneDrive",
+  "iCloudDrive"
+];
 
 class UserSettings {
   const UserSettings({
@@ -198,6 +232,7 @@ class UserSettings {
   final int sampleRate;
   final int channels;
   final bool uploadEnabled;
+
   /// Account preference only; credentials and provider tokens are never stored in this table.
   final String cloudProvider;
   final double micSensitivity;
@@ -219,6 +254,7 @@ class UserSettings {
   final int captureSampleRate;
   final int quietSampleRate;
   final double adaptiveLoudnessDb;
+
   /// Last client-mediated update time, used for cross-device last-write-wins reconciliation.
   final String updatedAt;
 
@@ -333,45 +369,90 @@ class UserSettings {
 }
 
 const clientTelemetryTable = "client_telemetry";
-const clientTelemetryLevelValues = <String>["debug", "info", "warning", "error", "fatal"];
+const clientTelemetryLevelValues = <String>[
+  "debug",
+  "info",
+  "warning",
+  "error",
+  "fatal"
+];
 
 class ClientTelemetry {
   const ClientTelemetry({
     required this.id,
     required this.userId,
     required this.deviceId,
+    this.clientEventId,
+    this.sessionId,
     required this.level,
     required this.event,
     required this.message,
     this.stack,
     this.platform,
     this.appVersion,
+    this.source,
+    this.transport,
+    this.traceId,
+    this.spanId,
+    this.parentSpanId,
     required this.details,
     required this.occurredAt,
     required this.createdAt,
   });
 
   final String id;
+
   /// Owning user resolved from the signed-in Supabase JWT.
   final String userId;
+
   /// Opaque per-install device id.
   final String deviceId;
+
+  /// Client-generated UUID used to make offline retry delivery idempotent.
+  final String? clientEventId;
+
+  /// Opaque runtime session id shared by logs, metrics, and traces.
+  final String? sessionId;
+
   /// Severity level normalized by the client.
   final String level;
+
   /// Stable event name, e.g. diagnostic, flutter_error, platform_dispatcher_error.
   final String event;
+
   /// Short redacted log/error message.
   final String message;
+
   /// Redacted Dart stack trace when available.
   final String? stack;
+
   /// android / ios / macos / windows / linux / other.
   final String? platform;
+
   /// Client app version when available.
   final String? appVersion;
+
+  /// Client surface that emitted the row, e.g. flutter, web, wasm, or typescript.
+  final String? source;
+
+  /// Delivery path requested by the client, e.g. rest_outbox or realtime_broadcast.
+  final String? transport;
+
+  /// Correlation id for an end-to-end client operation.
+  final String? traceId;
+
+  /// Identifier for the emitting operation within trace_id.
+  final String? spanId;
+
+  /// Optional parent span identifier for nested work.
+  final String? parentSpanId;
+
   /// Redacted JSON details for filtering/debugging.
   final Map<String, Object?> details;
+
   /// Client UTC timestamp for when the event occurred.
   final String occurredAt;
+
   /// Insert time.
   final String createdAt;
 
@@ -380,12 +461,19 @@ class ClientTelemetry {
       id: _reqString(json, "id"),
       userId: _reqString(json, "user_id"),
       deviceId: _reqString(json, "device_id"),
+      clientEventId: _optString(json, "client_event_id"),
+      sessionId: _optString(json, "session_id"),
       level: _reqString(json, "level"),
       event: _reqString(json, "event"),
       message: _reqString(json, "message"),
       stack: _optString(json, "stack"),
       platform: _optString(json, "platform"),
       appVersion: _optString(json, "app_version"),
+      source: _optString(json, "source"),
+      transport: _optString(json, "transport"),
+      traceId: _optString(json, "trace_id"),
+      spanId: _optString(json, "span_id"),
+      parentSpanId: _optString(json, "parent_span_id"),
       details: _reqObject(json, "details"),
       occurredAt: _reqString(json, "occurred_at"),
       createdAt: _reqString(json, "created_at"),
@@ -397,12 +485,19 @@ class ClientTelemetry {
       "id": id,
       "user_id": userId,
       "device_id": deviceId,
+      "client_event_id": clientEventId,
+      "session_id": sessionId,
       "level": level,
       "event": event,
       "message": message,
       "stack": stack,
       "platform": platform,
       "app_version": appVersion,
+      "source": source,
+      "transport": transport,
+      "trace_id": traceId,
+      "span_id": spanId,
+      "parent_span_id": parentSpanId,
       "details": details,
       "occurred_at": occurredAt,
       "created_at": createdAt,
@@ -414,12 +509,19 @@ class ClientTelemetry {
   Map<String, Object?> toInsertJson() {
     return {
       "device_id": deviceId,
+      "client_event_id": clientEventId,
+      "session_id": sessionId,
       "level": level,
       "event": event,
       "message": message,
       "stack": stack,
       "platform": platform,
       "app_version": appVersion,
+      "source": source,
+      "transport": transport,
+      "trace_id": traceId,
+      "span_id": spanId,
+      "parent_span_id": parentSpanId,
       "details": details,
       "occurred_at": occurredAt,
     };
@@ -430,7 +532,8 @@ class ClientTelemetry {
 String _reqString(Map<String, Object?> j, String k) => j[k]! as String;
 String? _optString(Map<String, Object?> j, String k) => j[k] as String?;
 int _reqInt(Map<String, Object?> j, String k) => (j[k]! as num).toInt();
-double _reqDouble(Map<String, Object?> j, String k) => (j[k]! as num).toDouble();
+double _reqDouble(Map<String, Object?> j, String k) =>
+    (j[k]! as num).toDouble();
 bool _reqBool(Map<String, Object?> j, String k) => j[k]! as bool;
 Map<String, Object?> _reqObject(Map<String, Object?> j, String k) {
   final v = j[k];

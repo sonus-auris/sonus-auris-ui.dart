@@ -1,6 +1,7 @@
 // Central app orchestrator: owns every service and drives the capture/encrypt/upload/analysis lifecycle, exposing app state to the UI.
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
@@ -8,6 +9,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:rxdart/rxdart.dart';
+import 'package:uuid/uuid.dart';
 
 import '../models/acoustic_detection.dart';
 import '../models/audio_trigger_event.dart';
@@ -58,6 +60,7 @@ import '../services/speech_to_text_client.dart';
 import '../services/on_device_speech_client.dart';
 import '../services/supabase_auth_client.dart';
 import '../services/supabase_rest_client.dart';
+import '../services/supabase_telemetry_realtime_client.dart';
 import '../services/acoustic/spectral_features.dart';
 import '../services/voice/handlers/recording_command_handler.dart';
 import '../services/voice/voice_command_dispatcher.dart';
@@ -80,6 +83,12 @@ const String kConsentVersion = 'audio-dashcam-consent-v2';
 const String kDefaultSupabaseUrl = AppConfig.defaultSupabaseUrl;
 const String kDefaultSupabaseAnonKey = AppConfig.defaultSupabaseAnonKey;
 
+/// Optional platform-specific return URL for Supabase recovery emails. Configure
+/// it at build time only after adding the URL to Supabase Auth's allow-list.
+const String kSupabaseAuthRedirectUrl = String.fromEnvironment(
+  'SONUS_SUPABASE_AUTH_REDIRECT_URL',
+);
+
 class AppController {
   factory AppController({
     SettingsStore? settingsStore,
@@ -96,6 +105,7 @@ class AppController {
     LocationService? locationService,
     PowerNetworkGate? powerNetworkGate,
     SupabaseRestClient? supabaseRestClient,
+    SupabaseTelemetryRealtimeClient? telemetryRealtimeClient,
     ShazamClient? shazamClient,
     MemoryPublisher? memoryPublisher,
     DayOfLifeArchiver? dayOfLifeArchiver,
@@ -141,6 +151,8 @@ class AppController {
       locationService: locationService ?? LocationService(),
       powerNetworkGate: powerNetworkGate ?? PowerNetworkGate(),
       supabaseRestClient: supabaseRestClient ?? SupabaseRestClient(),
+      telemetryRealtimeClient:
+          telemetryRealtimeClient ?? SupabaseTelemetryRealtimeClient(),
       shazamClient: shazamClient ?? ShazamClient(),
       memoryPublisher: memoryPublisher ?? MemoryPublisher(),
       dayOfLifeArchiver: dayOfLifeArchiver ?? DayOfLifeArchiver(),
@@ -183,6 +195,7 @@ class AppController {
     required this._locationService,
     required this._powerNetworkGate,
     required this._supabaseRestClient,
+    required this._telemetryRealtimeClient,
     required this._shazamClient,
     required this._memoryPublisher,
     required this._dayOfLifeArchiver,
@@ -313,6 +326,7 @@ class AppController {
   final LocationService _locationService;
   final PowerNetworkGate _powerNetworkGate;
   final SupabaseRestClient _supabaseRestClient;
+  final SupabaseTelemetryRealtimeClient _telemetryRealtimeClient;
 
   /// Free-disk-space probe backing the "space permitting" retention floor.
   /// Field (not constructor-injected) so tests can swap in a fake.
@@ -358,6 +372,12 @@ class AppController {
   /// Whether onboarding (consent for the current [kConsentVersion]) is done.
   /// The app root watches this to gate the onboarding flow vs. the main UI.
   ValueListenable<bool> get onboardingComplete => _onboardingComplete;
+
+  /// A recording-capable consent record is required regardless of the entry
+  /// point. This protects desktop/autostart and scheduled starts as well as
+  /// the mobile onboarding UI.
+  bool get hasValidRecordingConsent =>
+      _onboardingComplete.value && _hasValidConsent(_consentRecord);
   final ShazamClient _shazamClient;
   final MemoryPublisher _memoryPublisher;
   final DayOfLifeArchiver _dayOfLifeArchiver;
@@ -383,6 +403,7 @@ class AppController {
   DateTime? _lastConsentPromptAt;
   Future<void>? _deviceRegistrationInFlight;
   Future<void>? _supabaseRefreshInFlight;
+  Timer? _supabaseRefreshTimer;
   Future<void>? _icloudSyncInFlight;
   StreamSubscription<void>? _transferConditionsSubscription;
   String? _lastReportedTransferSignature;
@@ -441,8 +462,12 @@ class AppController {
   final List<ClientTelemetryEvent> _pendingTelemetry = [];
   Timer? _telemetryFlushTimer;
   bool _telemetryFlushInFlight = false;
+  int _telemetryFailureCount = 0;
+  int _supabaseRefreshFailureCount = 0;
   static const int _maxPendingTelemetry = 100;
   static const int _telemetryBatchSize = 20;
+  final String _telemetrySessionId = const Uuid().v4();
+  final Random _telemetryJitter = Random.secure();
 
   /// Writes the time-aligned FFT feature sidecar next to each finalized segment.
   final SpectralSidecar _spectralSidecar = SpectralSidecar();
@@ -475,12 +500,16 @@ class AppController {
     _onboardingComplete.value = _hasValidConsent(_consentRecord);
     final secrets = await _settingsStore.loadSecrets();
     final pendingAlerts = await _settingsStore.loadPendingAlerts();
+    final pendingTelemetry = await _settingsStore.loadPendingTelemetry();
     final recovered = await _segmentIndex.recoverOrphanedLocalSegments(
       fallbackSegmentMinutes: config.segmentMinutes,
     );
     _pendingAlertEvents
       ..clear()
       ..addAll(pendingAlerts);
+    _pendingTelemetry
+      ..clear()
+      ..addAll(pendingTelemetry.take(_maxPendingTelemetry));
     _feedback.enabled = config.verbalCuesEnabled;
     _config.add(config);
     _secrets.add(secrets);
@@ -542,6 +571,8 @@ class AppController {
     _isInitializing.add(false);
     _diagnostics.add('App controller init completed.');
     await _ensureSupabaseReady();
+    _connectTelemetryRealtime();
+    _scheduleSupabaseTokenRefresh();
     await _syncPortableSettingsFromSupabase();
     _scheduleTelemetryFlush();
     // If consent was captured before sign-in (or a previous sync failed), push it
@@ -928,6 +959,11 @@ class AppController {
   /// permissions, sync the record to Supabase when signed in, and unlock the
   /// main UI.
   Future<void> completeOnboarding(ConsentRecord record) async {
+    if (!_hasValidConsent(record)) {
+      throw StateError(
+        'Microphone recording consent is required before Sonus Auris can start.',
+      );
+    }
     _consentRecord = record;
     await _settingsStore.saveConsentRecord(record);
     await _applyConsentToConfig(record);
@@ -1077,6 +1113,7 @@ class AppController {
       await _authClient.sendPasswordResetEmail(
         config: _config.value,
         email: email,
+        redirectTo: kSupabaseAuthRedirectUrl,
       );
       _message.add('Password reset email sent.');
     } catch (error) {
@@ -1139,6 +1176,11 @@ class AppController {
         .copyWith(backendDeviceToken: '');
     _backendSession = null;
     _backendSessionKey = null;
+    _supabaseRefreshTimer?.cancel();
+    _supabaseRefreshTimer = null;
+    _telemetryRealtimeClient.close();
+    _pendingTelemetry.clear();
+    await _persistPendingTelemetry();
     await _persistSecrets(cleared);
     _message.add('Signed out.');
   }
@@ -1179,6 +1221,12 @@ class AppController {
     final email = session.email.trim().isEmpty
         ? current.supabaseEmail
         : session.email;
+    // GoTrue refresh responses may omit `user` too. Preserve the known immutable
+    // subject for those responses, but always prefer the value returned by a
+    // full sign-in/sign-up response.
+    final userId = session.userId.trim().isEmpty
+        ? current.supabaseUserId
+        : session.userId;
     // Never blank an existing refresh token if the response omitted one — that
     // would strand us with no way to refresh again until the next manual login.
     final refreshToken = session.refreshToken.trim().isEmpty
@@ -1187,17 +1235,20 @@ class AppController {
     // If a *different* user signed in, the existing device token belongs to the
     // previous account — drop it so the next backend call re-registers under the
     // new identity instead of writing this user's audio into the old account.
+    // Email is intentionally not used as the authority here: it is mutable and
+    // can be re-used after account deletion. The immutable Auth subject is the
+    // account boundary. A one-time re-registration is also safer when upgrading
+    // a legacy installation that has a device token but no persisted subject.
     final identityChanged =
-        current.supabaseEmail.trim().isNotEmpty &&
-        session.email.trim().isNotEmpty &&
-        current.supabaseEmail.trim().toLowerCase() !=
-            session.email.trim().toLowerCase();
+        session.userId.trim().isNotEmpty &&
+        current.supabaseUserId.trim() != session.userId.trim();
     var next = current.copyWith(
       supabaseAccessToken: session.accessToken,
       supabaseRefreshToken: refreshToken,
       supabaseAccessTokenExpiresAt: session.expiresAtUtc
           .toUtc()
           .toIso8601String(),
+      supabaseUserId: userId,
       supabaseEmail: email,
     );
     if (identityChanged) {
@@ -1205,8 +1256,11 @@ class AppController {
       _backendSession = null;
       _backendSessionKey = null;
       _pendingTelemetry.clear();
+      await _persistPendingTelemetry();
     }
     await _persistSecrets(next);
+    _connectTelemetryRealtime();
+    _scheduleSupabaseTokenRefresh();
     _diagnostics.add(
       'Supabase telemetry streaming started.',
       event: 'telemetry.streaming_started',
@@ -1222,25 +1276,64 @@ class AppController {
         !_supabaseRestClient.canInsert(config, secrets)) {
       return;
     }
-    _pendingTelemetry.add(
-      ClientTelemetryEvent(
-        level: _normalizeTelemetryLevel(entry.level),
-        event: entry.event.trim().isEmpty ? 'diagnostic' : entry.event.trim(),
-        message: entry.message,
-        occurredAtUtc: entry.occurredAtUtc,
-        stack: entry.stack?.toString(),
-        platform: _telemetryPlatform(),
-        details: {'source': 'diagnostic_log', ...entry.details},
-      ),
+    final eventId = const Uuid().v4();
+    final requestedTraceId = entry.details['traceId']?.toString().trim() ?? '';
+    final traceId = requestedTraceId.isEmpty
+        ? _telemetrySessionId
+        : requestedTraceId;
+    final telemetry = ClientTelemetryEvent(
+      clientEventId: eventId,
+      level: _normalizeTelemetryLevel(entry.level),
+      event: entry.event.trim().isEmpty ? 'diagnostic' : entry.event.trim(),
+      message: entry.message,
+      occurredAtUtc: entry.occurredAtUtc,
+      stack: entry.stack?.toString(),
+      platform: _telemetryPlatform(),
+      sessionId: _telemetrySessionId,
+      source: 'flutter',
+      transport: 'rest_outbox+realtime_broadcast',
+      traceId: traceId,
+      spanId: eventId,
+      details: {'source': 'diagnostic_log', ...entry.details},
     );
+    _pendingTelemetry.add(telemetry);
     if (_pendingTelemetry.length > _maxPendingTelemetry) {
       _pendingTelemetry.removeRange(
         0,
         _pendingTelemetry.length - _maxPendingTelemetry,
       );
     }
+    unawaited(_persistPendingTelemetry());
+    _connectTelemetryRealtime();
+    _telemetryRealtimeClient.publish(
+      _supabaseRestClient.toOrganizationTelemetryEntry(
+        _supabaseRestClient.sanitizeTelemetryRow(
+          telemetry.toSupabaseRow(config.deviceId),
+        ),
+      ),
+    );
     _scheduleTelemetryFlush();
   }
+
+  void _connectTelemetryRealtime() {
+    final config = _config.valueOrNull;
+    final secrets = _secrets.valueOrNull;
+    if (config == null ||
+        secrets == null ||
+        !config.hasSupabaseAuthConfig ||
+        !secrets.hasSupabaseToken ||
+        secrets.supabaseUserId.trim().isEmpty) {
+      return;
+    }
+    _telemetryRealtimeClient.connect(
+      config: config,
+      accessToken: secrets.supabaseAccessToken,
+      userId: secrets.supabaseUserId,
+    );
+  }
+
+  Future<void> _persistPendingTelemetry() =>
+      _settingsStore.savePendingTelemetry(_pendingTelemetry);
 
   void _scheduleTelemetryFlush({
     Duration delay = const Duration(milliseconds: 250),
@@ -1290,10 +1383,32 @@ class AppController {
       );
       ok = error == null;
       if (ok && _pendingTelemetry.isNotEmpty) {
+        // The entries RPC is the durable source of truth. A snapshot is a
+        // non-blocking ring-buffer aid for MCP session triage, never a reason
+        // to retry and duplicate the already accepted entry batch.
+        unawaited(
+          _supabaseRestClient.insertTelemetrySnapshot(
+            config: _config.valueOrNull ?? config,
+            secrets: freshSecrets,
+            events: batch,
+            trigger:
+                batch.any(
+                  (event) => event.level == 'error' || event.level == 'fatal',
+                )
+                ? 'error'
+                : 'interval',
+            context: {
+              'recording': _recorder.isRecording,
+              'pending_outbox_count': _pendingTelemetry.length,
+            },
+          ),
+        );
         _pendingTelemetry.removeRange(
           0,
           batch.length.clamp(0, _pendingTelemetry.length),
         );
+        _telemetryFailureCount = 0;
+        await _persistPendingTelemetry();
       }
     } finally {
       _telemetryFlushInFlight = false;
@@ -1302,9 +1417,19 @@ class AppController {
       _scheduleTelemetryFlush(
         delay: ok
             ? const Duration(milliseconds: 250)
-            : const Duration(seconds: 30),
+            : _nextTelemetryRetryDelay(),
       );
     }
+  }
+
+  Duration _nextTelemetryRetryDelay() {
+    _telemetryFailureCount = (_telemetryFailureCount + 1).clamp(1, 8).toInt();
+    final seconds = 1 << _telemetryFailureCount;
+    final boundedSeconds = seconds.clamp(2, 300).toInt();
+    return Duration(
+      seconds: boundedSeconds,
+      milliseconds: _telemetryJitter.nextInt(1000),
+    );
   }
 
   String _telemetryPlatform() {
@@ -1459,12 +1584,60 @@ class AppController {
         refreshToken: refreshToken,
       );
       await _applySupabaseSession(session);
+      _supabaseRefreshFailureCount = 0;
       _diagnostics.add('Supabase access token refreshed.');
     } catch (error) {
       _diagnostics.add(
         'Supabase token refresh failed: ${_describeError(error)}',
       );
+      _scheduleSupabaseTokenRefresh(failed: true);
     }
+  }
+
+  /// Refresh before expiry even when the recorder is idle. This is particularly
+  /// important on desktop, where the process can stay open for days without a
+  /// user action that would otherwise call [_ensureFreshSupabaseToken].
+  void _scheduleSupabaseTokenRefresh({bool failed = false}) {
+    _supabaseRefreshTimer?.cancel();
+    final secrets = _secrets.valueOrNull;
+    if (secrets == null ||
+        !secrets.hasSupabaseRefreshToken ||
+        !_config.hasValue) {
+      return;
+    }
+    final expiry = secrets.supabaseTokenExpiresAtUtc;
+    if (expiry == null) {
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    final target = expiry.subtract(const Duration(minutes: 2));
+    final delay = failed
+        ? _nextSupabaseRefreshRetryDelay()
+        : target.isAfter(now)
+        ? target.difference(now)
+        : const Duration(seconds: 5);
+    _supabaseRefreshTimer = Timer(delay, () {
+      unawaited(
+        _refreshSupabaseToken(_config.value, secrets.supabaseRefreshToken),
+      );
+    });
+  }
+
+  Duration _nextSupabaseRefreshRetryDelay() {
+    _supabaseRefreshFailureCount = (_supabaseRefreshFailureCount + 1)
+        .clamp(1, 6)
+        .toInt();
+    final seconds = (1 << _supabaseRefreshFailureCount).clamp(5, 300).toInt();
+    return Duration(
+      seconds: seconds,
+      milliseconds: _telemetryJitter.nextInt(1000),
+    );
+  }
+
+  Future<void> refreshSupabaseSessionForAppResume() async {
+    await _ensureFreshSupabaseToken();
+    _connectTelemetryRealtime();
+    _scheduleSupabaseTokenRefresh();
   }
 
   /// Registers the device with the backend once a Supabase session exists and no
@@ -1542,6 +1715,12 @@ class AppController {
   }
 
   Future<void> startRecording({bool scheduleInitiated = false}) async {
+    if (!hasValidRecordingConsent) {
+      _message.add(
+        'Accept the microphone recording disclosure before starting capture.',
+      );
+      return;
+    }
     // Any start — manual, voice, or scheduled — supersedes a pending pause.
     _cancelPendingPauseResume();
     // Ownership: a manual start clears schedule ownership, a schedule-driven
@@ -2309,6 +2488,8 @@ class AppController {
       _diagnosticTelemetrySubscription?.cancel() ?? Future<void>.value(),
     ]);
     _telemetryFlushTimer?.cancel();
+    _supabaseRefreshTimer?.cancel();
+    _telemetryRealtimeClient.close();
     _cancelPendingPauseResume();
     await _voiceCommands.dispose();
 

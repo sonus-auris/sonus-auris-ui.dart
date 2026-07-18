@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../models/app_config.dart';
 import '../models/audio_trigger_event.dart';
+import '../models/client_telemetry_event.dart';
 import '../models/cloud_secrets.dart';
 import '../models/consent.dart';
 import '../models/sleep_cycle_profile.dart';
@@ -26,6 +27,7 @@ class SettingsStore {
 
   static const _configKey = 'audio_dashcam.config.v1';
   static const _pendingAlertsKey = 'audio_dashcam.pending_alerts.v1';
+  static const _pendingTelemetryKey = 'audio_dashcam.pending_telemetry.v1';
   static const _sleepCycleProfileKey = 'audio_dashcam.sleep_cycle_profile.v1';
   static const _consentRecordKey = 'audio_dashcam.consent_record.v1';
   static const _s3AccessKeyKey = 'audio_dashcam.s3.access_key_id';
@@ -37,6 +39,7 @@ class SettingsStore {
       'audio_dashcam.supabase.refresh_token';
   static const _supabaseTokenExpiresAtKey =
       'audio_dashcam.supabase.token_expires_at';
+  static const _supabaseUserIdKey = 'audio_dashcam.supabase.user_id';
   static const _supabaseEmailKey = 'audio_dashcam.supabase.email';
   static const _sttApiKeyKey = 'audio_dashcam.stt.api_key';
   static const _soundCloudAccessKey = 'audio_dashcam.soundcloud.access_token';
@@ -96,6 +99,45 @@ class SettingsStore {
     }
     await prefs.setString(
       _pendingAlertsKey,
+      jsonEncode(events.map((event) => event.toJson()).toList()),
+    );
+  }
+
+  /// Persisted, sanitized observability outbox. This contains no credentials
+  /// and is capped by the controller; it lets diagnostics survive an app kill
+  /// or an offline period before they are delivered to Supabase.
+  Future<List<ClientTelemetryEvent>> loadPendingTelemetry() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pendingTelemetryKey);
+    if (raw == null || raw.trim().isEmpty) {
+      return const [];
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) {
+        return const [];
+      }
+      return decoded
+          .whereType<Map>()
+          .map(
+            (item) =>
+                ClientTelemetryEvent.fromJson(item.cast<String, Object?>()),
+          )
+          .toList(growable: false);
+    } catch (_) {
+      await prefs.remove(_pendingTelemetryKey);
+      return const [];
+    }
+  }
+
+  Future<void> savePendingTelemetry(List<ClientTelemetryEvent> events) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (events.isEmpty) {
+      await prefs.remove(_pendingTelemetryKey);
+      return;
+    }
+    await prefs.setString(
+      _pendingTelemetryKey,
       jsonEncode(events.map((event) => event.toJson()).toList()),
     );
   }
@@ -160,6 +202,7 @@ class SettingsStore {
           await _secureStorage.read(key: _supabaseRefreshTokenKey) ?? '',
       supabaseAccessTokenExpiresAt:
           await _secureStorage.read(key: _supabaseTokenExpiresAtKey) ?? '',
+      supabaseUserId: await _secureStorage.read(key: _supabaseUserIdKey) ?? '',
       supabaseEmail: await _secureStorage.read(key: _supabaseEmailKey) ?? '',
       sttApiKey: await _secureStorage.read(key: _sttApiKeyKey) ?? '',
       soundCloudAccessToken:
@@ -184,6 +227,7 @@ class SettingsStore {
       _supabaseTokenExpiresAtKey,
       secrets.supabaseAccessTokenExpiresAt,
     );
+    await _writeSecure(_supabaseUserIdKey, secrets.supabaseUserId);
     await _writeSecure(_supabaseEmailKey, secrets.supabaseEmail);
     await _writeSecure(_sttApiKeyKey, secrets.sttApiKey);
     await _writeSecure(_soundCloudAccessKey, secrets.soundCloudAccessToken);

@@ -27,7 +27,10 @@ class SupabaseRestClient {
   final Duration requestTimeout;
 
   static const String acousticEventsTable = 'acoustic_events';
-  static const String clientTelemetryTable = 'client_telemetry';
+  static const String clientTelemetryEntriesRpc =
+      'rpc/ingest_sonus_log_entries';
+  static const String clientTelemetrySnapshotRpc =
+      'rpc/ingest_sonus_log_snapshot';
 
   /// Onboarding consent records.
   ///
@@ -304,9 +307,10 @@ class SupabaseRestClient {
     }
   }
 
-  /// Inserts sanitized client-side logs/errors for observability. Telemetry is
-  /// append-only and RLS-scoped to the signed-in user; callers should treat
-  /// failures as non-fatal.
+  /// Inserts sanitized client-side logs/errors through the organization-wide
+  /// validated telemetry RPC. The RPC owns rate limiting, retention shape, and
+  /// idempotency on `(session_id, client_event_id)`; callers should treat a
+  /// failure as non-fatal and retain the event in their local outbox.
   Future<String?> insertTelemetry({
     required AppConfig config,
     required CloudSecrets secrets,
@@ -320,27 +324,109 @@ class SupabaseRestClient {
     }
     final Uri uri;
     try {
-      uri = _restUri(config, clientTelemetryTable);
+      uri = _restUri(config, clientTelemetryEntriesRpc);
     } on FormatException catch (error) {
       return error.message;
     }
     final rows = events
         .map(
-          (event) =>
-              _sanitizeTelemetryRow(event.toSupabaseRow(config.deviceId)),
+          (event) => toOrganizationTelemetryEntry(
+            sanitizeTelemetryRow(event.toSupabaseRow(config.deviceId)),
+          ),
         )
         .toList();
     try {
       final response = await _httpClient
-          .post(uri, headers: _headers(config, secrets), body: jsonEncode(rows))
+          .post(
+            uri,
+            headers: _headers(config, secrets),
+            body: jsonEncode({'entries': rows}),
+          )
           .timeout(requestTimeout);
       if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          final body = jsonDecode(response.body);
+          if (body is Map && body['success'] == false) {
+            return 'Supabase telemetry ingest rejected: '
+                '${_shortBody(body['error']?.toString() ?? 'unknown error')}';
+          }
+        } on FormatException {
+          // A successful RPC response can be empty when a reverse proxy strips
+          // the JSON result; the HTTP status remains authoritative.
+        }
         return null;
       }
       return 'Supabase telemetry insert failed (${response.statusCode}): '
           '${_shortBody(response.body)}';
     } catch (error) {
       return 'Supabase telemetry insert error: $error';
+    }
+  }
+
+  /// Sends a bounded diagnostic-ring snapshot for the MCP session browser.
+  /// Individual entries are always inserted first through [insertTelemetry]; a
+  /// snapshot failure is intentionally non-fatal and never causes duplicate
+  /// entry delivery. The server enforces the final 500 kB limit as well.
+  Future<String?> insertTelemetrySnapshot({
+    required AppConfig config,
+    required CloudSecrets secrets,
+    required List<ClientTelemetryEvent> events,
+    required String trigger,
+    Map<String, Object?> context = const {},
+  }) async {
+    if (events.isEmpty || !canInsert(config, secrets)) {
+      return null;
+    }
+    final Uri uri;
+    try {
+      uri = _restUri(config, clientTelemetrySnapshotRpc);
+    } on FormatException catch (error) {
+      return error.message;
+    }
+    final entries = _boundedSnapshotEntries(config, events);
+    if (entries.isEmpty) {
+      return null;
+    }
+    final first = entries.first;
+    final payload = <String, Object?>{
+      'device_id': first['device_id'],
+      'session_id': first['session_id'],
+      'platform': first['platform'],
+      'app_version': first['app_version'],
+      'environment': first['environment'],
+      'trigger': {'type': trigger},
+      'context': context,
+      'log_entries': entries,
+      'meta': {
+        'source': 'flutter',
+        'transport': 'rest_outbox+realtime_broadcast',
+      },
+      'snapshot_taken_at': DateTime.now().toUtc().toIso8601String(),
+    };
+    try {
+      final response = await _httpClient
+          .post(
+            uri,
+            headers: _headers(config, secrets),
+            body: jsonEncode({'payload': payload}),
+          )
+          .timeout(requestTimeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return 'Supabase telemetry snapshot failed (${response.statusCode}): '
+            '${_shortBody(response.body)}';
+      }
+      try {
+        final body = jsonDecode(response.body);
+        if (body is Map && body['success'] == false) {
+          return 'Supabase telemetry snapshot rejected: '
+              '${_shortBody(body['error']?.toString() ?? 'unknown error')}';
+        }
+      } on FormatException {
+        // A successful empty RPC response is acceptable.
+      }
+      return null;
+    } catch (error) {
+      return 'Supabase telemetry snapshot error: $error';
     }
   }
 
@@ -359,6 +445,11 @@ class SupabaseRestClient {
     if (base.host.trim().isEmpty) {
       throw const FormatException('Supabase URL must include a host.');
     }
+    if (base.userInfo.isNotEmpty) {
+      throw const FormatException(
+        'Supabase URL must not contain embedded credentials.',
+      );
+    }
     if (base.scheme != 'https' &&
         base.host != 'localhost' &&
         base.host != '127.0.0.1') {
@@ -368,7 +459,9 @@ class SupabaseRestClient {
     }
     final baseSegments = base.pathSegments.where((p) => p.isNotEmpty);
     return base
-        .replace(pathSegments: [...baseSegments, 'rest', 'v1', table])
+        .replace(
+          pathSegments: [...baseSegments, 'rest', 'v1', ...table.split('/')],
+        )
         .removeFragment();
   }
 
@@ -387,7 +480,26 @@ class SupabaseRestClient {
     return trimmed.length > 200 ? trimmed.substring(0, 200) : trimmed;
   }
 
-  Map<String, Object?> _sanitizeTelemetryRow(Map<String, Object?> row) {
+  String _orgTelemetryLevel(String? level) {
+    switch (level?.trim().toLowerCase()) {
+      case 'debug':
+        return 'debug';
+      case 'warning':
+        return 'warn';
+      case 'error':
+      case 'fatal':
+        return 'error';
+      case 'trace':
+        return 'trace';
+      default:
+        return 'info';
+    }
+  }
+
+  /// Produces a payload that is safe for both the durable PostgREST outbox and
+  /// the transient Realtime broadcast. Keep all secret redaction here so a new
+  /// telemetry transport cannot accidentally bypass it.
+  Map<String, Object?> sanitizeTelemetryRow(Map<String, Object?> row) {
     return row.map((key, value) {
       if (key == 'message' || key == 'stack') {
         return MapEntry(key, _redactAndTruncate(value?.toString() ?? '', 4000));
@@ -397,6 +509,57 @@ class SupabaseRestClient {
       }
       return MapEntry(key, value);
     });
+  }
+
+  /// Maps the common cross-platform event to the organization-wide RPC contract
+  /// (`sonus_client_log_entries`). Realtime broadcasts reuse this exact payload.
+  Map<String, Object?> toOrganizationTelemetryEntry(
+    Map<String, Object?> sanitizedRow,
+  ) => {
+    'client_event_id': sanitizedRow['client_event_id'],
+    'device_id': sanitizedRow['device_id'],
+    'session_id': sanitizedRow['session_id'],
+    'platform': sanitizedRow['platform'],
+    'app_version': sanitizedRow['app_version'],
+    'environment': const String.fromEnvironment(
+      'SONUS_APP_ENV',
+      defaultValue: 'production',
+    ),
+    'level': _orgTelemetryLevel(sanitizedRow['level']?.toString()),
+    'message': sanitizedRow['message'],
+    'stack': sanitizedRow['stack'],
+    'category': sanitizedRow['event'],
+    'metadata': {
+      'source': sanitizedRow['source'],
+      'transport': sanitizedRow['transport'],
+      'trace_id': sanitizedRow['trace_id'],
+      'span_id': sanitizedRow['span_id'],
+      'parent_span_id': sanitizedRow['parent_span_id'],
+      'details': sanitizedRow['details'],
+    },
+    'client_timestamp': sanitizedRow['occurred_at'],
+  };
+
+  List<Map<String, Object?>> _boundedSnapshotEntries(
+    AppConfig config,
+    List<ClientTelemetryEvent> events,
+  ) {
+    const maxEntries = 100;
+    const maxSerializedBytes = 450000;
+    final entries = <Map<String, Object?>>[];
+    var bytes = 0;
+    for (final event in events.take(maxEntries)) {
+      final entry = toOrganizationTelemetryEntry(
+        sanitizeTelemetryRow(event.toSupabaseRow(config.deviceId)),
+      );
+      final entryBytes = utf8.encode(jsonEncode(entry)).length;
+      if (entries.isNotEmpty && bytes + entryBytes > maxSerializedBytes) {
+        break;
+      }
+      entries.add(entry);
+      bytes += entryBytes;
+    }
+    return entries;
   }
 
   Map<String, Object?> _sanitizeTelemetryDetails(
