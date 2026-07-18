@@ -1,6 +1,6 @@
 // Generated from schema/tables.json by @sonus-auris/interfaces. Do not edit by hand.
 // SOURCE OF TRUTH: schema/tables.json. Regenerate with: node src/generate.mjs
-// Contract version: 2026.07.13
+// Contract version: 2026.07.17
 // MIGRATION SAFETY: review every change; use declarative-postgres-migrate with a direct Supabase connection. Never auto-apply.
 
 import 'dart:convert';
@@ -524,6 +524,163 @@ class ClientTelemetry {
       "parent_span_id": parentSpanId,
       "details": details,
       "occurred_at": occurredAt,
+    };
+  }
+}
+
+const devicesTable = "devices";
+const devicesPlatformValues = <String>["android", "ios", "macos", "windows", "linux", "web"];
+const devicesRoleValues = <String>["recorder", "viewer"];
+
+class DeviceRecord {
+  const DeviceRecord({
+    required this.userId,
+    required this.deviceId,
+    required this.displayName,
+    required this.platform,
+    required this.role,
+    this.appVersion,
+    required this.lastSeenAt,
+    this.revokedAt,
+    required this.createdAt,
+  });
+
+  /// Owning user; defaulted from the access token (auth.uid()).
+  final String userId;
+  /// Opaque per-install device id (AppConfig.deviceId).
+  final String deviceId;
+  /// User-facing device name (editable in the console).
+  final String displayName;
+  /// Install platform reported by the client.
+  final String platform;
+  /// recorder = captures audio on this install; viewer = console/master-viewer install.
+  final String role;
+  /// Client app version string, best effort.
+  final String? appVersion;
+  /// Client-reported UTC heartbeat; refreshed at sign-in and periodically while running.
+  final String lastSeenAt;
+  /// Soft removal by the owner (console). Revoked devices do not count against the device limit and must re-register to rejoin.
+  final String? revokedAt;
+  /// Server-side insert time.
+  final String createdAt;
+
+  factory DeviceRecord.fromJson(Map<String, Object?> json) {
+    return DeviceRecord(
+      userId: _reqString(json, "user_id"),
+      deviceId: _reqString(json, "device_id"),
+      displayName: _reqString(json, "display_name"),
+      platform: _reqString(json, "platform"),
+      role: _reqString(json, "role"),
+      appVersion: _optString(json, "app_version"),
+      lastSeenAt: _reqString(json, "last_seen_at"),
+      revokedAt: _optString(json, "revoked_at"),
+      createdAt: _reqString(json, "created_at"),
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    return {
+      "user_id": userId,
+      "device_id": deviceId,
+      "display_name": displayName,
+      "platform": platform,
+      "role": role,
+      "app_version": appVersion,
+      "last_seen_at": lastSeenAt,
+      "revoked_at": revokedAt,
+      "created_at": createdAt,
+    };
+  }
+
+  /// Row for INSERT: server-generated columns are omitted so the
+  /// database fills them (id, user_id via auth.uid(), created_at).
+  Map<String, Object?> toInsertJson() {
+    return {
+      "device_id": deviceId,
+      "display_name": displayName,
+      "platform": platform,
+      "role": role,
+      "app_version": appVersion,
+      "last_seen_at": lastSeenAt,
+      "revoked_at": revokedAt,
+    };
+  }
+}
+
+const entitlementsTable = "entitlements";
+const entitlementsPlanValues = <String>["free", "plus"];
+const entitlementsSourceValues = <String>["none", "stripe", "app_store", "play_store"];
+
+class Entitlement {
+  const Entitlement({
+    required this.userId,
+    required this.plan,
+    required this.deviceLimit,
+    required this.features,
+    required this.source,
+    this.externalRef,
+    this.currentPeriodEnd,
+    required this.updatedAt,
+    required this.createdAt,
+  });
+
+  /// Entitled user.
+  final String userId;
+  /// free = 2 devices included; plus = paid tier unlocking 3+ devices and premium features.
+  final String plan;
+  /// Maximum active (non-revoked) devices on the account. 2 on the free tier.
+  final int deviceLimit;
+  /// Extensible feature flags granted by the plan (e.g. {"permanent_saves": true}).
+  final Map<String, Object?> features;
+  /// Which billing processor granted the current plan.
+  final String source;
+  /// Processor reference: Stripe subscription id, App Store original transaction id, or Play purchase token. Never a secret.
+  final String? externalRef;
+  /// End of the paid period, if the plan is subscription-based.
+  final String? currentPeriodEnd;
+  /// Last processor write.
+  final String updatedAt;
+  /// Server-side insert time.
+  final String createdAt;
+
+  factory Entitlement.fromJson(Map<String, Object?> json) {
+    return Entitlement(
+      userId: _reqString(json, "user_id"),
+      plan: _reqString(json, "plan"),
+      deviceLimit: _reqInt(json, "device_limit"),
+      features: _reqObject(json, "features"),
+      source: _reqString(json, "source"),
+      externalRef: _optString(json, "external_ref"),
+      currentPeriodEnd: _optString(json, "current_period_end"),
+      updatedAt: _reqString(json, "updated_at"),
+      createdAt: _reqString(json, "created_at"),
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    return {
+      "user_id": userId,
+      "plan": plan,
+      "device_limit": deviceLimit,
+      "features": features,
+      "source": source,
+      "external_ref": externalRef,
+      "current_period_end": currentPeriodEnd,
+      "updated_at": updatedAt,
+      "created_at": createdAt,
+    };
+  }
+
+  /// Row for INSERT: server-generated columns are omitted so the
+  /// database fills them (id, user_id via auth.uid(), created_at).
+  Map<String, Object?> toInsertJson() {
+    return {
+      "plan": plan,
+      "device_limit": deviceLimit,
+      "features": features,
+      "source": source,
+      "external_ref": externalRef,
+      "current_period_end": currentPeriodEnd,
     };
   }
 }

@@ -15,6 +15,7 @@ import flutter_secure_storage_darwin
 import flutter_tts
 import flutter_web_auth_2
 import geolocator_apple
+import in_app_purchase_storekit
 import just_audio
 import network_info_plus
 import record_macos
@@ -33,6 +34,7 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   FlutterTtsPlugin.register(with: registry.registrar(forPlugin: "FlutterTtsPlugin"))
   FlutterWebAuth2Plugin.register(with: registry.registrar(forPlugin: "FlutterWebAuth2Plugin"))
   GeolocatorPlugin.register(with: registry.registrar(forPlugin: "GeolocatorPlugin"))
+  InAppPurchasePlugin.register(with: registry.registrar(forPlugin: "InAppPurchasePlugin"))
   JustAudioPlugin.register(with: registry.registrar(forPlugin: "JustAudioPlugin"))
   NetworkInfoPlusPlugin.register(with: registry.registrar(forPlugin: "NetworkInfoPlusPlugin"))
   RecordMacOsPlugin.register(with: registry.registrar(forPlugin: "RecordMacOsPlugin"))
