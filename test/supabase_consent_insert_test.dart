@@ -78,4 +78,25 @@ void main() {
     );
     expect(error, contains('403'));
   });
+
+  test('does not retry an ambiguous append-only consent write', () async {
+    var calls = 0;
+    final client = SupabaseRestClient(
+      maxRetryAttempts: 3,
+      sleep: (_) async {},
+      httpClient: MockClient((_) async {
+        calls += 1;
+        return http.Response('temporarily unavailable', 503);
+      }),
+    );
+
+    final error = await client.insertConsent(
+      config: config,
+      secrets: secrets,
+      record: record,
+    );
+
+    expect(error, contains('503'));
+    expect(calls, 1);
+  });
 }

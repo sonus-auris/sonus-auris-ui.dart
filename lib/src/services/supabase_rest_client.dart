@@ -1,6 +1,7 @@
 // Thin PostgREST client that writes user rows into Supabase using only the signed-in user's token (RLS-scoped).
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:http/http.dart' as http;
 import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
@@ -21,10 +22,25 @@ class SupabaseRestClient {
   SupabaseRestClient({
     http.Client? httpClient,
     this.requestTimeout = const Duration(seconds: 20),
-  }) : _httpClient = httpClient ?? http.Client();
+    this.maxRetryAttempts = 3,
+    this.retryBaseDelay = const Duration(milliseconds: 250),
+    this.retryMaxDelay = const Duration(seconds: 4),
+    Future<void> Function(Duration delay)? sleep,
+    double Function()? jitter,
+  }) : assert(maxRetryAttempts >= 1),
+       assert(!retryBaseDelay.isNegative),
+       assert(!retryMaxDelay.isNegative),
+       _httpClient = httpClient ?? http.Client(),
+       _sleep = sleep ?? _defaultSleep,
+       _jitter = jitter ?? Random.secure().nextDouble;
 
   final http.Client _httpClient;
   final Duration requestTimeout;
+  final int maxRetryAttempts;
+  final Duration retryBaseDelay;
+  final Duration retryMaxDelay;
+  final Future<void> Function(Duration delay) _sleep;
+  final double Function() _jitter;
 
   static const String acousticEventsTable = 'acoustic_events';
   static const String clientTelemetryEntriesRpc =
@@ -75,9 +91,11 @@ class SupabaseRestClient {
       return (settings: null, error: error.message);
     }
     try {
-      final response = await _httpClient
-          .get(uri, headers: _headers(config, secrets))
-          .timeout(requestTimeout);
+      final response = await _retryIdempotent(
+        () => _httpClient
+            .get(uri, headers: _headers(config, secrets))
+            .timeout(requestTimeout),
+      );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return (
           settings: null,
@@ -134,13 +152,15 @@ class SupabaseRestClient {
       ..['prefer'] =
           'resolution=merge-duplicates,missing=default,return=minimal';
     try {
-      final response = await _httpClient
-          .post(
-            uri,
-            headers: headers,
-            body: jsonEncode([userSettingsForUpsert(config).toInsertJson()]),
-          )
-          .timeout(requestTimeout);
+      final response = await _retryIdempotent(
+        () => _httpClient
+            .post(
+              uri,
+              headers: headers,
+              body: jsonEncode([userSettingsForUpsert(config).toInsertJson()]),
+            )
+            .timeout(requestTimeout),
+      );
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return null;
       }
@@ -232,7 +252,10 @@ class SupabaseRestClient {
   }
 
   /// Batch-inserts acoustic detections. Returns an error string on failure, or
-  /// null on success (including when there is nothing to insert).
+  /// null on success (including when there is nothing to insert). This is an
+  /// append-only table without a caller-owned idempotency key, so it is
+  /// intentionally *not* retried here; callers can decide whether a later,
+  /// explicit drain is appropriate instead of risking duplicate detections.
   Future<String?> insertDetections({
     required AppConfig config,
     required CloudSecrets secrets,
@@ -274,7 +297,9 @@ class SupabaseRestClient {
   }
 
   /// Inserts the onboarding [record] for the signed-in user. Returns an error
-  /// string on failure, or null on success.
+  /// string on failure, or null on success. Consent is an append-only audit
+  /// trail without a client idempotency key, so this request is deliberately
+  /// not retried after an ambiguous network failure.
   Future<String?> insertConsent({
     required AppConfig config,
     required CloudSecrets secrets,
@@ -336,13 +361,15 @@ class SupabaseRestClient {
         )
         .toList();
     try {
-      final response = await _httpClient
-          .post(
-            uri,
-            headers: _headers(config, secrets),
-            body: jsonEncode({'entries': rows}),
-          )
-          .timeout(requestTimeout);
+      final response = await _retryIdempotent(
+        () => _httpClient
+            .post(
+              uri,
+              headers: _headers(config, secrets),
+              body: jsonEncode({'entries': rows}),
+            )
+            .timeout(requestTimeout),
+      );
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
           final body = jsonDecode(response.body);
@@ -432,6 +459,88 @@ class SupabaseRestClient {
 
   void close() {
     _httpClient.close();
+  }
+
+  /// Retries only requests whose operation is idempotent at the destination.
+  ///
+  /// Settings are an upsert keyed by `user_id`; telemetry entries carry stable
+  /// `client_event_id`s and the RPC deduplicates `(session_id, client_event_id)`.
+  /// Never use this for sign-in, rotating refresh tokens, or append-only rows
+  /// such as consent and acoustic detections: a timeout can mean the server
+  /// accepted the first request even though the client did not see its response.
+  Future<http.Response> _retryIdempotent(
+    Future<http.Response> Function() request,
+  ) async {
+    var failedAttempts = 0;
+    while (true) {
+      try {
+        final response = await request();
+        if (!_isRetryableResponse(response) ||
+            failedAttempts + 1 >= maxRetryAttempts) {
+          return response;
+        }
+        await _sleep(_retryDelay(failedAttempts, response));
+      } on TimeoutException {
+        if (failedAttempts + 1 >= maxRetryAttempts) {
+          rethrow;
+        }
+        await _sleep(_retryDelay(failedAttempts, null));
+      } on http.ClientException {
+        if (failedAttempts + 1 >= maxRetryAttempts) {
+          rethrow;
+        }
+        await _sleep(_retryDelay(failedAttempts, null));
+      }
+      failedAttempts += 1;
+    }
+  }
+
+  bool _isRetryableResponse(http.Response response) {
+    final status = response.statusCode;
+    return status == 408 ||
+        status == 425 ||
+        status == 429 ||
+        (status >= 500 && status <= 599);
+  }
+
+  Duration _retryDelay(int failedAttempt, http.Response? response) {
+    final retryAfter = response == null ? null : _retryAfter(response);
+    if (retryAfter != null) {
+      return _capRetryDelay(retryAfter);
+    }
+    final multiplier = 1 << failedAttempt.clamp(0, 10).toInt();
+    final ceilingMs = min(
+      retryMaxDelay.inMilliseconds,
+      retryBaseDelay.inMilliseconds * multiplier,
+    );
+    // Full jitter prevents a collection of devices from retrying in lockstep.
+    final jitter = _jitter().clamp(0.0, 1.0);
+    return Duration(milliseconds: max(1, (ceilingMs * jitter).ceil()));
+  }
+
+  Duration? _retryAfter(http.Response response) {
+    final raw = response.headers['retry-after']?.trim();
+    if (raw == null || raw.isEmpty) {
+      return null;
+    }
+    final seconds = int.tryParse(raw);
+    if (seconds != null && seconds >= 0) {
+      return Duration(seconds: seconds);
+    }
+    final at = DateTime.tryParse(raw)?.toUtc();
+    if (at == null) {
+      return null;
+    }
+    final delay = at.difference(DateTime.now().toUtc());
+    return delay.isNegative ? Duration.zero : delay;
+  }
+
+  Duration _capRetryDelay(Duration delay) {
+    return delay > retryMaxDelay ? retryMaxDelay : delay;
+  }
+
+  static Future<void> _defaultSleep(Duration delay) {
+    return Future<void>.delayed(delay);
   }
 
   static bool _isSleepCycleKind(AcousticDetectionKind kind) {

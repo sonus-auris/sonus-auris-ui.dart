@@ -241,6 +241,78 @@ void main() {
     expect(called, isFalse);
   });
 
+  test(
+    'retries idempotent telemetry with stable event ids and full jitter',
+    () async {
+      var calls = 0;
+      final bodies = <String>[];
+      final delays = <Duration>[];
+      final client = SupabaseRestClient(
+        maxRetryAttempts: 3,
+        retryBaseDelay: const Duration(milliseconds: 10),
+        retryMaxDelay: const Duration(milliseconds: 100),
+        jitter: () => 0.5,
+        sleep: (delay) async => delays.add(delay),
+        httpClient: MockClient((request) async {
+          calls += 1;
+          bodies.add(request.body);
+          return calls == 1
+              ? http.Response('temporarily unavailable', 503)
+              : http.Response('{"success":true,"inserted":1}', 200);
+        }),
+      );
+
+      final error = await client.insertTelemetry(
+        config: config,
+        secrets: secrets,
+        events: [
+          ClientTelemetryEvent(
+            level: 'info',
+            event: 'retry_test',
+            message: 'keep this event stable',
+            occurredAtUtc: DateTime.utc(2026, 7, 18),
+          ),
+        ],
+      );
+
+      expect(error, isNull);
+      expect(calls, 2);
+      expect(delays, [const Duration(milliseconds: 5)]);
+      final first = (jsonDecode(bodies.first) as Map)['entries'] as List;
+      final second = (jsonDecode(bodies.last) as Map)['entries'] as List;
+      expect(
+        (first.single as Map)['client_event_id'],
+        (second.single as Map)['client_event_id'],
+      );
+    },
+  );
+
+  test('caps Retry-After for idempotent settings upserts', () async {
+    var calls = 0;
+    final delays = <Duration>[];
+    final client = SupabaseRestClient(
+      maxRetryAttempts: 2,
+      retryBaseDelay: const Duration(milliseconds: 10),
+      retryMaxDelay: const Duration(seconds: 1),
+      sleep: (delay) async => delays.add(delay),
+      httpClient: MockClient((_) async {
+        calls += 1;
+        return calls == 1
+            ? http.Response('slow down', 429, headers: {'retry-after': '60'})
+            : http.Response('', 201);
+      }),
+    );
+
+    final error = await client.upsertUserSettings(
+      config: config,
+      secrets: secrets,
+    );
+
+    expect(error, isNull);
+    expect(calls, 2);
+    expect(delays, [const Duration(seconds: 1)]);
+  });
+
   test('redacts telemetry secrets before upload', () async {
     late http.Request captured;
     final client = SupabaseRestClient(
