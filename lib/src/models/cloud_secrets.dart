@@ -8,6 +8,7 @@ class CloudSecrets {
     this.supabaseAccessToken = '',
     this.supabaseRefreshToken = '',
     this.supabaseAccessTokenExpiresAt = '',
+    this.supabaseUserId = '',
     this.supabaseEmail = '',
     this.sttApiKey = '',
     this.soundCloudAccessToken = '',
@@ -32,6 +33,14 @@ class CloudSecrets {
 
   /// ISO-8601 UTC expiry of [supabaseAccessToken]. Empty when unknown.
   final String supabaseAccessTokenExpiresAt;
+
+  /// Stable Supabase Auth subject (`auth.users.id`) for the active session.
+  ///
+  /// Device-scoped backend credentials are bound to this identifier, never to
+  /// a mutable email address. It is deliberately persisted next to the refresh
+  /// token in secure storage so a restart cannot accidentally reuse a device
+  /// token for a different account with the same email address.
+  final String supabaseUserId;
 
   /// Email of the signed-in Supabase user, for display only.
   final String supabaseEmail;
@@ -99,6 +108,7 @@ class CloudSecrets {
     String? supabaseAccessToken,
     String? supabaseRefreshToken,
     String? supabaseAccessTokenExpiresAt,
+    String? supabaseUserId,
     String? supabaseEmail,
     String? sttApiKey,
     String? soundCloudAccessToken,
@@ -115,6 +125,7 @@ class CloudSecrets {
       supabaseRefreshToken: supabaseRefreshToken ?? this.supabaseRefreshToken,
       supabaseAccessTokenExpiresAt:
           supabaseAccessTokenExpiresAt ?? this.supabaseAccessTokenExpiresAt,
+      supabaseUserId: supabaseUserId ?? this.supabaseUserId,
       supabaseEmail: supabaseEmail ?? this.supabaseEmail,
       sttApiKey: sttApiKey ?? this.sttApiKey,
       soundCloudAccessToken:

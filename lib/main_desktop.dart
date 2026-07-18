@@ -20,12 +20,15 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart' show FlutterExceptionHandler;
+import 'package:flutter/foundation.dart'
+    show FlutterExceptionHandler, TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import 'src/app/app_controller.dart';
 import 'src/app/app_view_model.dart';
+import 'src/models/consent.dart';
 import 'src/platform/desktop_autostart.dart';
+import 'src/widgets/supabase_auth_form.dart';
 
 const _green = Color(0xFF1FAA6C);
 const _greenBright = Color(0xFF34C585);
@@ -46,7 +49,8 @@ class SonusDesktopApp extends StatefulWidget {
   State<SonusDesktopApp> createState() => _SonusDesktopAppState();
 }
 
-class _SonusDesktopAppState extends State<SonusDesktopApp> {
+class _SonusDesktopAppState extends State<SonusDesktopApp>
+    with WidgetsBindingObserver {
   late final AppController _controller;
   late final Future<void> _ready;
   FlutterExceptionHandler? _previousFlutterOnError;
@@ -55,15 +59,34 @@ class _SonusDesktopAppState extends State<SonusDesktopApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     DesktopAutostart.setup();
     _controller = AppController();
     _installTelemetryErrorHooks(_controller);
-    // On desktop, behave like an always-on recorder: register as a login item
-    // (first run) and start capturing as soon as the app opens.
+    // On desktop, behave like an always-on recorder only after the user has
+    // accepted the current recording disclosure. The controller independently
+    // enforces the same rule for every manual/scheduled start.
     _ready = _controller.init().then((_) async {
-      await DesktopAutostart.enableByDefaultOnce();
-      await _controller.startRecording();
+      if (_controller.hasValidRecordingConsent) {
+        await _startAlwaysOnRecorder();
+      }
     });
+  }
+
+  Future<void> _startAlwaysOnRecorder() async {
+    await DesktopAutostart.enableByDefaultOnce();
+    await _controller.startRecording();
+  }
+
+  Future<void> _acceptDesktopConsent() async {
+    final record = ConsentRecord(
+      consentVersion: kConsentVersion,
+      acceptedAtUtc: DateTime.now().toUtc(),
+      platform: _desktopPlatformName(),
+      grants: {for (final item in ConsentItem.values) item.key: item.required},
+    );
+    await _controller.completeOnboarding(record);
+    await _startAlwaysOnRecorder();
   }
 
   void _installTelemetryErrorHooks(AppController controller) {
@@ -85,10 +108,18 @@ class _SonusDesktopAppState extends State<SonusDesktopApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     FlutterError.onError = _previousFlutterOnError;
     ui.PlatformDispatcher.instance.onError = _previousPlatformOnError;
     unawaited(_controller.dispose());
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_controller.refreshSupabaseSessionForAppResume());
+    }
   }
 
   @override
@@ -111,7 +142,12 @@ class _SonusDesktopAppState extends State<SonusDesktopApp> {
           if (snap.connectionState != ConnectionState.done) {
             return const _Loading();
           }
-          return _DesktopRoot(controller: _controller);
+          return ValueListenableBuilder<bool>(
+            valueListenable: _controller.onboardingComplete,
+            builder: (context, consented, _) => consented
+                ? _DesktopRoot(controller: _controller)
+                : _DesktopConsentGate(onAccept: _acceptDesktopConsent),
+          );
         },
       ),
     );
@@ -180,45 +216,38 @@ class _DesktopRootState extends State<_DesktopRoot> {
 
   Future<void> _showSignInDialog() async {
     final email = TextEditingController();
-    final pin = TextEditingController();
-    final ok = await showDialog<bool>(
+    final password = TextEditingController();
+    await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Sign in'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: email,
-              decoration: const InputDecoration(labelText: 'Email'),
-              autofocus: true,
+        content: SizedBox(
+          width: 440,
+          child: SupabaseAuthForm(
+            emailController: email,
+            passwordController: password,
+            onSignIn: (email, password) => widget.controller.signInWithSupabase(
+              email: email,
+              password: password,
             ),
-            TextField(
-              controller: pin,
-              decoration: const InputDecoration(labelText: '6-digit PIN'),
-              obscureText: true,
-              keyboardType: TextInputType.number,
+            onSignUp: (email, password) => widget.controller.signUpWithSupabase(
+              email: email,
+              password: password,
             ),
-          ],
+            onPasswordReset: (email) =>
+                widget.controller.sendSupabasePasswordReset(email: email),
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Sign in'),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
           ),
         ],
       ),
     );
-    if (ok == true) {
-      await widget.controller.signInWithSupabase(
-        email: email.text.trim(),
-        password: pin.text.trim(),
-      );
-    }
+    email.dispose();
+    password.dispose();
   }
 }
 
@@ -509,15 +538,130 @@ class _AllDevicesPanel extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               vm.isSignedIn
-                  ? 'As the master viewer, this app will browse and play audio '
-                        'from every device on your account — decrypted on-device '
-                        'with your account key, unlocked by your PIN. Coming next.'
-                  : 'Sign in to use this desktop as your account’s master viewer '
-                        'and browse audio from all your devices.',
+                  ? 'This Flutter desktop build currently records this device. '
+                        'Account-wide browsing and decrypting are intentionally '
+                        'not presented as available until the dedicated master '
+                        'viewer has its own reviewed key-unlock and streaming path.'
+                  : 'Sign in to manage this recorder. Account-wide audio browsing '
+                        'is not available in this Flutter desktop build yet.',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white60, height: 1.5),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+String _desktopPlatformName() {
+  switch (defaultTargetPlatform) {
+    case TargetPlatform.macOS:
+      return 'macos';
+    case TargetPlatform.windows:
+      return 'windows';
+    case TargetPlatform.linux:
+      return 'linux';
+    default:
+      return 'desktop';
+  }
+}
+
+class _DesktopConsentGate extends StatefulWidget {
+  const _DesktopConsentGate({required this.onAccept});
+
+  final Future<void> Function() onAccept;
+
+  @override
+  State<_DesktopConsentGate> createState() => _DesktopConsentGateState();
+}
+
+class _DesktopConsentGateState extends State<_DesktopConsentGate> {
+  bool _accepted = false;
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _submit() async {
+    if (!_accepted || _busy) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.onAccept();
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 620),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Before Sonus Auris records',
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'This desktop recorder keeps a rolling local audio buffer. '
+                    'It can continue while the app is open and will request '
+                    'microphone access from your operating system. Audio is '
+                    'encrypted before any optional cloud backup.',
+                    style: TextStyle(height: 1.45),
+                  ),
+                  const SizedBox(height: 16),
+                  CheckboxListTile(
+                    value: _accepted,
+                    onChanged: _busy
+                        ? null
+                        : (value) => setState(() => _accepted = value ?? false),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'I consent to microphone audio recording',
+                    ),
+                    subtitle: const Text(
+                      'Required. You can stop recording or revoke microphone access at any time.',
+                    ),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      onPressed: _accepted && !_busy ? _submit : null,
+                      child: Text(
+                        _busy ? 'Preparing recorder…' : 'Accept and continue',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );

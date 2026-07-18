@@ -1,0 +1,9 @@
+{
+  "name": "Sonus Auris",
+  "short_name": "Sonus Auris",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#167d56",
+  "description": "Sonus Auris account and diagnostics surface."
+}

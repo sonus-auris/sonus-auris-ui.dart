@@ -99,6 +99,30 @@ void main() {
     expect(jsonDecode(captured.body)['email'], 'user@example.com');
   });
 
+  test(
+    'password reset includes a validated native or web return URL',
+    () async {
+      late http.Request captured;
+      final client = SupabaseAuthClient(
+        httpClient: MockClient((request) async {
+          captured = request;
+          return http.Response('{}', 200);
+        }),
+      );
+
+      await client.sendPasswordResetEmail(
+        config: config,
+        email: 'user@example.com',
+        redirectTo: 'https://app.sonusauris.example/auth/recovery',
+      );
+
+      expect(
+        jsonDecode(captured.body)['redirect_to'],
+        'https://app.sonusauris.example/auth/recovery',
+      );
+    },
+  );
+
   test('signUp returns null when email confirmation is required', () async {
     final client = SupabaseAuthClient(
       httpClient: MockClient((request) async {

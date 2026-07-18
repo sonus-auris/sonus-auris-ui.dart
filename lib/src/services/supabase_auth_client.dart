@@ -283,11 +283,14 @@ class SupabaseAuthClient {
   Future<void> sendPasswordResetEmail({
     required AppConfig config,
     required String email,
+    String redirectTo = '',
   }) async {
     _validateEmail(email);
     final uri = _authUri(config, 'recover');
+    final normalizedRedirect = _validateRedirectTo(redirectTo);
     await _post(config, uri, {
       'email': email.trim(),
+      if (normalizedRedirect.isNotEmpty) 'redirect_to': normalizedRedirect,
     }, 'Supabase password reset failed.');
   }
 
@@ -477,6 +480,25 @@ class SupabaseAuthClient {
         'Use at least 6 characters when creating an account.',
       );
     }
+  }
+
+  String _validateRedirectTo(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      return '';
+    }
+    final uri = Uri.tryParse(normalized);
+    if (uri == null || uri.host.isEmpty || uri.userInfo.isNotEmpty) {
+      throw const FormatException('Password-reset redirect URL is invalid.');
+    }
+    if (uri.scheme != 'https' &&
+        uri.host != 'localhost' &&
+        uri.host != '127.0.0.1') {
+      throw const FormatException(
+        'Password-reset redirect URL must use HTTPS except localhost development.',
+      );
+    }
+    return uri.toString();
   }
 
   void close() {

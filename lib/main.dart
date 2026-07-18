@@ -71,7 +71,8 @@ class AudioDashcamRoot extends StatefulWidget {
   State<AudioDashcamRoot> createState() => _AudioDashcamRootState();
 }
 
-class _AudioDashcamRootState extends State<AudioDashcamRoot> {
+class _AudioDashcamRootState extends State<AudioDashcamRoot>
+    with WidgetsBindingObserver {
   Timer? _controllerBootstrapTimer;
   AppController? _controller;
   Future<void>? _initFuture;
@@ -82,6 +83,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Build and submit the branded loading frame before constructing plugin-
     // backed services. A zero-delay event from a post-frame callback guarantees
     // this frame can leave the Dart UI isolate first, even when Android is still
@@ -141,6 +143,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controllerBootstrapTimer?.cancel();
     if (_previousFlutterOnError != null) {
       FlutterError.onError = _previousFlutterOnError;
@@ -153,6 +156,16 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
       unawaited(controller.dispose());
     }
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final controller = _controller;
+      if (controller != null) {
+        unawaited(controller.refreshSupabaseSessionForAppResume());
+      }
+    }
   }
 
   @override
