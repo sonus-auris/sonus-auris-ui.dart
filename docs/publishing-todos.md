@@ -13,6 +13,9 @@ to sign in again before continuing.
   [Google Play Console signup](https://play.google.com/console/signup)
 - [ ] Review and retain access to the Supabase server-side API credentials:
   [Supabase legacy API keys](https://supabase.com/dashboard/project/mckxblyvfzyoxpwvrnjm/settings/api-keys/legacy)
+- [ ] Set up a Cloudflare R2 bucket for Sonus Auris, configure its S3-compatible
+  endpoint and scoped credentials in the backend secret store, and define the
+  production retention/lifecycle policy.
 
 After the accounts are active, create the store records with the existing
 identifiers (`com.ores.audioDashcam` for iOS and
