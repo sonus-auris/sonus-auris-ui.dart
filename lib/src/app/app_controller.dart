@@ -6,9 +6,12 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart'
     show FlutterErrorDetails, ValueListenable, ValueNotifier;
 import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
+import 'package:in_app_purchase/in_app_purchase.dart' show ProductDetails;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:rxdart/rxdart.dart';
 
+
+import '../models/account_status.dart';
 import '../models/acoustic_detection.dart';
 import '../models/audio_trigger_event.dart';
 import '../models/app_config.dart';
@@ -23,9 +26,13 @@ import '../models/cloud_connection.dart';
 import '../models/recording_schedule.dart';
 import '../models/recording_segment.dart';
 import '../models/sleep_cycle_profile.dart';
+import '../models/supabase_mfa.dart';
 import '../models/supabase_session.dart';
 import '../models/transfer_gate_status.dart';
 import '../services/background_capture_service.dart';
+import '../services/billing_service.dart';
+import '../services/device_registry.dart';
+import '../services/entitlements_service.dart';
 import '../services/crypto/flutter_secure_key_store.dart';
 import '../services/crypto/key_manager.dart';
 import '../services/crypto/segment_encryptor.dart';
@@ -96,6 +103,9 @@ class AppController {
     LocationService? locationService,
     PowerNetworkGate? powerNetworkGate,
     SupabaseRestClient? supabaseRestClient,
+    DeviceRegistry? deviceRegistry,
+    EntitlementsService? entitlementsService,
+    BillingService? billingService,
     ShazamClient? shazamClient,
     MemoryPublisher? memoryPublisher,
     DayOfLifeArchiver? dayOfLifeArchiver,
@@ -141,6 +151,9 @@ class AppController {
       locationService: locationService ?? LocationService(),
       powerNetworkGate: powerNetworkGate ?? PowerNetworkGate(),
       supabaseRestClient: supabaseRestClient ?? SupabaseRestClient(),
+      deviceRegistry: deviceRegistry ?? DeviceRegistry(),
+      entitlements: entitlementsService ?? EntitlementsService(),
+      billing: billingService ?? BillingService(),
       shazamClient: shazamClient ?? ShazamClient(),
       memoryPublisher: memoryPublisher ?? MemoryPublisher(),
       dayOfLifeArchiver: dayOfLifeArchiver ?? DayOfLifeArchiver(),
@@ -183,6 +196,9 @@ class AppController {
     required this._locationService,
     required this._powerNetworkGate,
     required this._supabaseRestClient,
+    required this._deviceRegistry,
+    required this._entitlements,
+    required this._billing,
     required this._shazamClient,
     required this._memoryPublisher,
     required this._dayOfLifeArchiver,
@@ -198,6 +214,19 @@ class AppController {
     _scheduler.onTransition = _onScheduleTransition;
     _contextTriggers.onTrigger = _onContextTrigger;
     _localNotifications.onConsentTap = acceptContextConsent;
+    // Store purchases resolve asynchronously; give billing fresh config/secrets
+    // and a way to refresh entitlements after the backend verifies a receipt.
+    _billing
+      ..configProvider = (() => _config.valueOrNull ?? AppConfig(deviceId: ''))
+      ..secretsProvider = (() => _secrets.valueOrNull ?? const CloudSecrets())
+      ..onLog = ((message, {bool isError = false}) {
+        _diagnostics.add(message);
+        if (isError) {
+          _message.add(message);
+        }
+      })
+      ..onEntitlementsShouldRefresh = _refreshEntitlementsAndDeviceGate
+      ..start();
     // Pre-combine the upload flag and transfer-gate status into one record so
     // both ride a single slot of the (max-arity-9) combineLatest below.
     final uploadStatus =
@@ -314,6 +343,19 @@ class AppController {
   final PowerNetworkGate _powerNetworkGate;
   final SupabaseRestClient _supabaseRestClient;
 
+  /// Owner-scoped registry of this account's installs in the Supabase `devices`
+  /// table — the source the web/desktop console reads to list and control
+  /// devices. Distinct from the backend device-token registration above.
+  final DeviceRegistry _deviceRegistry;
+
+  /// Reads the account's plan/device-limit from the Supabase `entitlements`
+  /// row (read-only via RLS; billing processors write it server-side).
+  final EntitlementsService _entitlements;
+
+  /// Store-compliant in-app purchase for Sonus Auris Plus (Android/Play,
+  /// iOS/App Store). No-ops off those platforms; never self-grants.
+  final BillingService _billing;
+
   /// Free-disk-space probe backing the "space permitting" retention floor.
   /// Field (not constructor-injected) so tests can swap in a fake.
   DeviceStorageInfo deviceStorageInfo = DeviceStorageInfo();
@@ -383,6 +425,7 @@ class AppController {
   DateTime? _lastConsentPromptAt;
   Future<void>? _deviceRegistrationInFlight;
   Future<void>? _supabaseRefreshInFlight;
+  Future<void>? _supabaseDeviceSyncInFlight;
   Future<void>? _icloudSyncInFlight;
   StreamSubscription<void>? _transferConditionsSubscription;
   String? _lastReportedTransferSignature;
@@ -448,6 +491,16 @@ class AppController {
   final SpectralSidecar _spectralSidecar = SpectralSidecar();
 
   Stream<AppViewModel> get viewModels => _viewModels;
+
+  /// Account-level cloud state (pending MFA challenge, this device's revoked
+  /// state, plan / device-limit gate). Kept out of [AppViewModel] because its
+  /// combineLatest is already at max arity; UI listens to this separately.
+  final BehaviorSubject<AccountStatus> _accountStatus =
+      BehaviorSubject.seeded(const AccountStatus());
+
+  Stream<AccountStatus> get accountStatus => _accountStatus;
+
+  AccountStatus get accountStatusValue => _accountStatus.value;
 
   Future<void> init() async {
     _diagnostics.add('App controller init started.');
@@ -1143,6 +1196,350 @@ class AppController {
     _message.add('Signed out.');
   }
 
+  // --- Passwordless sign-in (email magic link / one-time code) --------------
+
+  /// Emails a one-time sign-in code (and magic link). Same call for sign-in and
+  /// sign-up — an unknown address is created when its first code is verified,
+  /// so there is no separate sign-up path and no password anywhere.
+  Future<bool> requestSupabaseEmailOtp({required String email}) async {
+    if (!_config.hasValue) {
+      return false;
+    }
+    if (!_config.value.hasSupabaseAuthConfig) {
+      _message.add('Set the Supabase URL and anon key before signing in.');
+      return false;
+    }
+    try {
+      await _authClient.sendEmailOtp(config: _config.value, email: email);
+      _message.add('We emailed you a sign-in code.');
+      return true;
+    } catch (error) {
+      _message.add(_describeError(error));
+      return false;
+    }
+  }
+
+  /// Redeems the emailed code for a session. On success this signs the user in
+  /// (creating the account on first use) and runs the post-sign-in sync. If the
+  /// account has verified MFA factors, [AccountStatus.mfaRequired] is set and
+  /// the caller must complete a factor challenge before treating them as in.
+  Future<bool> confirmSupabaseEmailOtp({
+    required String email,
+    required String code,
+  }) async {
+    if (!_config.hasValue) {
+      return false;
+    }
+    if (!_config.value.hasSupabaseAuthConfig) {
+      _message.add('Set the Supabase URL and anon key before signing in.');
+      return false;
+    }
+    try {
+      final session = await _authClient.verifyEmailOtp(
+        config: _config.value,
+        email: email,
+        code: code,
+      );
+      await _applySupabaseSession(session);
+      final mfaPending = await _refreshMfaChallengeState();
+      if (mfaPending) {
+        _message.add('Enter your two-factor code to finish signing in.');
+        return true;
+      }
+      await _onSignedIn(successMessage: 'Signed in.');
+      return true;
+    } catch (error) {
+      _message.add(_describeError(error));
+      return false;
+    }
+  }
+
+  // --- Multi-factor auth ----------------------------------------------------
+
+  /// Lists the signed-in user's MFA factors (for the challenge step and the
+  /// Account management screen), refreshing [accountStatus].
+  Future<List<MfaFactor>> refreshMfaFactors() async {
+    final factors = await _listMfaFactorsOrEmpty();
+    _accountStatus.add(_accountStatus.value.copyWith(mfaFactors: factors));
+    return factors;
+  }
+
+  /// Begins enrolling an authenticator app; the returned secret/URI must be
+  /// confirmed with [verifyMfaEnrollment].
+  Future<TotpEnrollment?> enrollTotpFactor({String? friendlyName}) async {
+    final token = await _freshAccessToken();
+    if (token == null) {
+      return null;
+    }
+    try {
+      return await _authClient.enrollTotp(
+        config: _config.value,
+        accessToken: token,
+        friendlyName: friendlyName,
+      );
+    } catch (error) {
+      _message.add(_describeError(error));
+      return null;
+    }
+  }
+
+  /// Begins enrolling an SMS factor; a texted code is sent by [challengeMfaFactor].
+  Future<PhoneEnrollment?> enrollPhoneFactor({
+    required String phone,
+    String? friendlyName,
+  }) async {
+    final token = await _freshAccessToken();
+    if (token == null) {
+      return null;
+    }
+    try {
+      return await _authClient.enrollPhone(
+        config: _config.value,
+        accessToken: token,
+        phone: phone,
+        friendlyName: friendlyName,
+      );
+    } catch (error) {
+      _message.add(_describeError(error));
+      return null;
+    }
+  }
+
+  /// Starts a challenge for a factor (sends the SMS for phone factors). Returns
+  /// the challenge id to pass to [verifyMfaFactor].
+  Future<String?> challengeMfaFactor(String factorId) async {
+    final token = await _freshAccessToken();
+    if (token == null) {
+      return null;
+    }
+    try {
+      return await _authClient.challengeFactor(
+        config: _config.value,
+        accessToken: token,
+        factorId: factorId,
+      );
+    } catch (error) {
+      _message.add(_describeError(error));
+      return null;
+    }
+  }
+
+  /// Verifies a factor code, upgrading the session to aal2. Used both to finish
+  /// enrollment and to satisfy the sign-in MFA challenge; on success the
+  /// post-sign-in sync runs and the MFA gate clears.
+  Future<bool> verifyMfaFactor({
+    required String factorId,
+    required String challengeId,
+    required String code,
+    bool completesSignIn = false,
+  }) async {
+    final token = await _freshAccessToken();
+    if (token == null) {
+      return false;
+    }
+    try {
+      final session = await _authClient.verifyFactor(
+        config: _config.value,
+        accessToken: token,
+        factorId: factorId,
+        challengeId: challengeId,
+        code: code,
+      );
+      await _applySupabaseSession(session);
+      final factors = await _listMfaFactorsOrEmpty();
+      _accountStatus.add(
+        _accountStatus.value.copyWith(mfaRequired: false, mfaFactors: factors),
+      );
+      if (completesSignIn) {
+        await _onSignedIn(successMessage: 'Signed in.');
+      } else {
+        _message.add('Two-factor authentication updated.');
+      }
+      return true;
+    } catch (error) {
+      _message.add(_describeError(error));
+      return false;
+    }
+  }
+
+  /// Removes an enrolled factor after user confirmation.
+  Future<bool> unenrollMfaFactor(String factorId) async {
+    final token = await _freshAccessToken();
+    if (token == null) {
+      return false;
+    }
+    try {
+      await _authClient.unenrollFactor(
+        config: _config.value,
+        accessToken: token,
+        factorId: factorId,
+      );
+      await refreshMfaFactors();
+      _message.add('Removed a two-factor method.');
+      return true;
+    } catch (error) {
+      _message.add(_describeError(error));
+      return false;
+    }
+  }
+
+  // --- Store billing (Sonus Auris Plus) -------------------------------------
+
+  /// Store metadata (localized price) for the Plus subscription, or empty off
+  /// Android/iOS.
+  Future<List<ProductDetails>> plusProducts() => _billing.products();
+
+  /// Launches the store purchase sheet for Plus. The outcome arrives async on
+  /// the purchase stream, which verifies server-side then refreshes entitlements.
+  Future<bool> purchasePlus() => _billing.buyPlus();
+
+  /// Replays completed purchases ("Restore purchases").
+  Future<void> restorePlusPurchases() => _billing.restorePurchases();
+
+  // --- Shared post-sign-in + MFA/entitlements helpers -----------------------
+
+  Future<void> _onSignedIn({required String successMessage}) async {
+    await _syncPortableSettingsFromSupabase();
+    await _ensureDeviceRegistered();
+    await _syncSupabaseDeviceAndEntitlements();
+    await _maybeSyncConsent();
+    _message.add(successMessage);
+    requestUploadDrain();
+  }
+
+  Future<List<MfaFactor>> _listMfaFactorsOrEmpty() async {
+    final token = await _freshAccessToken();
+    if (token == null) {
+      return const [];
+    }
+    try {
+      return await _authClient.listFactors(
+        config: _config.value,
+        accessToken: token,
+      );
+    } catch (error) {
+      _diagnostics.add('Reading MFA factors failed: ${_describeError(error)}');
+      return const [];
+    }
+  }
+
+  /// Sets [AccountStatus.mfaRequired] when the session is still aal1 while the
+  /// account has verified factors. Returns whether a challenge is pending.
+  Future<bool> _refreshMfaChallengeState() async {
+    final factors = await _listMfaFactorsOrEmpty();
+    final hasVerified = factors.any((factor) => factor.isVerified);
+    final secrets = _secrets.valueOrNull;
+    final aal = secrets == null
+        ? null
+        : decodeSupabaseAal(secrets.supabaseAccessToken);
+    final pending = hasVerified && aal != 'aal2';
+    _accountStatus.add(
+      _accountStatus.value.copyWith(
+        mfaRequired: pending,
+        mfaFactors: factors,
+      ),
+    );
+    return pending;
+  }
+
+  Future<String?> _freshAccessToken() async {
+    if (!_config.hasValue) {
+      return null;
+    }
+    await _ensureFreshSupabaseToken();
+    final secrets = _secrets.valueOrNull;
+    if (secrets == null || !secrets.hasSupabaseToken) {
+      _message.add('Sign in first.');
+      return null;
+    }
+    return secrets.supabaseAccessToken.trim();
+  }
+
+  /// Registers this install in the Supabase `devices` table and refreshes the
+  /// plan / device-limit gate. De-duplicated; safe to call on every sign-in and
+  /// heartbeat. A revoked own-device row halts cloud sync via [AccountStatus].
+  Future<void> _syncSupabaseDeviceAndEntitlements() async {
+    final inFlight = _supabaseDeviceSyncInFlight;
+    if (inFlight != null) {
+      return inFlight;
+    }
+    final future = _runSupabaseDeviceAndEntitlementsSync();
+    _supabaseDeviceSyncInFlight = future;
+    try {
+      await future;
+    } finally {
+      _supabaseDeviceSyncInFlight = null;
+    }
+  }
+
+  Future<void> _runSupabaseDeviceAndEntitlementsSync() async {
+    if (!_config.hasValue) {
+      return;
+    }
+    await _ensureFreshSupabaseToken();
+    final config = _config.value;
+    final secrets = _secrets.valueOrNull ?? const CloudSecrets();
+    if (!_deviceRegistry.canUse(config, secrets)) {
+      return;
+    }
+    final registration = await _deviceRegistry.registerOrHeartbeat(
+      config: config,
+      secrets: secrets,
+      platform: _platformName(),
+    );
+    if (registration.error != null) {
+      _diagnostics.add('Device registry sync: ${registration.error}');
+    }
+    final ownRevoked =
+        (registration.device?.revokedAt ?? '').trim().isNotEmpty;
+    await _refreshEntitlementsAndDeviceGate(deviceRevoked: ownRevoked);
+  }
+
+  /// Fetches entitlements and recomputes the device-limit gate for this install,
+  /// updating [accountStatus]. Also called after a verified purchase.
+  Future<void> _refreshEntitlementsAndDeviceGate({bool? deviceRevoked}) async {
+    if (!_config.hasValue) {
+      return;
+    }
+    final config = _config.value;
+    final secrets = _secrets.valueOrNull ?? const CloudSecrets();
+    if (!_entitlements.canUse(config, secrets)) {
+      return;
+    }
+    final result = await _entitlements.fetch(
+      config: config,
+      secrets: secrets,
+      force: true,
+    );
+    if (result.error != null) {
+      _diagnostics.add('Entitlements sync: ${result.error}');
+    }
+    final snapshot = result.entitlements;
+    final listing = await _deviceRegistry.fetchDevices(
+      config: config,
+      secrets: secrets,
+    );
+    if (listing.error != null) {
+      _diagnostics.add('Device listing: ${listing.error}');
+    }
+    final activeRecorders = activeRecorderDevices(listing.devices);
+    final overLimit = selectDeviceIdsOverLimit(
+      listing.devices,
+      snapshot.deviceLimit,
+    );
+    final current = _accountStatus.value;
+    _accountStatus.add(
+      current.copyWith(
+        deviceRevoked: deviceRevoked ?? current.deviceRevoked,
+        activeRecorderDeviceCount: activeRecorders.length,
+        exceededDeviceLimit: overLimit.contains(config.deviceId),
+        plan: snapshot.plan,
+        deviceLimit: snapshot.deviceLimit,
+        features: snapshot.features,
+      ),
+    );
+  }
+
   Future<void> _authenticateSupabase(
     Future<SupabaseSession?> Function() run, {
     required String successMessage,
@@ -1164,6 +1561,7 @@ class AppController {
       await _applySupabaseSession(session);
       await _syncPortableSettingsFromSupabase();
       await _ensureDeviceRegistered();
+      await _syncSupabaseDeviceAndEntitlements();
       // Flush any consent captured before sign-in.
       await _maybeSyncConsent();
       _message.add(successMessage);
@@ -1372,6 +1770,7 @@ class AppController {
   Future<void> _ensureSupabaseReady() async {
     await _ensureFreshSupabaseToken();
     await _ensureDeviceRegistered();
+    await _syncSupabaseDeviceAndEntitlements();
   }
 
   Future<String?> _syncPortableSettingsToSupabase(AppConfig config) async {
@@ -2319,6 +2718,9 @@ class AppController {
     _backendClient.close();
     _authClient.close();
     _supabaseRestClient.close();
+    _deviceRegistry.close();
+    _entitlements.close();
+    unawaited(_billing.dispose());
     _onboardingComplete.dispose();
     _speechToTextClient.close();
     _memoryPublisher.close();
@@ -2344,6 +2746,7 @@ class AppController {
       _message.close(),
       _detectionsList.close(),
       _consentRequest.close(),
+      _accountStatus.close(),
     ]);
 
     // 4. Diagnostics last: the teardowns above may still write to it.

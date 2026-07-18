@@ -55,6 +55,14 @@ dependencies:
   flutter_web_auth_2: ^4.1.0
   # Public privacy, account-deletion, and support links required by both stores.
   url_launcher: ^6.3.2
+  # Store-compliant subscriptions (App Store / Play Billing). Apple and Google
+  # REQUIRE in-app purchase for digital goods sold inside the mobile app; no
+  # Stripe or external purchase links here (web/desktop checkout lives in the
+  # separate console app).
+  in_app_purchase: ^3.3.0
+  # Renders the otpauth:// provisioning QR for authenticator (TOTP) enrollment.
+  # Pure-Dart CustomPaint rendering; safe on mobile and web.
+  qr_flutter: ^4.1.0
   # Desktop launch-at-login (macOS/Windows/Linux) so the desktop build runs at
   # startup. No-op on mobile.
   launch_at_startup: ^0.5.1
