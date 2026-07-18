@@ -208,13 +208,10 @@ class AppController {
     required this._locationService,
     required this._powerNetworkGate,
     required this._supabaseRestClient,
-<<<<<<< HEAD
     required this._deviceRegistry,
     required this._entitlements,
     required this._billing,
-=======
     required this._telemetryRealtimeClient,
->>>>>>> origin/main
     required this._shazamClient,
     required this._memoryPublisher,
     required this._dayOfLifeArchiver,
@@ -448,11 +445,8 @@ class AppController {
   DateTime? _lastConsentPromptAt;
   Future<void>? _deviceRegistrationInFlight;
   Future<void>? _supabaseRefreshInFlight;
-<<<<<<< HEAD
   Future<void>? _supabaseDeviceSyncInFlight;
-=======
   Timer? _supabaseRefreshTimer;
->>>>>>> origin/main
   Future<void>? _icloudSyncInFlight;
   StreamSubscription<void>? _transferConditionsSubscription;
   String? _lastReportedTransferSignature;
