@@ -340,12 +340,19 @@ class ClientTelemetry {
     required this.id,
     required this.userId,
     required this.deviceId,
+    this.clientEventId,
+    this.sessionId,
     required this.level,
     required this.event,
     required this.message,
     this.stack,
     this.platform,
     this.appVersion,
+    this.source,
+    this.transport,
+    this.traceId,
+    this.spanId,
+    this.parentSpanId,
     required this.details,
     required this.occurredAt,
     required this.createdAt,
@@ -356,6 +363,10 @@ class ClientTelemetry {
   final String userId;
   /// Opaque per-install device id.
   final String deviceId;
+  /// Client-generated UUID used to make offline retry delivery idempotent.
+  final String? clientEventId;
+  /// Opaque runtime session id shared by logs, metrics, and traces.
+  final String? sessionId;
   /// Severity level normalized by the client.
   final String level;
   /// Stable event name, e.g. diagnostic, flutter_error, platform_dispatcher_error.
@@ -368,6 +379,16 @@ class ClientTelemetry {
   final String? platform;
   /// Client app version when available.
   final String? appVersion;
+  /// Client surface that emitted the row, e.g. flutter, web, wasm, or typescript.
+  final String? source;
+  /// Delivery path requested by the client, e.g. rest_outbox or realtime_broadcast.
+  final String? transport;
+  /// Correlation id for an end-to-end client operation.
+  final String? traceId;
+  /// Identifier for the emitting operation within trace_id.
+  final String? spanId;
+  /// Optional parent span identifier for nested work.
+  final String? parentSpanId;
   /// Redacted JSON details for filtering/debugging.
   final Map<String, Object?> details;
   /// Client UTC timestamp for when the event occurred.
@@ -380,12 +401,19 @@ class ClientTelemetry {
       id: _reqString(json, "id"),
       userId: _reqString(json, "user_id"),
       deviceId: _reqString(json, "device_id"),
+      clientEventId: _optString(json, "client_event_id"),
+      sessionId: _optString(json, "session_id"),
       level: _reqString(json, "level"),
       event: _reqString(json, "event"),
       message: _reqString(json, "message"),
       stack: _optString(json, "stack"),
       platform: _optString(json, "platform"),
       appVersion: _optString(json, "app_version"),
+      source: _optString(json, "source"),
+      transport: _optString(json, "transport"),
+      traceId: _optString(json, "trace_id"),
+      spanId: _optString(json, "span_id"),
+      parentSpanId: _optString(json, "parent_span_id"),
       details: _reqObject(json, "details"),
       occurredAt: _reqString(json, "occurred_at"),
       createdAt: _reqString(json, "created_at"),
@@ -397,12 +425,19 @@ class ClientTelemetry {
       "id": id,
       "user_id": userId,
       "device_id": deviceId,
+      "client_event_id": clientEventId,
+      "session_id": sessionId,
       "level": level,
       "event": event,
       "message": message,
       "stack": stack,
       "platform": platform,
       "app_version": appVersion,
+      "source": source,
+      "transport": transport,
+      "trace_id": traceId,
+      "span_id": spanId,
+      "parent_span_id": parentSpanId,
       "details": details,
       "occurred_at": occurredAt,
       "created_at": createdAt,
@@ -414,12 +449,19 @@ class ClientTelemetry {
   Map<String, Object?> toInsertJson() {
     return {
       "device_id": deviceId,
+      "client_event_id": clientEventId,
+      "session_id": sessionId,
       "level": level,
       "event": event,
       "message": message,
       "stack": stack,
       "platform": platform,
       "app_version": appVersion,
+      "source": source,
+      "transport": transport,
+      "trace_id": traceId,
+      "span_id": spanId,
+      "parent_span_id": parentSpanId,
       "details": details,
       "occurred_at": occurredAt,
     };
