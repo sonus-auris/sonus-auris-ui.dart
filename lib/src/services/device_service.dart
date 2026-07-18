@@ -29,7 +29,7 @@ List<interfaces.DeviceRecord> activeRecorderDevices(
 /// after upgrading). Pure and deterministic (matches the mobile soft-gate).
 ///
 /// Ordering: `last_seen_at` desc, then `created_at` desc, then `device_id`.
-Set<String> lockedDeviceIds(
+Set<String> overLimitDeviceIds(
   List<interfaces.DeviceRecord> devices,
   int limit,
 ) {

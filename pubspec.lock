@@ -469,6 +469,13 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  sonus_auris_interfaces:
+    dependency: "direct main"
+    description:
+      path: "packages/sonus_auris_interfaces"
+      relative: true
+    source: path
+    version: "20260717.0.0"
   source_span:
     dependency: transitive
     description:
