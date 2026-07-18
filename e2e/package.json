@@ -1,0 +1,21 @@
+{
+  "name": "sonus-auris-console-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end browser smokes for the Sonus Auris console web build, driven by both Puppeteer and Playwright under node:test.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "pretest": "node -e \"require('fs').existsSync('../build/web/index.html')||(console.error('Run: flutter build web --release (from the app root) before e2e'),process.exit(1))\"",
+    "test:puppeteer": "node --test puppeteer.smoke.test.mjs",
+    "test:playwright": "node --test playwright.smoke.test.mjs",
+    "test": "node --test --test-reporter=spec \"*.smoke.test.mjs\"",
+    "browsers": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0",
+    "puppeteer": "^25.0.0"
+  }
+}

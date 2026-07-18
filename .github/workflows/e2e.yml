@@ -1,0 +1,47 @@
+name: e2e
+
+# Browser end-to-end smokes: the SAME node:test assertions run under both
+# Puppeteer and Playwright against the real web build. Mirrors the browser
+# runners in ~/codes/ores/k8s-cluster (remote/deployments/browser-test-server),
+# which back every driver with one bundled Chromium.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - name: Build the web bundle the smokes serve
+        run: flutter build web --release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install e2e deps
+        working-directory: e2e
+        run: npm install
+
+      - name: Install Chromium (shared by both drivers)
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Puppeteer + Playwright smokes
+        working-directory: e2e
+        run: npm test
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots
+          path: e2e/artifacts/*.png
+          retention-days: 7

@@ -1,0 +1,70 @@
+# Runs the console's Puppeteer + Playwright smokes on the cluster's browser
+# runners, against a DEPLOYED console URL (no per-job browser download — the
+# Playwright Noble image ships Chromium, shared by both drivers, exactly like
+# remote/deployments/browser-test-server).
+#
+# Apply with the console URL wired in, e.g.:
+#   kubectl create configmap sonus-console-e2e --from-literal=CONSOLE_BASE_URL=https://console.sonusauris.app
+#   kubectl apply -f e2e/k8s-job.yaml
+#
+# Or run it on a schedule from the k8s-cluster gitops repo alongside the other
+# UI smokes.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sonus-console-e2e
+  labels:
+    app.kubernetes.io/name: sonus-auris-console
+    app.kubernetes.io/component: e2e
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sonus-auris-console
+        app.kubernetes.io/component: e2e
+    spec:
+      restartPolicy: Never
+      # Same base image the cluster's browser-test-server uses: Chromium is
+      # preinstalled at /ms-playwright and backs both Puppeteer and Playwright.
+      containers:
+        - name: smokes
+          image: mcr.microsoft.com/playwright:v1.56.0-noble
+          workingDir: /work/e2e
+          env:
+            - name: PLAYWRIGHT_BROWSERS_PATH
+              value: /ms-playwright
+            - name: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
+              value: "1"
+            - name: CONSOLE_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: sonus-console-e2e
+                  key: CONSOLE_BASE_URL
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              # The repo is expected to be mounted (or cloned by an init step)
+              # at /work. CONSOLE_BASE_URL makes the suites hit the deployed
+              # console instead of a local build/web.
+              cd /work/e2e
+              npm install --no-audit --no-fund
+              node --test "*.smoke.test.mjs"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: repo
+              mountPath: /work
+      volumes:
+        # Supply the checkout however the cluster's other jobs do (gitRepo
+        # sidecar, PVC, or an initContainer git clone). Left as emptyDir so the
+        # manifest is self-contained; wire the actual source in gitops.
+        - name: repo
+          emptyDir: {}
