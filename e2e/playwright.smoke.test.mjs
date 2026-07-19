@@ -24,6 +24,7 @@ let context;
 let page;
 const consoleErrors = [];
 const pageErrors = [];
+const ignoreHttpsErrors = process.env.CONSOLE_IGNORE_HTTPS_ERRORS === '1';
 
 before(async () => {
   server = await resolveTarget(WEB_DIR);
@@ -31,7 +32,7 @@ before(async () => {
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   });
-  context = await browser.newContext();
+  context = await browser.newContext({ ignoreHTTPSErrors: ignoreHttpsErrors });
   page = await context.newPage();
   page.on('console', (msg) => {
     if (msg.type() === 'error' && isFatalConsole(msg.text())) {

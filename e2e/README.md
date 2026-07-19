@@ -54,5 +54,13 @@ CONSOLE_BASE_URL=https://console.sonusauris.app \
   PLAYWRIGHT_CHROMIUM=1 node --test playwright.smoke.test.mjs
 ```
 
+For a local port-forward or an ephemeral environment with a deliberately
+untrusted certificate, opt in explicitly instead of weakening the default:
+
+```sh
+CONSOLE_BASE_URL=https://127.0.0.1:18443/sonus-console \
+  CONSOLE_IGNORE_HTTPS_ERRORS=1 npm test
+```
+
 The suites default to serving local `build/web`; `CONSOLE_BASE_URL` is already
 wired through `lib/static-server.mjs` for post-deployment cluster checks.

@@ -26,9 +26,11 @@ let browser;
 let page;
 const consoleErrors = [];
 const pageErrors = [];
+const ignoreHttpsErrors = process.env.CONSOLE_IGNORE_HTTPS_ERRORS === '1';
 
 async function launch() {
   const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
+  if (ignoreHttpsErrors) args.push('--ignore-certificate-errors');
   try {
     return await puppeteer.launch({ headless: true, args });
   } catch {
