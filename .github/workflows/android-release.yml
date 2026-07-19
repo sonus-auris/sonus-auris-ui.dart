@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   android-signed-aab:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     environment:

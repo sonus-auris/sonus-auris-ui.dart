@@ -46,7 +46,8 @@ Apple signing:
 The workflows materialize signing files only for the job, build through the
 repository release scripts, emit SHA-256 evidence, and remove the temporary
 files. They do not store a Supabase service-role key and do not publish to a
-store automatically.
+store automatically. Signed jobs run only from the `main` branch, and the
+environment should enforce the same deployment-branch policy.
 
 ## Release acceptance sequence
 

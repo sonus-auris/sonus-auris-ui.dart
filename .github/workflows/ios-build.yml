@@ -57,7 +57,7 @@ jobs:
           --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_ci_compile_only
 
   ios-signed-ipa:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.signed_ipa }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.signed_ipa && github.ref == 'refs/heads/main' }}
     needs: ios-compile
     runs-on: macos-15
     timeout-minutes: 45
