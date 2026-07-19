@@ -43,13 +43,14 @@ to sign in again before continuing.
 - [ ] Promote the Flutter web console only by updating its exact source pin in
   `~/codes/ores/k8s-cluster/remote/argocd/dd-next-runtime` and allowing Argo to
   reconcile it. Run both Puppeteer and Playwright against the deployed URL.
-- [ ] Make `sonus-auris-monorepo` the canonical source consumed by the Argo
-  Sonus workloads. Replace the current direct console/backend repository pins
-  only after the monorepo integration workflow is green, every nested revision
-  is pushed, and a read-only `SONUS_SUBMODULE_TOKEN` (preferably a short-lived
-  GitHub App token) is available to the build path. Pin the monorepo commit in
-  GitOps, build from its declared app paths, verify backend and console health,
-  and then retire the temporary direct-repository clone configuration.
+- [ ] Complete the move to `sonus-auris-monorepo` as the canonical source for
+  every Argo Sonus workload. The console build now consumes and verifies the
+  console revision from the node's pinned monorepo checkout without a personal
+  token. Next, move the Argo application resources and backend build source into
+  the monorepo-owned path after the integration workflow is green and every
+  nested revision is pushed. Prefer repository deploy keys or a short-lived
+  GitHub App token for any remaining private fetch, verify backend and console
+  health, and then retire the temporary `k8s-cluster` deployment definitions.
 
 After the accounts are active, create the store records with the existing
 identifiers (`com.ores.audioDashcam` for iOS and
