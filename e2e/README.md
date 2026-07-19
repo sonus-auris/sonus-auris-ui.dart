@@ -22,7 +22,7 @@ field**), and nothing throws during boot. Each run drops a screenshot in
 flutter build web --release
 
 cd e2e
-npm install
+npm ci
 npx playwright install --with-deps chromium   # one-time browser download
 npm test                 # both drivers
 npm run test:playwright  # just Playwright
@@ -54,6 +54,5 @@ CONSOLE_BASE_URL=https://console.sonusauris.app \
   PLAYWRIGHT_CHROMIUM=1 node --test playwright.smoke.test.mjs
 ```
 
-(The suites default to serving the local `build/web`; `CONSOLE_BASE_URL` is the
-hook for the cluster runners — wire it in `lib/static-server.mjs`'s caller when
-the console gets a deployed URL.)
+The suites default to serving local `build/web`; `CONSOLE_BASE_URL` is already
+wired through `lib/static-server.mjs` for post-deployment cluster checks.

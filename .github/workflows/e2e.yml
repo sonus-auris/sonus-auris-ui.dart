@@ -10,26 +10,38 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: console-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   browser-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: 3.44.2
+          cache: true
       - run: flutter pub get
       - name: Build the web bundle the smokes serve
         run: flutter build web --release
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
 
       - name: Install e2e deps
         working-directory: e2e
-        run: npm install
+        run: npm ci
 
       - name: Install Chromium (shared by both drivers)
         working-directory: e2e
@@ -39,7 +51,7 @@ jobs:
         working-directory: e2e
         run: npm test
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: e2e-screenshots

@@ -1,0 +1,75 @@
+name: desktop builds
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: console-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux desktop toolchain
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+      - run: flutter pub get
+      - run: flutter build linux --release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: console-linux
+          path: build/linux/x64/release/bundle
+          retention-days: 14
+
+  macos:
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+      - run: flutter pub get
+      - run: flutter build macos --release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: console-macos-unsigned
+          path: build/macos/Build/Products/Release/*.app
+          retention-days: 14
+
+  windows:
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+      - run: flutter pub get
+      - run: flutter build windows --release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: console-windows-unsigned
+          path: build/windows/x64/runner/Release
+          retention-days: 14

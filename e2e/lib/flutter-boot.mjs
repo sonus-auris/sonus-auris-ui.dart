@@ -4,6 +4,7 @@
 // accessibility (semantics) tree is enabled. These helpers boot the app, turn
 // on semantics, and read the resulting aria-labelled tree — the same technique
 // both the Puppeteer and Playwright suites use so assertions stay identical.
+import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,6 +15,7 @@ export const WEB_DIR = join(here, '..', '..', 'build', 'web');
 
 /// Where screenshots land (uploaded as CI artifacts).
 export const ARTIFACT_DIR = join(here, '..', 'artifacts');
+mkdirSync(ARTIFACT_DIR, { recursive: true });
 
 export const EXPECTED_TITLE = 'Sonus Auris Console';
 
