@@ -1,85 +1,147 @@
-name: iOS build (macOS)
+name: iOS compile and release artifact
 
-# iOS builds require full Xcode, which only exists on macOS runners — this is how
-# Sonus Auris is built for the App Store without a local Xcode install.
-#
-# Always: an UNSIGNED archive build (`flutter build ios --no-codesign`) that
-#         validates the iOS target compiles, pods resolve, and capabilities are
-#         wired — the CI equivalent of "does it build for iPhone".
-# When signing secrets are configured: a real signed App Store IPA is produced
-#         and uploaded as a build artifact. It is NEVER uploaded to App Store
-#         Connect here — TestFlight/App Store submission stays a deliberate,
-#         separate step (Transporter, Xcode Organizer, or `fastlane beta`).
-#
-# Optional secrets for the signed path:
-#   IOS_DEVELOPMENT_TEAM, IOS_DIST_CERT_P12_BASE64, IOS_DIST_CERT_PASSWORD,
-#   IOS_PROVISIONING_PROFILE_BASE64, plus prod config
-#   SONUS_BACKEND_BASE_URL / SONUS_SUPABASE_URL / SONUS_SUPABASE_ANON_KEY.
-
+# Pull requests and main validate the iPhone target without touching signing
+# material. A maintainer may explicitly request a signed IPA; that job is kept
+# behind the mobile-production environment and never uploads to App Store Connect.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      signed_ipa:
+        description: Build a signed App Store IPA after the compile check
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
 jobs:
-  ios-build:
-    runs-on: macos-14
-    # `secrets` context is not allowed in step `if:` — hoist the "do we have
-    # signing material?" decision into a job-level env the steps can gate on.
-    env:
-      HAS_SIGNING: ${{ secrets.IOS_DIST_CERT_P12_BASE64 != '' && secrets.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
+  ios-compile:
+    # in_app_purchase_storekit requires StoreKit APIs from Xcode 16. macos-14's
+    # older Xcode caused every recent build to fail on win-back offer symbols.
+    runs-on: macos-15
+    timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: 3.44.2
+          cache: true
+
+      - name: Toolchain evidence
+        run: |
+          flutter --version
+          xcodebuild -version
+
       - run: flutter pub get
-      - name: CocoaPods
-        run: cd ios && pod install
 
-      # --- Always: unsigned build validates the iOS target compiles ---
-      - name: Build iOS (unsigned, validates compile/archive)
-        run: flutter build ios --release --no-codesign
+      - name: Resolve CocoaPods
+        working-directory: ios
+        run: pod install
 
-      # --- Signed IPA only when signing secrets are present ---
-      - name: Import signing assets
-        id: signing
-        if: ${{ env.HAS_SIGNING == 'true' }}
+      - name: Compile unsigned iPhone release
+        run: >-
+          flutter build ios --release --no-codesign
+          --dart-define=SONUS_BACKEND_BASE_URL=https://ci.invalid
+          --dart-define=SONUS_SUPABASE_URL=https://ci.supabase.co
+          --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_ci_compile_only
+
+  ios-signed-ipa:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.signed_ipa }}
+    needs: ios-compile
+    runs-on: macos-15
+    timeout-minutes: 45
+    environment:
+      name: mobile-production
+    env:
+      DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+      SONUS_BACKEND_BASE_URL: ${{ secrets.SONUS_BACKEND_BASE_URL }}
+      SONUS_SUPABASE_URL: ${{ secrets.SONUS_SUPABASE_URL }}
+      SONUS_SUPABASE_ANON_KEY: ${{ secrets.SONUS_SUPABASE_ANON_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+
+      - name: Require release configuration and signing material
         env:
           CERT_B64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
-          CERT_PW: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
           PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
-          KEYCHAIN=build.keychain
-          security create-keychain -p "" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "" "$KEYCHAIN"
-          echo "$CERT_B64" | base64 --decode > cert.p12
-          security import cert.p12 -k "$KEYCHAIN" -P "$CERT_PW" -T /usr/bin/codesign
-          security list-keychains -d user -s "$KEYCHAIN" login.keychain
-          security set-key-partition-list -S apple-tool:,apple: -k "" "$KEYCHAIN" >/dev/null
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "$PROFILE_B64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
+          missing=()
+          for name in DEVELOPMENT_TEAM SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY CERT_B64 CERT_PASSWORD PROFILE_B64; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::mobile-production is missing: ${missing[*]}"
+            exit 1
+          fi
 
-      - name: Build signed App Store IPA (no upload)
-        if: ${{ env.HAS_SIGNING == 'true' }}
+      - name: Import ephemeral signing assets
         env:
-          DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
-          SONUS_BACKEND_BASE_URL: ${{ secrets.SONUS_BACKEND_BASE_URL }}
-          SONUS_SUPABASE_URL: ${{ secrets.SONUS_SUPABASE_URL }}
-          SONUS_SUPABASE_ANON_KEY: ${{ secrets.SONUS_SUPABASE_ANON_KEY }}
+          CERT_B64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          keychain_path="$RUNNER_TEMP/sonus-auris-build.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          cert_path="$RUNNER_TEMP/sonus-auris-distribution.p12"
+          profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+          profile_path="$profile_dir/sonus-auris.mobileprovision"
+
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          printf '%s' "$CERT_B64" | base64 -D > "$cert_path"
+          security import "$cert_path" -k "$keychain_path" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$keychain_path" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain_path" >/dev/null
+
+          mkdir -p "$profile_dir"
+          printf '%s' "$PROFILE_B64" | base64 -D > "$profile_path"
+          {
+            echo "SIGNING_KEYCHAIN_PATH=$keychain_path"
+            echo "SIGNING_CERT_PATH=$cert_path"
+            echo "SIGNING_PROFILE_PATH=$profile_path"
+          } >> "$GITHUB_ENV"
+
+      - name: Build signed App Store IPA
         run: scripts/release/ios-build-ipa.sh
 
-      - name: Upload IPA artifact
-        if: ${{ env.HAS_SIGNING == 'true' }}
-        uses: actions/upload-artifact@v4
+      - name: Create artifact checksum
+        run: |
+          cd build/ios/ipa
+          shasum -a 256 ./*.ipa > SHA256SUMS
+
+      - name: Upload signed IPA and symbols
+        uses: actions/upload-artifact@v7
         with:
-          name: sonus-auris-ipa
-          path: build/ios/ipa/*.ipa
-          if-no-files-found: warn
+          name: sonus-auris-ios-${{ github.run_number }}
+          path: |
+            build/ios/ipa/*.ipa
+            build/ios/ipa/SHA256SUMS
+            build/symbols/**
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove ephemeral signing assets
+        if: always()
+        run: |
+          [[ -z "${SIGNING_KEYCHAIN_PATH:-}" ]] || security delete-keychain "$SIGNING_KEYCHAIN_PATH" || true
+          [[ -z "${SIGNING_CERT_PATH:-}" ]] || rm -f "$SIGNING_CERT_PATH"
+          [[ -z "${SIGNING_PROFILE_PATH:-}" ]] || rm -f "$SIGNING_PROFILE_PATH"

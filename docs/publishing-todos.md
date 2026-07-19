@@ -17,6 +17,33 @@ to sign in again before continuing.
   endpoint and scoped credentials in the backend secret store, and define the
   production retention/lifecycle policy.
 
+## Build and deployment readiness
+
+- [ ] Create the protected GitHub `mobile-production` environment and add the
+  production backend/Supabase values plus Android and Apple signing secrets
+  documented in `docs/mobile-ci.md`.
+- [ ] Point `SONUS_BACKEND_BASE_URL` at the Sonus-owned cluster hostname after
+  `api.sonusauris.app` DNS, TLS, and gateway routing are declared through Argo.
+- [ ] Verify the Argo-managed backend readiness endpoint from outside the
+  cluster, then exercise sign-in, consent, upload, deletion, purchases, and
+  client telemetry against production Supabase from a physical Android device
+  and iPhone.
+- [ ] Run the signed Android workflow, upload the AAB to Play internal testing,
+  install it on the physical Android device, and complete a background-recording
+  battery/network-loss test.
+- [ ] Run the signed iOS workflow, upload the IPA to TestFlight, install it on
+  the physical iPhone, and complete lock-screen/background-audio and permission
+  review tests.
+- [ ] Review the GitHub Linux/macOS/Windows desktop artifacts; configure macOS
+  signing/notarization and Windows signing/installers before distributing them.
+- [ ] Upgrade or replace Flutter plugins that still apply the legacy Kotlin
+  Gradle plugin or lack Apple Swift Package Manager support before Flutter turns
+  the current build warnings into errors; also track the StoreKit 1 deprecation
+  warnings emitted by `in_app_purchase_storekit` on macOS 15.
+- [ ] Promote the Flutter web console only by updating its exact source pin in
+  `~/codes/ores/k8s-cluster/remote/argocd/dd-next-runtime` and allowing Argo to
+  reconcile it. Run both Puppeteer and Playwright against the deployed URL.
+
 After the accounts are active, create the store records with the existing
 identifiers (`com.ores.audioDashcam` for iOS and
 `com.ores.audio_dashcam` for Android), enroll the signing keys, upload first to

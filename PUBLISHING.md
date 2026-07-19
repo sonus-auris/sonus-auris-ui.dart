@@ -95,4 +95,19 @@ scripts/release/ios-build-ipa.sh               # -> build/ios/ipa/*.ipa   (macOS
 
 Recommendation: ship to **internal testing / TestFlight first**, never straight to production.
 
+## GitHub release builds
+
+CI always compiles an unsigned iOS release on `macos-15`, builds Android and
+tests on Linux, and builds the desktop entrypoint on native Linux, macOS, and
+Windows runners. Signed store artifacts are manual-only jobs protected by the
+`mobile-production` GitHub environment:
+
+- `android release` produces the Play `.aab` from an ephemeral upload keystore.
+- `iOS build` produces the App Store `.ipa` from an ephemeral distribution
+  certificate and provisioning profile.
+
+Neither job uploads or publishes. Download the artifact, verify its checksum,
+then explicitly upload it to the internal-testing track or TestFlight. Secret
+names and the full test matrix are in `docs/mobile-ci.md`.
+
 See `docs/compliance/` for the per-store form content and `scripts/release/` for the scripts.

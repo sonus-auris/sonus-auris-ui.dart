@@ -1,0 +1,93 @@
+name: Android signed release artifact
+
+# Produces an upload-key-signed AAB for Play internal testing. This workflow is
+# deliberately manual and never uploads to Google Play.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-production-android
+  cancel-in-progress: false
+
+jobs:
+  android-signed-aab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment:
+      name: mobile-production
+    env:
+      SONUS_BACKEND_BASE_URL: ${{ secrets.SONUS_BACKEND_BASE_URL }}
+      SONUS_SUPABASE_URL: ${{ secrets.SONUS_SUPABASE_URL }}
+      SONUS_SUPABASE_ANON_KEY: ${{ secrets.SONUS_SUPABASE_ANON_KEY }}
+      KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+      STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+
+      - name: Require production configuration and upload key
+        run: |
+          missing=()
+          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY KEYSTORE_B64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::mobile-production is missing: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Install ephemeral Android upload key
+        run: |
+          umask 077
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > android/app/upload-keystore.jks
+          {
+            printf 'storeFile=upload-keystore.jks\n'
+            printf 'storePassword=%s\n' "$STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: Test release candidate
+        run: |
+          flutter pub get
+          flutter analyze --no-fatal-infos
+          flutter test
+
+      - name: Build signed Play App Bundle
+        run: scripts/release/android-build-aab.sh
+
+      - name: Create artifact checksum
+        run: |
+          cd build/app/outputs/bundle/release
+          sha256sum app-release.aab > SHA256SUMS
+
+      - name: Upload signed AAB and symbols
+        uses: actions/upload-artifact@v7
+        with:
+          name: sonus-auris-android-${{ github.run_number }}
+          path: |
+            build/app/outputs/bundle/release/app-release.aab
+            build/app/outputs/bundle/release/SHA256SUMS
+            build/symbols/**
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove ephemeral upload key
+        if: always()
+        run: rm -f android/key.properties android/app/upload-keystore.jks
