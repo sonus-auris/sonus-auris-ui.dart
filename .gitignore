@@ -49,3 +49,9 @@ app.*.map.json
 
 # Cloudflare Wrangler's local account/build cache (may contain account metadata).
 .wrangler/
+
+# Local secrets / direnv state. Signing material is covered by android/.gitignore.
+.env
+.env.*
+!.env.example
+.direnv/
