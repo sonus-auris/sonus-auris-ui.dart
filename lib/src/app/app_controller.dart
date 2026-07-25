@@ -3328,7 +3328,7 @@ class AppController {
       // stays in the local plaintext window); cloud STT is only an explicit
       // opt-in.
       if (detection.kind == AcousticDetectionKind.speech &&
-          config.keywords.isNotEmpty) {
+          (config.keywords.isNotEmpty || config.safeWords.isNotEmpty)) {
         await _scanSpeechForKeywords(config, detection);
       }
 
@@ -3506,6 +3506,12 @@ class AppController {
       if (match == null) {
         return;
       }
+      // A heard keyword/safe word dings and lifts recording quality for a
+      // sustained window, so the stretch after the phrase stays full fidelity.
+      await _feedback.chime();
+      _recorder.boostQualityForKeyword(
+        Duration(minutes: config.keywordQualityBoostMinutes),
+      );
       final keywordEvent = AcousticDetection(
         kind: AcousticDetectionKind.keyword,
         startedAtUtc: speech.startedAtUtc,
@@ -3515,6 +3521,7 @@ class AppController {
         details: {
           'keyword': match.keyword,
           'transcript': match.transcript,
+          'safeWord': match.isSafeWord,
           if (speakerMatch != null) 'knownVoice': speakerMatch.isMatch,
         },
       );

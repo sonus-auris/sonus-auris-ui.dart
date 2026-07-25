@@ -11,6 +11,7 @@ import 'package:uuid/uuid.dart';
 import '../models/acoustic_detection.dart';
 import '../models/audio_trigger_event.dart';
 import '../models/app_config.dart';
+import 'keyword_quality_boost.dart';
 import '../models/recorder_snapshot.dart';
 import '../models/recording_segment.dart';
 import 'acoustic/acoustic_pipeline.dart';
@@ -117,6 +118,10 @@ class SegmentRecorder {
   _Pcm16Downsampler? _storeDownsampler;
   int _storedOverlapSamples = 0;
   double? _recentDb; // EMA of slice loudness, drives the per-segment decision.
+  // A heard keyword/safe word forces full quality for a sustained window even
+  // while the audio is quiet, so the stretch after a caught phrase isn't
+  // downsampled. Extended by [boostQualityForKeyword].
+  final KeywordQualityBoost _qualityBoost = KeywordQualityBoost();
 
   // Rolling buffer of recently captured (processed) audio for Shazam / STT.
   final List<Uint8List> _recentChunks = [];
@@ -161,6 +166,13 @@ class SegmentRecorder {
       bytes = Uint8List.sublistView(bytes, bytes.length - wanted);
     }
     return (bytes: bytes, sampleRate: _captureRate, channels: channels);
+  }
+
+  /// Opens (or extends) a full-quality window after a keyword/safe word is
+  /// heard, so the following [window] of audio keeps full fidelity even while
+  /// quiet. No-op-safe to call repeatedly; overlapping calls only lengthen it.
+  void boostQualityForKeyword(Duration window) {
+    _qualityBoost.trigger(DateTime.now(), window);
   }
 
   Future<void> start(AppConfig config) async {
@@ -573,9 +585,10 @@ class SegmentRecorder {
       _storeDownsampler = null;
       return;
     }
-    // Until we have a trailing-loudness reading, keep full quality (treat the
-    // first segment as loud) rather than needlessly downsampling startup audio.
-    final loud =
+    // A keyword/safe-word boost forces full quality even through quiet audio.
+    // Otherwise: until we have a trailing-loudness reading, keep full quality
+    // (treat the first segment as loud) rather than downsampling startup audio.
+    final loud = _qualityBoost.isActive(DateTime.now()) ||
         (_recentDb ?? config.adaptiveLoudnessDb) >= config.adaptiveLoudnessDb;
     if (loud) {
       _storeRate = _captureRate;

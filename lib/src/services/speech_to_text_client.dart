@@ -10,10 +10,18 @@ import '../models/cloud_secrets.dart';
 
 /// Result of a keyword scan over a transcript.
 class KeywordMatch {
-  const KeywordMatch({required this.keyword, required this.transcript});
+  const KeywordMatch({
+    required this.keyword,
+    required this.transcript,
+    this.isSafeWord = false,
+  });
 
   final String keyword;
   final String transcript;
+
+  /// True when the hit came from [AppConfig.safeWords] rather than
+  /// [AppConfig.keywords]. Both trigger the same alert/ding/quality boost.
+  final bool isSafeWord;
 }
 
 /// Opt-in cloud speech-to-text. POSTs a short WAV clip to a user-configured
@@ -72,6 +80,18 @@ class SpeechToTextClient {
   /// null. Case-insensitive, whole-word-ish (substring after lowercasing).
   KeywordMatch? matchKeyword(AppConfig config, String transcript) {
     final lower = transcript.toLowerCase();
+    // Safe words first: if a distress word and an ordinary keyword are both
+    // present, the safe word is the one worth surfacing.
+    for (final word in config.safeWords) {
+      final needle = word.trim().toLowerCase();
+      if (needle.isNotEmpty && lower.contains(needle)) {
+        return KeywordMatch(
+          keyword: word.trim(),
+          transcript: transcript,
+          isSafeWord: true,
+        );
+      }
+    }
     for (final keyword in config.keywords) {
       final needle = keyword.trim().toLowerCase();
       if (needle.isNotEmpty && lower.contains(needle)) {

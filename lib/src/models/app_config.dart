@@ -69,6 +69,8 @@ class AppConfig {
     this.speechDetectionEnabled = true,
     this.shazamEnabled = false,
     this.keywords = const [],
+    this.safeWords = const [],
+    this.keywordQualityBoostMinutes = 90,
     this.sttEnabled = false,
     this.sttEndpoint = '',
     this.voiceIdEnabled = false,
@@ -221,8 +223,18 @@ class AppConfig {
   final bool shazamEnabled;
 
   /// Keywords to watch for in transcribed speech (case-insensitive). A match
-  /// raises a magic-phrase alert. Only consulted when [sttEnabled].
+  /// raises a magic-phrase alert, dings, and opens a full-quality boost window
+  /// ([keywordQualityBoostMinutes]). Only consulted when [sttEnabled].
   final List<String> keywords;
+
+  /// Safe words: a second watch list with the same detection behaviour as
+  /// [keywords], kept separate so a user can name distress/help words apart
+  /// from ordinary alert keywords. Case-insensitive; consulted when [sttEnabled].
+  final List<String> safeWords;
+
+  /// How long, in minutes, a heard keyword or safe word forces full recording
+  /// quality (overriding adaptive downsampling of quiet audio). Defaults to 90.
+  final int keywordQualityBoostMinutes;
 
   /// Opt-in cloud speech-to-text. When on, short clips of sustained speech are
   /// POSTed to [sttEndpoint] to scan for [keywords]. Off by default; audio only
@@ -409,6 +421,8 @@ class AppConfig {
     bool? speechDetectionEnabled,
     bool? shazamEnabled,
     List<String>? keywords,
+    List<String>? safeWords,
+    int? keywordQualityBoostMinutes,
     bool? sttEnabled,
     String? sttEndpoint,
     bool? voiceIdEnabled,
@@ -492,6 +506,9 @@ class AppConfig {
           speechDetectionEnabled ?? this.speechDetectionEnabled,
       shazamEnabled: shazamEnabled ?? this.shazamEnabled,
       keywords: keywords ?? this.keywords,
+      safeWords: safeWords ?? this.safeWords,
+      keywordQualityBoostMinutes:
+          keywordQualityBoostMinutes ?? this.keywordQualityBoostMinutes,
       sttEnabled: sttEnabled ?? this.sttEnabled,
       sttEndpoint: sttEndpoint ?? this.sttEndpoint,
       voiceIdEnabled: voiceIdEnabled ?? this.voiceIdEnabled,
@@ -563,6 +580,8 @@ class AppConfig {
       'speechDetectionEnabled': speechDetectionEnabled,
       'shazamEnabled': shazamEnabled,
       'keywords': keywords,
+      'safeWords': safeWords,
+      'keywordQualityBoostMinutes': keywordQualityBoostMinutes,
       'sttEnabled': sttEnabled,
       'sttEndpoint': sttEndpoint,
       'voiceIdEnabled': voiceIdEnabled,
@@ -667,6 +686,11 @@ class AppConfig {
       speechDetectionEnabled: json['speechDetectionEnabled'] as bool? ?? true,
       shazamEnabled: json['shazamEnabled'] as bool? ?? false,
       keywords: _asStringList(json['keywords']),
+      safeWords: _asStringList(json['safeWords']),
+      keywordQualityBoostMinutes: _asInt(
+        json['keywordQualityBoostMinutes'],
+        90,
+      ).clamp(1, 24 * 60),
       sttEnabled: json['sttEnabled'] as bool? ?? false,
       sttEndpoint: json['sttEndpoint'] as String? ?? '',
       voiceIdEnabled: json['voiceIdEnabled'] as bool? ?? false,

@@ -3132,6 +3132,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
   late int _quietRate;
   late double _adaptiveLoudnessDb;
   final _keywordsController = TextEditingController();
+  final _safeWordsController = TextEditingController();
   final _sttEndpointController = TextEditingController();
 
   void _seed(AppConfig config) {
@@ -3156,6 +3157,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
     _quietRate = config.quietSampleRate;
     _adaptiveLoudnessDb = config.adaptiveLoudnessDb;
     _keywordsController.text = config.keywords.join(', ');
+    _safeWordsController.text = config.safeWords.join(', ');
     _sttEndpointController.text = config.sttEndpoint;
     _syncedDeviceId = config.deviceId;
   }
@@ -3163,16 +3165,20 @@ class _AcousticSectionState extends State<_AcousticSection> {
   @override
   void dispose() {
     _keywordsController.dispose();
+    _safeWordsController.dispose();
     _sttEndpointController.dispose();
     super.dispose();
   }
 
+  List<String> _parseWordList(String raw) => raw
+      .split(',')
+      .map((word) => word.trim())
+      .where((word) => word.isNotEmpty)
+      .toList();
+
   void _apply() {
-    final keywords = _keywordsController.text
-        .split(',')
-        .map((k) => k.trim())
-        .where((k) => k.isNotEmpty)
-        .toList();
+    final keywords = _parseWordList(_keywordsController.text);
+    final safeWords = _parseWordList(_safeWordsController.text);
     widget.onChanged(
       widget.config.copyWith(
         acousticAnalysisEnabled: _enabled,
@@ -3191,6 +3197,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
         sttEnabled: _sttEnabled,
         sttEndpoint: _sttEndpointController.text.trim(),
         keywords: keywords,
+        safeWords: safeWords,
         adaptiveQualityEnabled: _adaptiveEnabled,
         captureSampleRate: _captureRate,
         quietSampleRate: _quietRate,
@@ -3386,6 +3393,19 @@ class _AcousticSectionState extends State<_AcousticSection> {
                 controller: _keywordsController,
                 decoration: const InputDecoration(
                   labelText: 'Keywords (comma-separated)',
+                  helperText:
+                      'Spoken keywords ding and raise recording quality for '
+                      '90 minutes.',
+                ),
+                onEditingComplete: _apply,
+              ),
+              TextField(
+                controller: _safeWordsController,
+                decoration: const InputDecoration(
+                  labelText: 'Safe words (comma-separated)',
+                  helperText:
+                      'Distress/help words — same ding and quality boost, '
+                      'kept separate from ordinary keywords.',
                 ),
                 onEditingComplete: _apply,
               ),

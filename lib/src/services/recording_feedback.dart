@@ -1,4 +1,5 @@
 // Speaks short spoken cues (TTS) confirming capture state for eyes-free use.
+import 'package:flutter/services.dart' show SystemSound, SystemSoundType;
 import 'package:flutter_tts/flutter_tts.dart';
 
 /// Speaks short verbal cues ("recording", "stopped", "saved") so the user can
@@ -38,6 +39,18 @@ class RecordingFeedback {
       await _tts.speak(phrase);
     } catch (_) {
       // Never propagate TTS failures into the capture pipeline.
+    }
+  }
+
+  /// Plays a short alert tone — the "ding" that marks a heard keyword or safe
+  /// word. Unlike ambient cues this always sounds (a caught phrase is worth
+  /// hearing even with verbal cues off) and, like [say], never throws into the
+  /// capture pipeline.
+  Future<void> chime() async {
+    try {
+      await SystemSound.play(SystemSoundType.alert);
+    } catch (_) {
+      // Some platforms have no alert sound; a missing ding must never surface.
     }
   }
 
