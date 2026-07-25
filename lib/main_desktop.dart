@@ -216,7 +216,7 @@ class _DesktopRootState extends State<_DesktopRoot> {
 
   Future<void> _showSignInDialog() async {
     final email = TextEditingController();
-    final password = TextEditingController();
+    final code = TextEditingController();
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -225,17 +225,11 @@ class _DesktopRootState extends State<_DesktopRoot> {
           width: 440,
           child: SupabaseAuthForm(
             emailController: email,
-            passwordController: password,
-            onSignIn: (email, password) => widget.controller.signInWithSupabase(
-              email: email,
-              password: password,
-            ),
-            onSignUp: (email, password) => widget.controller.signUpWithSupabase(
-              email: email,
-              password: password,
-            ),
-            onPasswordReset: (email) =>
-                widget.controller.sendSupabasePasswordReset(email: email),
+            codeController: code,
+            onRequestCode: (email) =>
+                widget.controller.requestSupabaseEmailOtp(email: email),
+            onSubmitCode: (email, code) => widget.controller
+                .confirmSupabaseEmailOtp(email: email, code: code),
           ),
         ),
         actions: [
@@ -247,7 +241,7 @@ class _DesktopRootState extends State<_DesktopRoot> {
       ),
     );
     email.dispose();
-    password.dispose();
+    code.dispose();
   }
 }
 

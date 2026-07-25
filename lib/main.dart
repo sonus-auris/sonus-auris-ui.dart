@@ -288,7 +288,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   int _step = 0;
   bool _busy = false;
   final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
+  final _codeController = TextEditingController();
   final _supabaseUrlController = TextEditingController();
   final _supabaseAnonKeyController = TextEditingController();
   bool _supabaseProjectSeeded = false;
@@ -301,7 +301,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   @override
   void dispose() {
     _emailController.dispose();
-    _passwordController.dispose();
+    _codeController.dispose();
     _supabaseUrlController.dispose();
     _supabaseAnonKeyController.dispose();
     super.dispose();
@@ -309,17 +309,6 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
 
   bool get _requiredAccepted =>
       ConsentItem.values.where((i) => i.required).every((i) => _grants[i]!);
-
-  Future<void> _auth(Future<void> Function() run) async {
-    setState(() => _busy = true);
-    try {
-      await run();
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
 
   Future<void> _finish() async {
     setState(() => _busy = true);
@@ -460,16 +449,13 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         const SizedBox(height: 16),
         SupabaseAuthForm(
           emailController: _emailController,
-          passwordController: _passwordController,
+          codeController: _codeController,
           supabaseUrlController: _supabaseUrlController,
           supabaseAnonKeyController: _supabaseAnonKeyController,
           showProjectConfiguration: !configured,
           enabled: !_busy && vm != null,
-          onSignIn: (email, password) =>
-              _auth(() => _signIn(vm, email, password)),
-          onSignUp: (email, password) =>
-              _auth(() => _signUp(vm, email, password)),
-          onPasswordReset: (email) => _auth(() => _resetPassword(vm, email)),
+          onRequestCode: (email) => _requestCode(vm, email),
+          onSubmitCode: (email, code) => _submitCode(vm, email, code),
         ),
       ],
     );
@@ -493,42 +479,38 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     );
   }
 
-  Future<void> _signUp(
+  Future<bool> _requestCode(AppViewModel? viewModel, String email) async {
+    if (viewModel == null) {
+      return false;
+    }
+    setState(() => _busy = true);
+    try {
+      await _saveSupabaseProject(viewModel);
+      return await widget.controller.requestSupabaseEmailOtp(email: email);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _submitCode(
     AppViewModel? viewModel,
     String email,
-    String password,
+    String code,
   ) async {
     if (viewModel == null) {
       return;
     }
-    await _saveSupabaseProject(viewModel);
-    await widget.controller.signUpWithSupabase(
-      email: email,
-      password: password,
-    );
-  }
-
-  Future<void> _signIn(
-    AppViewModel? viewModel,
-    String email,
-    String password,
-  ) async {
-    if (viewModel == null) {
-      return;
+    setState(() => _busy = true);
+    try {
+      await _saveSupabaseProject(viewModel);
+      await widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
     }
-    await _saveSupabaseProject(viewModel);
-    await widget.controller.signInWithSupabase(
-      email: email,
-      password: password,
-    );
-  }
-
-  Future<void> _resetPassword(AppViewModel? viewModel, String email) async {
-    if (viewModel == null) {
-      return;
-    }
-    await _saveSupabaseProject(viewModel);
-    await widget.controller.sendSupabasePasswordReset(email: email);
   }
 
   Widget _consentStep(BuildContext context) {
@@ -983,11 +965,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   viewModel.isAwaitingDeviceRegistration,
               supabaseUrlController: _supabaseUrlController,
               supabaseAnonKeyController: _supabaseAnonKeyController,
-              onSignIn: (email, password) =>
-                  _signIn(viewModel, email, password),
-              onSignUp: (email, password) =>
-                  _signUp(viewModel, email, password),
-              onPasswordReset: (email) => _resetPassword(viewModel, email),
+              onRequestCode: (email) => _requestCode(viewModel, email),
+              onSubmitCode: (email, code) =>
+                  _submitCode(viewModel, email, code),
               onSignOut: widget.controller.signOutSupabase,
               onDeleteAccount: widget.controller.deleteAccount,
             ),
@@ -1105,33 +1085,18 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Future<void> _signIn(
-    AppViewModel viewModel,
-    String email,
-    String password,
-  ) async {
+  Future<bool> _requestCode(AppViewModel viewModel, String email) async {
     await _persistSupabaseConfig(viewModel);
-    await widget.controller.signInWithSupabase(
-      email: email,
-      password: password,
-    );
+    return widget.controller.requestSupabaseEmailOtp(email: email);
   }
 
-  Future<void> _signUp(
+  Future<void> _submitCode(
     AppViewModel viewModel,
     String email,
-    String password,
+    String code,
   ) async {
     await _persistSupabaseConfig(viewModel);
-    await widget.controller.signUpWithSupabase(
-      email: email,
-      password: password,
-    );
-  }
-
-  Future<void> _resetPassword(AppViewModel viewModel, String email) async {
-    await _persistSupabaseConfig(viewModel);
-    await widget.controller.sendSupabasePasswordReset(email: email);
+    await widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
   }
 
   int _parseInt(String value, int fallback) {
@@ -2260,9 +2225,9 @@ class _ConfigureActionBar extends StatelessWidget {
   }
 }
 
-/// Supabase identity: project config plus email/password sign-in. When signed
-/// in, the controller registers the device and uploads run under the verified
-/// account. The password is held only transiently in a local field.
+/// Supabase identity: project config plus passwordless email-code sign-in. When
+/// signed in, the controller registers the device and uploads run under the
+/// verified account. The one-time code is held only transiently in a local field.
 class _AccountSection extends StatefulWidget {
   const _AccountSection({
     required this.isSignedIn,
@@ -2271,9 +2236,8 @@ class _AccountSection extends StatefulWidget {
     required this.isAwaitingDeviceRegistration,
     required this.supabaseUrlController,
     required this.supabaseAnonKeyController,
-    required this.onSignIn,
-    required this.onSignUp,
-    required this.onPasswordReset,
+    required this.onRequestCode,
+    required this.onSubmitCode,
     required this.onSignOut,
     required this.onDeleteAccount,
   });
@@ -2284,9 +2248,8 @@ class _AccountSection extends StatefulWidget {
   final bool isAwaitingDeviceRegistration;
   final TextEditingController supabaseUrlController;
   final TextEditingController supabaseAnonKeyController;
-  final Future<void> Function(String email, String password) onSignIn;
-  final Future<void> Function(String email, String password) onSignUp;
-  final Future<void> Function(String email) onPasswordReset;
+  final Future<bool> Function(String email) onRequestCode;
+  final Future<void> Function(String email, String code) onSubmitCode;
   final Future<void> Function() onSignOut;
   final Future<void> Function() onDeleteAccount;
 
@@ -2296,13 +2259,13 @@ class _AccountSection extends StatefulWidget {
 
 class _AccountSectionState extends State<_AccountSection> {
   final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
+  final _codeController = TextEditingController();
   bool _busy = false;
 
   @override
   void dispose() {
     _emailController.dispose();
-    _passwordController.dispose();
+    _codeController.dispose();
     super.dispose();
   }
 
@@ -2447,14 +2410,13 @@ class _AccountSectionState extends State<_AccountSection> {
           const SizedBox(height: 12),
           SupabaseAuthForm(
             emailController: _emailController,
-            passwordController: _passwordController,
+            codeController: _codeController,
             supabaseUrlController: widget.supabaseUrlController,
             supabaseAnonKeyController: widget.supabaseAnonKeyController,
             showProjectConfiguration: !hasBundledSupabaseConfig,
             enabled: !_busy,
-            onSignIn: widget.onSignIn,
-            onSignUp: widget.onSignUp,
-            onPasswordReset: widget.onPasswordReset,
+            onRequestCode: widget.onRequestCode,
+            onSubmitCode: widget.onSubmitCode,
           ),
           const SizedBox(height: 8),
           _legalLinks(),

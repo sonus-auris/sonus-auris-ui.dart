@@ -90,12 +90,6 @@ const String kConsentVersion = 'audio-dashcam-consent-v2';
 const String kDefaultSupabaseUrl = AppConfig.defaultSupabaseUrl;
 const String kDefaultSupabaseAnonKey = AppConfig.defaultSupabaseAnonKey;
 
-/// Optional platform-specific return URL for Supabase recovery emails. Configure
-/// it at build time only after adding the URL to Supabase Auth's allow-list.
-const String kSupabaseAuthRedirectUrl = String.fromEnvironment(
-  'SONUS_SUPABASE_AUTH_REDIRECT_URL',
-);
-
 class AppController {
   factory AppController({
     SettingsStore? settingsStore,
@@ -1117,63 +1111,6 @@ class AppController {
     requestUploadDrain();
   }
 
-  /// Signs in with Supabase email/password and, on success, registers the device
-  /// with the backend so uploads run under the verified identity.
-  Future<void> signInWithSupabase({
-    required String email,
-    required String password,
-  }) {
-    return _authenticateSupabase(
-      () => _authClient.signInWithPassword(
-        config: _config.value,
-        email: email,
-        password: password,
-      ),
-      successMessage: 'Signed in.',
-    );
-  }
-
-  /// Creates a Supabase account. When the project requires email confirmation
-  /// the returned session is null and the user must confirm, then sign in.
-  Future<void> signUpWithSupabase({
-    required String email,
-    required String password,
-  }) {
-    return _authenticateSupabase(
-      () => _authClient.signUp(
-        config: _config.value,
-        email: email,
-        password: password,
-      ),
-      successMessage: 'Signed in.',
-      pendingMessage: 'Account created. Confirm your email, then sign in.',
-    );
-  }
-
-  Future<void> sendSupabasePasswordReset({required String email}) async {
-    if (!_config.hasValue) {
-      return;
-    }
-    if (!_config.value.hasSupabaseAuthConfig) {
-      _message.add('Set the Supabase URL and anon key before resetting.');
-      return;
-    }
-    if (email.trim().isEmpty) {
-      _message.add('Enter your account email first.');
-      return;
-    }
-    try {
-      await _authClient.sendPasswordResetEmail(
-        config: _config.value,
-        email: email,
-        redirectTo: kSupabaseAuthRedirectUrl,
-      );
-      _message.add('Password reset email sent.');
-    } catch (error) {
-      _message.add(_describeError(error));
-    }
-  }
-
   Future<void> deleteAccount() async {
     if (!_config.hasValue || !_secrets.hasValue) {
       return;
@@ -1580,37 +1517,6 @@ class AppController {
         features: snapshot.features,
       ),
     );
-  }
-
-  Future<void> _authenticateSupabase(
-    Future<SupabaseSession?> Function() run, {
-    required String successMessage,
-    String? pendingMessage,
-  }) async {
-    if (!_config.hasValue) {
-      return;
-    }
-    if (!_config.value.hasSupabaseAuthConfig) {
-      _message.add('Set the Supabase URL and anon key before signing in.');
-      return;
-    }
-    try {
-      final session = await run();
-      if (session == null) {
-        _message.add(pendingMessage ?? successMessage);
-        return;
-      }
-      await _applySupabaseSession(session);
-      await _syncPortableSettingsFromSupabase();
-      await _ensureDeviceRegistered();
-      await _syncSupabaseDeviceAndEntitlements();
-      // Flush any consent captured before sign-in.
-      await _maybeSyncConsent();
-      _message.add(successMessage);
-      requestUploadDrain();
-    } catch (error) {
-      _message.add(_describeError(error));
-    }
   }
 
   Future<void> _applySupabaseSession(SupabaseSession session) async {

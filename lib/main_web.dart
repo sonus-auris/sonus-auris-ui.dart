@@ -21,10 +21,6 @@ import 'src/services/supabase_rest_client.dart';
 import 'src/services/supabase_telemetry_realtime_client.dart';
 import 'src/widgets/supabase_auth_form.dart';
 
-const _authRedirectUrl = String.fromEnvironment(
-  'SONUS_SUPABASE_AUTH_REDIRECT_URL',
-);
-
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const SonusWebApp());
@@ -42,7 +38,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
   final _rest = SupabaseRestClient();
   final _realtime = SupabaseTelemetryRealtimeClient();
   final _email = TextEditingController();
-  final _password = TextEditingController();
+  final _code = TextEditingController();
   final _supabaseUrl = TextEditingController(
     text: AppConfig.defaultSupabaseUrl,
   );
@@ -106,7 +102,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     _auth.close();
     _rest.close();
     _email.dispose();
-    _password.dispose();
+    _code.dispose();
     _supabaseUrl.dispose();
     _supabaseKey.dispose();
     super.dispose();
@@ -118,49 +114,26 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     supabaseAnonKey: _supabaseKey.text.trim(),
   );
 
-  Future<void> _signIn(String email, String password) async {
+  Future<bool> _requestCode(String email) async {
     final config = _currentConfig();
-    final session = await _auth.signInWithPassword(
+    await _auth.sendEmailOtp(config: config, email: email);
+    if (mounted) {
+      setState(() {
+        _config = config;
+        _status = 'We emailed you a sign-in link and a 6-digit code.';
+      });
+    }
+    return true;
+  }
+
+  Future<void> _submitCode(String email, String code) async {
+    final config = _currentConfig();
+    final session = await _auth.verifyEmailOtp(
       config: config,
       email: email,
-      password: password,
+      code: code,
     );
     await _adoptSession(config, session, status: 'Signed in.');
-  }
-
-  Future<void> _signUp(String email, String password) async {
-    final config = _currentConfig();
-    final session = await _auth.signUp(
-      config: config,
-      email: email,
-      password: password,
-    );
-    if (session == null) {
-      if (mounted) {
-        setState(() {
-          _config = config;
-          _status = 'Account created. Confirm the email, then sign in.';
-        });
-      }
-      return;
-    }
-    await _adoptSession(
-      config,
-      session,
-      status: 'Account created and signed in.',
-    );
-  }
-
-  Future<void> _resetPassword(String email) async {
-    final config = _currentConfig();
-    await _auth.sendPasswordResetEmail(
-      config: config,
-      email: email,
-      redirectTo: _authRedirectUrl,
-    );
-    if (mounted) {
-      setState(() => _status = 'Password-reset email sent.');
-    }
   }
 
   Future<void> _adoptSession(
@@ -355,13 +328,12 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
                 if (!signedIn)
                   SupabaseAuthForm(
                     emailController: _email,
-                    passwordController: _password,
+                    codeController: _code,
                     supabaseUrlController: _supabaseUrl,
                     supabaseAnonKeyController: _supabaseKey,
                     showProjectConfiguration: true,
-                    onSignIn: _signIn,
-                    onSignUp: _signUp,
-                    onPasswordReset: _resetPassword,
+                    onRequestCode: _requestCode,
+                    onSubmitCode: _submitCode,
                   )
                 else
                   Card(

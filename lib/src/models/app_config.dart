@@ -110,7 +110,7 @@ class AppConfig {
   final String s3Endpoint;
 
   /// Supabase project URL (e.g. https://abc.supabase.co). Used for GoTrue
-  /// email/password sign-in. Non-secret.
+  /// passwordless email-code sign-in. Non-secret.
   final String supabaseUrl;
 
   /// Supabase anon/publishable API key. Safe to ship in the client; never the
@@ -337,7 +337,7 @@ class AppConfig {
   bool get s3TargetReady =>
       s3Bucket.trim().isNotEmpty && s3Region.trim().isNotEmpty;
 
-  /// Whether Supabase email/password sign-in can be attempted.
+  /// Whether Supabase email-code sign-in can be attempted.
   bool get hasSupabaseAuthConfig =>
       supabaseUrl.trim().isNotEmpty && supabaseAnonKey.trim().isNotEmpty;
 

@@ -1,18 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/supabase_key_policy.dart';
 
-/// Shared, validated Supabase email/password form used during onboarding and
-/// from Configure. Keeping both entry points on one widget prevents the first
-/// run and returning-user flows from drifting apart.
+/// Shared, validated passwordless Supabase sign-in form used during onboarding
+/// and from Configure. A single email-code flow covers both sign-in and
+/// sign-up (an unknown address gets an account the moment its first code is
+/// verified), so keeping both entry points on one widget prevents the first-run
+/// and returning-user flows from drifting apart.
 class SupabaseAuthForm extends StatefulWidget {
   const SupabaseAuthForm({
     super.key,
     required this.emailController,
-    required this.passwordController,
-    required this.onSignIn,
-    required this.onSignUp,
-    required this.onPasswordReset,
+    required this.codeController,
+    required this.onRequestCode,
+    required this.onSubmitCode,
     this.supabaseUrlController,
     this.supabaseAnonKeyController,
     this.showProjectConfiguration = false,
@@ -20,12 +22,19 @@ class SupabaseAuthForm extends StatefulWidget {
   });
 
   final TextEditingController emailController;
-  final TextEditingController passwordController;
+  final TextEditingController codeController;
   final TextEditingController? supabaseUrlController;
   final TextEditingController? supabaseAnonKeyController;
-  final Future<void> Function(String email, String password) onSignIn;
-  final Future<void> Function(String email, String password) onSignUp;
-  final Future<void> Function(String email) onPasswordReset;
+
+  /// Emails the sign-in link + one-time code. Returns true when the code was
+  /// sent, which reveals the code field; false leaves the form on the email
+  /// step (the caller surfaces why).
+  final Future<bool> Function(String email) onRequestCode;
+
+  /// Redeems the emailed code, signing the user in (or creating the account on
+  /// first use).
+  final Future<void> Function(String email, String code) onSubmitCode;
+
   final bool showProjectConfiguration;
   final bool enabled;
 
@@ -33,212 +42,223 @@ class SupabaseAuthForm extends StatefulWidget {
   State<SupabaseAuthForm> createState() => _SupabaseAuthFormState();
 }
 
-enum _AuthAction { signIn, signUp, passwordReset }
+enum _Busy { none, request, verify }
 
 class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
   final _formKey = GlobalKey<FormState>();
-  _AuthAction? _attemptedAction;
-  _AuthAction? _busyAction;
+  bool _attempted = false;
+  bool _codeSent = false;
+  _Busy _busy = _Busy.none;
   String? _inlineError;
-  bool _passwordVisible = false;
 
-  bool get _busy => _busyAction != null;
+  bool get _isBusy => _busy != _Busy.none;
 
   @override
   Widget build(BuildContext context) {
-    final enabled = widget.enabled && !_busy;
+    final enabled = widget.enabled && !_isBusy;
     return Form(
       key: _formKey,
-      autovalidateMode: _attemptedAction == null
-          ? AutovalidateMode.disabled
-          : AutovalidateMode.onUserInteraction,
+      autovalidateMode: _attempted
+          ? AutovalidateMode.onUserInteraction
+          : AutovalidateMode.disabled,
       child: AutofillGroup(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (widget.showProjectConfiguration) ...[
-              _ProjectConfigurationFields(
-                urlController: widget.supabaseUrlController,
-                anonKeyController: widget.supabaseAnonKeyController,
-                enabled: enabled,
-              ),
-              const SizedBox(height: 16),
-            ],
-            TextFormField(
-              key: const ValueKey('supabase-email-field'),
-              controller: widget.emailController,
-              enabled: enabled,
-              autofillHints: const [
-                AutofillHints.username,
-                AutofillHints.email,
-              ],
-              autocorrect: false,
-              enableSuggestions: false,
-              keyboardType: TextInputType.emailAddress,
-              textInputAction: TextInputAction.next,
-              validator: validateAccountEmail,
-              decoration: const InputDecoration(
-                labelText: 'Email',
-                hintText: 'you@example.com',
-                prefixIcon: Icon(Icons.alternate_email),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              key: const ValueKey('supabase-password-field'),
-              controller: widget.passwordController,
-              enabled: enabled,
-              autofillHints: const [AutofillHints.password],
-              autocorrect: false,
-              enableSuggestions: false,
-              obscureText: !_passwordVisible,
-              keyboardType: TextInputType.visiblePassword,
-              textInputAction: TextInputAction.done,
-              validator: (value) => validateAccountPassword(
-                value,
-                creatingAccount: _attemptedAction == _AuthAction.signUp,
-                passwordRequired: _attemptedAction != _AuthAction.passwordReset,
-              ),
-              onFieldSubmitted: enabled
-                  ? (_) => _submit(_AuthAction.signIn)
-                  : null,
-              decoration: InputDecoration(
-                labelText: 'Password',
-                helperText:
-                    'Use at least 6 characters when creating an account.',
-                prefixIcon: const Icon(Icons.lock_outline),
-                suffixIcon: IconButton(
-                  tooltip: _passwordVisible ? 'Hide password' : 'Show password',
-                  onPressed: enabled
-                      ? () =>
-                            setState(() => _passwordVisible = !_passwordVisible)
-                      : null,
-                  icon: Icon(
-                    _passwordVisible
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
-                  ),
-                ),
-              ),
-            ),
-            if (_inlineError != null) ...[
-              const SizedBox(height: 12),
-              Semantics(
-                liveRegion: true,
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    _inlineError!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onErrorContainer,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final stacked = constraints.maxWidth < 390;
-                final signIn = FilledButton.icon(
-                  key: const ValueKey('supabase-sign-in-button'),
-                  onPressed: enabled ? () => _submit(_AuthAction.signIn) : null,
-                  icon: _actionIcon(_AuthAction.signIn, Icons.login),
-                  label: Text(
-                    _busyAction == _AuthAction.signIn
-                        ? 'Signing in…'
-                        : 'Sign in',
-                  ),
-                );
-                final signUp = OutlinedButton.icon(
-                  key: const ValueKey('supabase-sign-up-button'),
-                  onPressed: enabled ? () => _submit(_AuthAction.signUp) : null,
-                  icon: _actionIcon(
-                    _AuthAction.signUp,
-                    Icons.person_add_alt_1_outlined,
-                  ),
-                  label: Text(
-                    _busyAction == _AuthAction.signUp
-                        ? 'Creating…'
-                        : 'Create account',
-                  ),
-                );
-                if (stacked) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [signIn, const SizedBox(height: 10), signUp],
-                  );
-                }
-                return Row(
-                  children: [
-                    Expanded(child: signIn),
-                    const SizedBox(width: 12),
-                    Expanded(child: signUp),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 6),
-            TextButton.icon(
-              key: const ValueKey('supabase-reset-password-button'),
-              onPressed: enabled
-                  ? () => _submit(_AuthAction.passwordReset)
-                  : null,
-              icon: _actionIcon(
-                _AuthAction.passwordReset,
-                Icons.lock_reset_outlined,
-              ),
-              label: Text(
-                _busyAction == _AuthAction.passwordReset
-                    ? 'Sending reset email…'
-                    : 'Forgot password?',
-              ),
-            ),
-          ],
+          children: _codeSent
+              ? _codeStep(context, enabled)
+              : _emailStep(context, enabled),
         ),
       ),
     );
   }
 
-  Widget _actionIcon(_AuthAction action, IconData fallback) {
-    if (_busyAction != action) {
-      return Icon(fallback);
-    }
-    return const SizedBox.square(
-      dimension: 18,
-      child: CircularProgressIndicator(strokeWidth: 2),
+  List<Widget> _emailStep(BuildContext context, bool enabled) {
+    final theme = Theme.of(context);
+    return [
+      if (widget.showProjectConfiguration) ...[
+        _ProjectConfigurationFields(
+          urlController: widget.supabaseUrlController,
+          anonKeyController: widget.supabaseAnonKeyController,
+          enabled: enabled,
+        ),
+        const SizedBox(height: 16),
+      ],
+      TextFormField(
+        key: const ValueKey('supabase-email-field'),
+        controller: widget.emailController,
+        enabled: enabled,
+        autofillHints: const [AutofillHints.username, AutofillHints.email],
+        autocorrect: false,
+        enableSuggestions: false,
+        keyboardType: TextInputType.emailAddress,
+        textInputAction: TextInputAction.done,
+        validator: validateAccountEmail,
+        onFieldSubmitted: enabled ? (_) => _requestCode() : null,
+        decoration: const InputDecoration(
+          labelText: 'Email',
+          hintText: 'you@example.com',
+          prefixIcon: Icon(Icons.alternate_email),
+        ),
+      ),
+      const SizedBox(height: 8),
+      Text(
+        'New here? Signing in creates your account automatically.',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
+      if (_inlineError != null) _errorBox(context),
+      const SizedBox(height: 16),
+      SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          key: const ValueKey('supabase-request-button'),
+          onPressed: enabled ? _requestCode : null,
+          icon: _busy == _Busy.request
+              ? _spinner
+              : const Icon(Icons.mark_email_read_outlined),
+          label: Text(
+            _busy == _Busy.request ? 'Sending…' : 'Email me a sign-in link',
+          ),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _codeStep(BuildContext context, bool enabled) {
+    final theme = Theme.of(context);
+    final email = widget.emailController.text.trim();
+    return [
+      Text('Enter your sign-in code', style: theme.textTheme.titleSmall),
+      const SizedBox(height: 4),
+      Text(
+        email.isEmpty
+            ? 'We emailed you a sign-in link and a 6-digit code. Enter the code '
+                  'to continue.'
+            : 'We emailed a sign-in link and a 6-digit code to $email. Enter the '
+                  'code to continue.',
+        style: theme.textTheme.bodySmall,
+      ),
+      const SizedBox(height: 16),
+      TextFormField(
+        key: const ValueKey('supabase-code-field'),
+        controller: widget.codeController,
+        enabled: enabled,
+        autofocus: true,
+        autofillHints: const [AutofillHints.oneTimeCode],
+        autocorrect: false,
+        enableSuggestions: false,
+        keyboardType: TextInputType.number,
+        textInputAction: TextInputAction.done,
+        maxLength: 6,
+        inputFormatters: [
+          FilteringTextInputFormatter.digitsOnly,
+          LengthLimitingTextInputFormatter(6),
+        ],
+        validator: validateEmailOtpCode,
+        onFieldSubmitted: enabled ? (_) => _submitCode() : null,
+        decoration: const InputDecoration(
+          labelText: '6-digit code',
+          hintText: '123456',
+          prefixIcon: Icon(Icons.pin_outlined),
+          counterText: '',
+        ),
+      ),
+      if (_inlineError != null) _errorBox(context),
+      const SizedBox(height: 16),
+      SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          key: const ValueKey('supabase-verify-button'),
+          onPressed: enabled ? _submitCode : null,
+          icon: _busy == _Busy.verify ? _spinner : const Icon(Icons.login),
+          label: Text(_busy == _Busy.verify ? 'Signing in…' : 'Sign in'),
+        ),
+      ),
+      const SizedBox(height: 4),
+      Row(
+        children: [
+          TextButton.icon(
+            key: const ValueKey('supabase-change-email-button'),
+            onPressed: enabled ? _useDifferentEmail : null,
+            icon: const Icon(Icons.arrow_back, size: 18),
+            label: const Text('Use a different email'),
+          ),
+          const Spacer(),
+          TextButton.icon(
+            key: const ValueKey('supabase-resend-button'),
+            onPressed: enabled ? _resendCode : null,
+            icon: _busy == _Busy.request
+                ? _spinner
+                : const Icon(Icons.refresh, size: 18),
+            label: Text(_busy == _Busy.request ? 'Sending…' : 'Resend'),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  Widget get _spinner => const SizedBox.square(
+    dimension: 18,
+    child: CircularProgressIndicator(strokeWidth: 2),
+  );
+
+  Widget _errorBox(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Semantics(
+        liveRegion: true,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.errorContainer,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            _inlineError!,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onErrorContainer,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
-  Future<void> _submit(_AuthAction action) async {
-    if (_busy || !widget.enabled) {
+  Future<void> _requestCode() async {
+    if (_isBusy || !widget.enabled) {
       return;
     }
     setState(() {
-      _attemptedAction = action;
+      _attempted = true;
       _inlineError = null;
     });
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
-    setState(() => _busyAction = action);
+    await _sendCode();
+  }
+
+  Future<void> _resendCode() async {
+    if (_isBusy || !widget.enabled) {
+      return;
+    }
+    setState(() => _inlineError = null);
+    await _sendCode();
+  }
+
+  Future<void> _sendCode() async {
+    setState(() => _busy = _Busy.request);
     final email = widget.emailController.text.trim();
     try {
-      switch (action) {
-        case _AuthAction.signIn:
-          await widget.onSignIn(email, widget.passwordController.text);
-          break;
-        case _AuthAction.signUp:
-          await widget.onSignUp(email, widget.passwordController.text);
-          break;
-        case _AuthAction.passwordReset:
-          await widget.onPasswordReset(email);
-          break;
+      final sent = await widget.onRequestCode(email);
+      if (mounted && sent) {
+        setState(() {
+          _codeSent = true;
+          // Don't flag the freshly revealed, still-empty code field as invalid.
+          _attempted = false;
+        });
       }
     } catch (error) {
       if (mounted) {
@@ -246,9 +266,48 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
       }
     } finally {
       if (mounted) {
-        setState(() => _busyAction = null);
+        setState(() => _busy = _Busy.none);
       }
     }
+  }
+
+  Future<void> _submitCode() async {
+    if (_isBusy || !widget.enabled) {
+      return;
+    }
+    setState(() {
+      _attempted = true;
+      _inlineError = null;
+    });
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+    setState(() => _busy = _Busy.verify);
+    final email = widget.emailController.text.trim();
+    final code = widget.codeController.text.trim();
+    try {
+      await widget.onSubmitCode(email, code);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _inlineError = describeAuthError(error));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = _Busy.none);
+      }
+    }
+  }
+
+  void _useDifferentEmail() {
+    if (_isBusy) {
+      return;
+    }
+    widget.codeController.clear();
+    setState(() {
+      _codeSent = false;
+      _attempted = false;
+      _inlineError = null;
+    });
   }
 }
 
@@ -339,20 +398,13 @@ String? validateAccountEmail(String? value) {
   return null;
 }
 
-String? validateAccountPassword(
-  String? value, {
-  required bool creatingAccount,
-  bool passwordRequired = true,
-}) {
-  final password = value ?? '';
-  if (!passwordRequired) {
-    return null;
+String? validateEmailOtpCode(String? value) {
+  final code = value?.trim() ?? '';
+  if (code.isEmpty) {
+    return 'Enter the 6-digit code from the email.';
   }
-  if (password.isEmpty) {
-    return 'Enter your password.';
-  }
-  if (creatingAccount && password.length < 6) {
-    return 'Use at least 6 characters.';
+  if (code.length != 6 || int.tryParse(code) == null) {
+    return 'Enter the 6-digit code from the email.';
   }
   return null;
 }

@@ -23,40 +23,6 @@ class SupabaseAuthClient {
   final http.Client _httpClient;
   final Duration requestTimeout;
 
-  Future<SupabaseSession> signInWithPassword({
-    required AppConfig config,
-    required String email,
-    required String password,
-  }) async {
-    _validateEmail(email);
-    _validatePassword(password);
-    final uri = _authUri(config, 'token', query: {'grant_type': 'password'});
-    return _session(config, uri, {
-      'email': email.trim(),
-      'password': password,
-    }, 'Supabase sign-in failed.');
-  }
-
-  /// Creates an account. Returns null when the project requires email
-  /// confirmation (the response carries a user but no session yet).
-  Future<SupabaseSession?> signUp({
-    required AppConfig config,
-    required String email,
-    required String password,
-  }) async {
-    _validateEmail(email);
-    _validatePassword(password, creatingAccount: true);
-    final uri = _authUri(config, 'signup');
-    final decoded = await _post(config, uri, {
-      'email': email.trim(),
-      'password': password,
-    }, 'Supabase sign-up failed.');
-    if ((decoded['access_token'] as String? ?? '').trim().isEmpty) {
-      return null;
-    }
-    return SupabaseSession.fromJson(decoded);
-  }
-
   /// Emails a one-time sign-in code (and, with the default template, a magic
   /// link). `create_user: true` makes this the sign-up path too: an unknown
   /// address gets an account the moment its first code is verified.
@@ -278,22 +244,6 @@ class SupabaseAuthClient {
     }, 'Supabase token refresh failed.');
   }
 
-  /// Sends Supabase's hosted password-reset email. The reset link is generated
-  /// by the project Auth settings; the app never sees the user's new password.
-  Future<void> sendPasswordResetEmail({
-    required AppConfig config,
-    required String email,
-    String redirectTo = '',
-  }) async {
-    _validateEmail(email);
-    final uri = _authUri(config, 'recover');
-    final normalizedRedirect = _validateRedirectTo(redirectTo);
-    await _post(config, uri, {
-      'email': email.trim(),
-      if (normalizedRedirect.isNotEmpty) 'redirect_to': normalizedRedirect,
-    }, 'Supabase password reset failed.');
-  }
-
   /// Best-effort server-side session revocation. Local secrets are cleared by
   /// the caller regardless of the outcome.
   Future<void> signOut({
@@ -469,36 +419,6 @@ class SupabaseAuthClient {
         normalized.contains(' ')) {
       throw const FormatException('Enter a valid email address.');
     }
-  }
-
-  void _validatePassword(String password, {bool creatingAccount = false}) {
-    if (password.isEmpty) {
-      throw const FormatException('Enter your password.');
-    }
-    if (creatingAccount && password.length < 6) {
-      throw const FormatException(
-        'Use at least 6 characters when creating an account.',
-      );
-    }
-  }
-
-  String _validateRedirectTo(String value) {
-    final normalized = value.trim();
-    if (normalized.isEmpty) {
-      return '';
-    }
-    final uri = Uri.tryParse(normalized);
-    if (uri == null || uri.host.isEmpty || uri.userInfo.isNotEmpty) {
-      throw const FormatException('Password-reset redirect URL is invalid.');
-    }
-    if (uri.scheme != 'https' &&
-        uri.host != 'localhost' &&
-        uri.host != '127.0.0.1') {
-      throw const FormatException(
-        'Password-reset redirect URL must use HTTPS except localhost development.',
-      );
-    }
-    return uri.toString();
   }
 
   void close() {

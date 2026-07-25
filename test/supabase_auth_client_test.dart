@@ -13,42 +13,70 @@ void main() {
     supabaseAnonKey: 'anon-key-123',
   );
 
-  test('signInWithPassword posts to GoTrue and parses the session', () async {
+  test('sendEmailOtp posts to GoTrue otp and enables sign-up', () async {
     late http.Request captured;
     final client = SupabaseAuthClient(
       httpClient: MockClient((request) async {
         captured = request;
-        return http.Response(
-          jsonEncode({
-            'access_token': 'access-1',
-            'refresh_token': 'refresh-1',
-            'expires_in': 3600,
-            'user': {'id': 'user-1', 'email': 'user@example.com'},
-          }),
-          200,
-          headers: {'content-type': 'application/json'},
-        );
+        return http.Response('{}', 200);
       }),
     );
 
-    final session = await client.signInWithPassword(
-      config: config,
-      email: 'user@example.com',
-      password: 'hunter2',
-    );
+    await client.sendEmailOtp(config: config, email: '  user@example.com ');
 
     expect(captured.method, 'POST');
-    expect(captured.url.path, '/auth/v1/token');
-    expect(captured.url.queryParameters['grant_type'], 'password');
+    expect(captured.url.path, '/auth/v1/otp');
     // The anon key, never the service key, authorizes the request.
     expect(captured.headers['apikey'], 'anon-key-123');
     expect(captured.headers['authorization'], 'Bearer anon-key-123');
-    expect(session.accessToken, 'access-1');
-    expect(session.refreshToken, 'refresh-1');
-    expect(session.email, 'user@example.com');
-    expect(session.userId, 'user-1');
-    expect(session.expiresAtUtc.isAfter(DateTime.now().toUtc()), isTrue);
+    final body = jsonDecode(captured.body) as Map<String, dynamic>;
+    expect(body['email'], 'user@example.com');
+    // create_user makes the same call the sign-up path: an unknown address is
+    // created the moment its first code is verified.
+    expect(body['create_user'], true);
   });
+
+  test(
+    'verifyEmailOtp posts to GoTrue verify and parses the session',
+    () async {
+      late http.Request captured;
+      final client = SupabaseAuthClient(
+        httpClient: MockClient((request) async {
+          captured = request;
+          return http.Response(
+            jsonEncode({
+              'access_token': 'access-1',
+              'refresh_token': 'refresh-1',
+              'expires_in': 3600,
+              'user': {'id': 'user-1', 'email': 'user@example.com'},
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      final session = await client.verifyEmailOtp(
+        config: config,
+        email: 'user@example.com',
+        code: '123456',
+      );
+
+      expect(captured.method, 'POST');
+      expect(captured.url.path, '/auth/v1/verify');
+      expect(captured.headers['apikey'], 'anon-key-123');
+      expect(captured.headers['authorization'], 'Bearer anon-key-123');
+      final body = jsonDecode(captured.body) as Map<String, dynamic>;
+      expect(body['type'], 'email');
+      expect(body['email'], 'user@example.com');
+      expect(body['token'], '123456');
+      expect(session.accessToken, 'access-1');
+      expect(session.refreshToken, 'refresh-1');
+      expect(session.email, 'user@example.com');
+      expect(session.userId, 'user-1');
+      expect(session.expiresAtUtc.isAfter(DateTime.now().toUtc()), isTrue);
+    },
+  );
 
   test('refreshSession uses the refresh_token grant', () async {
     late http.Request captured;
@@ -78,103 +106,31 @@ void main() {
     expect(session.refreshToken, 'refresh-2');
   });
 
-  test('sendPasswordResetEmail posts to GoTrue recover', () async {
-    late http.Request captured;
+  test('verifyEmailOtp rejects an empty code before making a request', () async {
+    var called = false;
     final client = SupabaseAuthClient(
       httpClient: MockClient((request) async {
-        captured = request;
+        called = true;
         return http.Response('{}', 200);
       }),
     );
 
-    await client.sendPasswordResetEmail(
-      config: config,
-      email: 'user@example.com',
-    );
-
-    expect(captured.method, 'POST');
-    expect(captured.url.path, '/auth/v1/recover');
-    expect(captured.headers['apikey'], 'anon-key-123');
-    expect(captured.headers['authorization'], 'Bearer anon-key-123');
-    expect(jsonDecode(captured.body)['email'], 'user@example.com');
-  });
-
-  test(
-    'password reset includes a validated native or web return URL',
-    () async {
-      late http.Request captured;
-      final client = SupabaseAuthClient(
-        httpClient: MockClient((request) async {
-          captured = request;
-          return http.Response('{}', 200);
-        }),
-      );
-
-      await client.sendPasswordResetEmail(
+    await expectLater(
+      client.verifyEmailOtp(
         config: config,
         email: 'user@example.com',
-        redirectTo: 'https://app.sonusauris.example/auth/recovery',
-      );
-
-      expect(
-        jsonDecode(captured.body)['redirect_to'],
-        'https://app.sonusauris.example/auth/recovery',
-      );
-    },
-  );
-
-  test('signUp returns null when email confirmation is required', () async {
-    final client = SupabaseAuthClient(
-      httpClient: MockClient((request) async {
-        // Confirmation-required projects return the user but no session.
-        return http.Response(
-          jsonEncode({'id': 'user-1', 'email': 'user@example.com'}),
-          200,
-          headers: {'content-type': 'application/json'},
-        );
-      }),
+        code: '   ',
+      ),
+      throwsA(isA<FormatException>()),
     );
-
-    final session = await client.signUp(
-      config: config,
-      email: 'user@example.com',
-      password: 'hunter2',
-    );
-
-    expect(session, isNull);
-  });
-
-  test('signUp returns a session when one is issued immediately', () async {
-    final client = SupabaseAuthClient(
-      httpClient: MockClient((request) async {
-        return http.Response(
-          jsonEncode({
-            'access_token': 'access-1',
-            'refresh_token': 'refresh-1',
-            'expires_in': 3600,
-            'user': {'id': 'user-1', 'email': 'user@example.com'},
-          }),
-          200,
-          headers: {'content-type': 'application/json'},
-        );
-      }),
-    );
-
-    final session = await client.signUp(
-      config: config,
-      email: 'user@example.com',
-      password: 'hunter2',
-    );
-
-    expect(session, isNotNull);
-    expect(session!.accessToken, 'access-1');
+    expect(called, isFalse);
   });
 
   test('surfaces GoTrue error descriptions', () async {
     final client = SupabaseAuthClient(
       httpClient: MockClient((request) async {
         return http.Response(
-          jsonEncode({'error_description': 'Invalid login credentials'}),
+          jsonEncode({'error_description': 'Token has expired or is invalid'}),
           400,
           headers: {'content-type': 'application/json'},
         );
@@ -182,16 +138,16 @@ void main() {
     );
 
     expect(
-      () => client.signInWithPassword(
+      () => client.verifyEmailOtp(
         config: config,
         email: 'user@example.com',
-        password: 'wrong',
+        code: '000000',
       ),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
           'message',
-          'Invalid login credentials',
+          'Token has expired or is invalid',
         ),
       ),
     );
@@ -208,11 +164,7 @@ void main() {
     );
 
     expect(
-      () => client.signInWithPassword(
-        config: insecure,
-        email: 'user@example.com',
-        password: 'hunter2',
-      ),
+      () => client.sendEmailOtp(config: insecure, email: 'user@example.com'),
       throwsA(isA<FormatException>()),
     );
   });
@@ -224,16 +176,12 @@ void main() {
     );
 
     expect(
-      () => client.signInWithPassword(
-        config: unconfigured,
-        email: 'user@example.com',
-        password: 'hunter2',
-      ),
+      () => client.sendEmailOtp(config: unconfigured, email: 'user@example.com'),
       throwsA(isA<FormatException>()),
     );
   });
 
-  test('rejects malformed credentials without making a request', () async {
+  test('rejects a malformed email without making a request', () async {
     var called = false;
     final client = SupabaseAuthClient(
       httpClient: MockClient((request) async {
@@ -243,18 +191,14 @@ void main() {
     );
 
     await expectLater(
-      client.signInWithPassword(
-        config: config,
-        email: 'not-an-email',
-        password: '',
-      ),
+      client.sendEmailOtp(config: config, email: 'not-an-email'),
       throwsA(isA<FormatException>()),
     );
     await expectLater(
-      client.signUp(
+      client.verifyEmailOtp(
         config: config,
-        email: 'user@example.com',
-        password: 'short',
+        email: 'not-an-email',
+        code: '123456',
       ),
       throwsA(isA<FormatException>()),
     );
@@ -276,11 +220,7 @@ void main() {
     );
 
     await expectLater(
-      client.signInWithPassword(
-        config: unsafe,
-        email: 'user@example.com',
-        password: 'hunter2',
-      ),
+      client.sendEmailOtp(config: unsafe, email: 'user@example.com'),
       throwsA(
         isA<FormatException>().having(
           (error) => error.message,
@@ -300,16 +240,16 @@ void main() {
     );
 
     await expectLater(
-      client.signInWithPassword(
+      client.verifyEmailOtp(
         config: config,
         email: 'user@example.com',
-        password: 'hunter2',
+        code: '123456',
       ),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
           'message',
-          'Supabase sign-in failed.',
+          'That code was not accepted. Request a fresh one and try again.',
         ),
       ),
     );
@@ -325,11 +265,7 @@ void main() {
     );
 
     await expectLater(
-      client.signInWithPassword(
-        config: config,
-        email: 'user@example.com',
-        password: 'hunter2',
-      ),
+      client.sendEmailOtp(config: config, email: 'user@example.com'),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,

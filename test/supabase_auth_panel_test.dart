@@ -5,9 +5,8 @@ import 'package:audio_dashcam/src/widgets/supabase_auth_panel.dart';
 
 void main() {
   Widget harness({
-    required Future<void> Function(String, String) onSignIn,
-    required Future<void> Function(String, String) onSignUp,
-    Future<void> Function(String)? onPasswordReset,
+    required Future<bool> Function(String) onRequestCode,
+    required Future<void> Function(String, String) onSubmitCode,
     bool enabled = true,
   }) {
     return MaterialApp(
@@ -18,9 +17,8 @@ void main() {
           children: [
             SupabaseAuthPanel(
               enabled: enabled,
-              onSignIn: onSignIn,
-              onSignUp: onSignUp,
-              onPasswordReset: onPasswordReset,
+              onRequestCode: onRequestCode,
+              onSubmitCode: onSubmitCode,
             ),
           ],
         ),
@@ -28,32 +26,41 @@ void main() {
     );
   }
 
-  testWidgets('validates credentials before sign in', (tester) async {
+  testWidgets('validates the email before requesting a code', (tester) async {
     var calls = 0;
     await tester.pumpWidget(
-      harness(onSignIn: (_, _) async => calls += 1, onSignUp: (_, _) async {}),
+      harness(
+        onRequestCode: (_) async {
+          calls += 1;
+          return true;
+        },
+        onSubmitCode: (_, _) async {},
+      ),
     );
 
-    await tester.tap(find.text('Sign in securely'));
+    await tester.tap(find.text('Email me a sign-in link'));
     await tester.pump();
 
     expect(find.text('Enter a valid email address.'), findsOneWidget);
-    expect(find.text('Use at least 8 characters.'), findsOneWidget);
     expect(calls, 0);
   });
 
-  testWidgets('signs in with normalized email and exact password', (
+  testWidgets('requests a code with a normalized email, then verifies it', (
     tester,
   ) async {
+    String? requestedEmail;
     String? submittedEmail;
-    String? submittedPassword;
+    String? submittedCode;
     await tester.pumpWidget(
       harness(
-        onSignIn: (email, password) async {
-          submittedEmail = email;
-          submittedPassword = password;
+        onRequestCode: (email) async {
+          requestedEmail = email;
+          return true;
         },
-        onSignUp: (_, _) async {},
+        onSubmitCode: (email, code) async {
+          submittedEmail = email;
+          submittedCode = code;
+        },
       ),
     );
 
@@ -61,70 +68,84 @@ void main() {
       find.byKey(const ValueKey('supabase-email')),
       '  listener@example.com  ',
     );
+    await tester.tap(find.text('Email me a sign-in link'));
+    await tester.pumpAndSettle();
+
+    // One flow covers sign-in and sign-up: the code field is now revealed.
+    expect(requestedEmail, 'listener@example.com');
+    expect(find.byKey(const ValueKey('supabase-code')), findsOneWidget);
+
     await tester.enterText(
-      find.byKey(const ValueKey('supabase-password')),
-      'correct horse battery staple',
+      find.byKey(const ValueKey('supabase-code')),
+      '654321',
     );
     await tester.tap(find.text('Sign in securely'));
     await tester.pumpAndSettle();
 
     expect(submittedEmail, 'listener@example.com');
-    expect(submittedPassword, 'correct horse battery staple');
+    expect(submittedCode, '654321');
   });
 
-  testWidgets('switches to account creation and submits', (tester) async {
-    String? submittedEmail;
+  testWidgets('validates the code before verifying', (tester) async {
+    var submits = 0;
     await tester.pumpWidget(
       harness(
-        onSignIn: (_, _) async {},
-        onSignUp: (email, _) async => submittedEmail = email,
+        onRequestCode: (_) async => true,
+        onSubmitCode: (_, _) async => submits += 1,
       ),
     );
 
-    await tester.tap(find.text('Create account'));
+    await tester.enterText(
+      find.byKey(const ValueKey('supabase-email')),
+      'listener@example.com',
+    );
+    await tester.tap(find.text('Email me a sign-in link'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('supabase-code')), '12');
+    await tester.tap(find.text('Sign in securely'));
     await tester.pump();
-    await tester.enterText(
-      find.byKey(const ValueKey('supabase-email')),
-      'new.listener@example.com',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('supabase-password')),
-      'long-enough-password',
-    );
-    await tester.tap(find.text('Create my account'));
-    await tester.pumpAndSettle();
 
-    expect(submittedEmail, 'new.listener@example.com');
+    expect(find.text('Enter the 6-digit code from the email.'), findsOneWidget);
+    expect(submits, 0);
   });
 
-  testWidgets('requests a password reset for the entered email', (
-    tester,
-  ) async {
-    String? resetEmail;
+  testWidgets('can resend a code and return to the email step', (tester) async {
+    var requests = 0;
     await tester.pumpWidget(
       harness(
-        onSignIn: (_, _) async {},
-        onSignUp: (_, _) async {},
-        onPasswordReset: (email) async => resetEmail = email,
+        onRequestCode: (_) async {
+          requests += 1;
+          return true;
+        },
+        onSubmitCode: (_, _) async {},
       ),
     );
 
     await tester.enterText(
       find.byKey(const ValueKey('supabase-email')),
-      '  reset@example.com ',
+      'listener@example.com',
     );
-    await tester.tap(find.text('Reset password'));
+    await tester.tap(find.text('Email me a sign-in link'));
     await tester.pumpAndSettle();
+    expect(requests, 1);
 
-    expect(resetEmail, 'reset@example.com');
+    await tester.tap(find.text('Resend'));
+    await tester.pumpAndSettle();
+    expect(requests, 2);
+
+    await tester.tap(find.text('Use a different email'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('supabase-code')), findsNothing);
+    expect(find.text('Email me a sign-in link'), findsOneWidget);
   });
 
   testWidgets('explains when account access is not configured', (tester) async {
     await tester.pumpWidget(
       harness(
         enabled: false,
-        onSignIn: (_, _) async {},
-        onSignUp: (_, _) async {},
+        onRequestCode: (_) async => true,
+        onSubmitCode: (_, _) async {},
       ),
     );
 
