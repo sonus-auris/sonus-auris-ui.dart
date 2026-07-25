@@ -71,6 +71,8 @@ class AppConfig {
     this.keywords = const [],
     this.safeWords = const [],
     this.keywordQualityBoostMinutes = 90,
+    this.collisionRemindersEnabled = false,
+    this.collisionSensitivityG = 2.5,
     this.sttEnabled = false,
     this.sttEndpoint = '',
     this.voiceIdEnabled = false,
@@ -235,6 +237,15 @@ class AppConfig {
   /// How long, in minutes, a heard keyword or safe word forces full recording
   /// quality (overriding adaptive downsampling of quiet audio). Defaults to 90.
   final int keywordQualityBoostMinutes;
+
+  /// Watch the accelerometer while recording and, on a detected impact
+  /// (collision/drop), remind the user the app is still recording. Requires
+  /// motion-sensor consent; off by default.
+  final bool collisionRemindersEnabled;
+
+  /// Impact sensitivity in g beyond normal gravity — the deviation from 1g that
+  /// counts as a collision. Lower is more sensitive; ~2.5g is a firm knock.
+  final double collisionSensitivityG;
 
   /// Opt-in cloud speech-to-text. When on, short clips of sustained speech are
   /// POSTed to [sttEndpoint] to scan for [keywords]. Off by default; audio only
@@ -423,6 +434,8 @@ class AppConfig {
     List<String>? keywords,
     List<String>? safeWords,
     int? keywordQualityBoostMinutes,
+    bool? collisionRemindersEnabled,
+    double? collisionSensitivityG,
     bool? sttEnabled,
     String? sttEndpoint,
     bool? voiceIdEnabled,
@@ -509,6 +522,10 @@ class AppConfig {
       safeWords: safeWords ?? this.safeWords,
       keywordQualityBoostMinutes:
           keywordQualityBoostMinutes ?? this.keywordQualityBoostMinutes,
+      collisionRemindersEnabled:
+          collisionRemindersEnabled ?? this.collisionRemindersEnabled,
+      collisionSensitivityG:
+          collisionSensitivityG ?? this.collisionSensitivityG,
       sttEnabled: sttEnabled ?? this.sttEnabled,
       sttEndpoint: sttEndpoint ?? this.sttEndpoint,
       voiceIdEnabled: voiceIdEnabled ?? this.voiceIdEnabled,
@@ -582,6 +599,8 @@ class AppConfig {
       'keywords': keywords,
       'safeWords': safeWords,
       'keywordQualityBoostMinutes': keywordQualityBoostMinutes,
+      'collisionRemindersEnabled': collisionRemindersEnabled,
+      'collisionSensitivityG': collisionSensitivityG,
       'sttEnabled': sttEnabled,
       'sttEndpoint': sttEndpoint,
       'voiceIdEnabled': voiceIdEnabled,
@@ -691,6 +710,12 @@ class AppConfig {
         json['keywordQualityBoostMinutes'],
         90,
       ).clamp(1, 24 * 60),
+      collisionRemindersEnabled:
+          json['collisionRemindersEnabled'] as bool? ?? false,
+      collisionSensitivityG: _asDouble(
+        json['collisionSensitivityG'],
+        2.5,
+      ).clamp(0.5, 16.0),
       sttEnabled: json['sttEnabled'] as bool? ?? false,
       sttEndpoint: json['sttEndpoint'] as String? ?? '',
       voiceIdEnabled: json['voiceIdEnabled'] as bool? ?? false,

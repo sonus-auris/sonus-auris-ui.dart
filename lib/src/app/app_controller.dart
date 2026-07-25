@@ -46,6 +46,8 @@ import '../services/context_trigger_sources.dart';
 import '../services/local_notifications_service.dart';
 import '../services/playback_service.dart';
 import '../services/power_network_gate.dart';
+import '../services/collision_detector.dart';
+import '../services/collision_sensor_service.dart';
 import '../services/recording_feedback.dart';
 import '../services/recording_scheduler.dart';
 import '../services/recording_schedule_platform.dart';
@@ -480,6 +482,8 @@ class AppController {
   late final Stream<AppViewModel> _viewModels;
   StreamSubscription<void>? _closedSegmentsSubscription;
   StreamSubscription<dynamic>? _triggerSubscription;
+  final CollisionSensorService _collisionSensor = CollisionSensorService();
+  StreamSubscription<CollisionEvent>? _collisionSubscription;
   StreamSubscription<dynamic>? _detectionsSubscription;
   StreamSubscription<dynamic>? _uploadSubscription;
   StreamSubscription<String>? _resumeRequestsSubscription;
@@ -2019,6 +2023,46 @@ class AppController {
     return error.toString();
   }
 
+  /// Watch the accelerometer while recording (when enabled) and, on a detected
+  /// impact, remind the user the app is still capturing — the dashcam-style
+  /// "you were recording when this happened" cue. Best-effort: a sensor that
+  /// never streams (no native support / permission) simply never fires.
+  void _startCollisionMonitoring() {
+    if (!_config.hasValue || !_config.value.collisionRemindersEnabled) {
+      return;
+    }
+    unawaited(_collisionSubscription?.cancel());
+    _collisionSubscription = _collisionSensor
+        .collisions(sensitivityG: _config.value.collisionSensitivityG)
+        .listen(
+          _onCollision,
+          onError: (Object error) =>
+              _diagnostics.add('Collision sensor error: $error'),
+        );
+  }
+
+  Future<void> _stopCollisionMonitoring() async {
+    final subscription = _collisionSubscription;
+    _collisionSubscription = null;
+    await subscription?.cancel();
+  }
+
+  void _onCollision(CollisionEvent event) {
+    _diagnostics.add(
+      'Collision detected (${event.peakG.toStringAsFixed(1)}g); '
+      'reminding that capture is live.',
+    );
+    unawaited(
+      _feedback.say(
+        'Sonus Auris is recording. A possible impact was detected.',
+        force: true,
+      ),
+    );
+    _message.add(
+      'Possible collision detected — Sonus Auris is still recording.',
+    );
+  }
+
   Future<void> startRecording({bool scheduleInitiated = false}) async {
     if (!hasValidRecordingConsent) {
       _message.add(
@@ -2049,6 +2093,7 @@ class AppController {
         // Capture is live: from here a dropped stream should be auto-resumed.
         _intendRecording = true;
         _diagnostics.add('PCM microphone stream started.');
+        _startCollisionMonitoring();
         unawaited(_feedback.say('Recording started'));
         _message.add(
           backgroundError == null
@@ -2073,6 +2118,7 @@ class AppController {
     _cancelPendingPauseResume();
     // Clear intent first so an in-flight resume request does not re-start us.
     _intendRecording = false;
+    await _stopCollisionMonitoring();
     Object? recorderError;
     try {
       await _recorder.stop();
@@ -2786,6 +2832,7 @@ class AppController {
     await Future.wait([
       _closedSegmentsSubscription?.cancel() ?? Future<void>.value(),
       _triggerSubscription?.cancel() ?? Future<void>.value(),
+      _collisionSubscription?.cancel() ?? Future<void>.value(),
       _detectionsSubscription?.cancel() ?? Future<void>.value(),
       _uploadSubscription?.cancel() ?? Future<void>.value(),
       _resumeRequestsSubscription?.cancel() ?? Future<void>.value(),

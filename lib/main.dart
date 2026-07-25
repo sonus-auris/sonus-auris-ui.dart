@@ -3128,6 +3128,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
   late double _activationDb;
   late bool _sttEnabled;
   late bool _adaptiveEnabled;
+  late bool _collisionEnabled;
   late int _captureRate;
   late int _quietRate;
   late double _adaptiveLoudnessDb;
@@ -3153,6 +3154,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
     _activationDb = config.analysisActivationDb;
     _sttEnabled = config.sttEnabled;
     _adaptiveEnabled = config.adaptiveQualityEnabled;
+    _collisionEnabled = config.collisionRemindersEnabled;
     _captureRate = config.captureSampleRate;
     _quietRate = config.quietSampleRate;
     _adaptiveLoudnessDb = config.adaptiveLoudnessDb;
@@ -3202,6 +3204,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
         captureSampleRate: _captureRate,
         quietSampleRate: _quietRate,
         adaptiveLoudnessDb: _adaptiveLoudnessDb,
+        collisionRemindersEnabled: _collisionEnabled,
       ),
     );
   }
@@ -3435,6 +3438,19 @@ class _AcousticSectionState extends State<_AcousticSection> {
               value: _adaptiveEnabled,
               onChanged: (v) {
                 setState(() => _adaptiveEnabled = v);
+                _apply();
+              },
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Collision reminders'),
+              subtitle: const Text(
+                'Watch the accelerometer while recording; on a detected impact, '
+                'remind you the app is still capturing.',
+              ),
+              value: _collisionEnabled,
+              onChanged: (v) {
+                setState(() => _collisionEnabled = v);
                 _apply();
               },
             ),
