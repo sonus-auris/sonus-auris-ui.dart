@@ -1,11 +1,11 @@
 {
-    "name": "sonus_auris_console",
-    "short_name": "sonus_auris_console",
+    "name": "Sonus Auris Console",
+    "short_name": "Sonus Auris",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0a241c",
+    "theme_color": "#34c585",
+    "description": "Multi-device viewer and controller for the Sonus Auris audio dashcam.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
