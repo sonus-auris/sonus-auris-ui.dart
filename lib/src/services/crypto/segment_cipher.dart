@@ -31,6 +31,10 @@ import 'package:cryptography/cryptography.dart';
 /// 8+L     ...   contentBox       AES-256-GCM(audio) as nonce|cipher|mac
 /// ```
 ///
+/// Version 2 sets flags `0x03` and inserts a uint16-length account-recipient
+/// wrapped DEK between the device wrapper and content box. Protocol v1 fixes the
+/// flag combinations exactly; unknown or inconsistent bits fail closed.
+///
 /// The container is provider-agnostic: it is prepended to the object body so it
 /// works identically for an S3 `PUT`, a Drive upload, or an iCloud file.
 class SegmentCipher {
@@ -113,7 +117,8 @@ class SegmentCipher {
   }
 
   /// Parses the fixed header without decrypting. Throws [FormatException] when
-  /// the bytes are not a recognised container (e.g. legacy plaintext objects).
+  /// the bytes are not a recognised, protocol-consistent container (for example,
+  /// legacy plaintext, truncation, an unsupported version, or incompatible flags).
   static SegmentHeader peekHeader(Uint8List container) {
     if (container.length < _headerFixedLength) {
       throw const FormatException('Encrypted segment is truncated.');
@@ -128,9 +133,18 @@ class SegmentCipher {
       throw FormatException('Unsupported segment cipher version: $ver.');
     }
     final flags = container[5];
+    final expectedFlags = ver == version
+        ? _flagWrappedByMasterKey
+        : _flagWrappedByMasterKey | _flagAccountRecipient;
+    if (flags != expectedFlags) {
+      throw FormatException(
+        'Unsupported segment cipher flags for version $ver: 0x${flags.toRadixString(16).padLeft(2, '0')}.',
+      );
+    }
+
     final wrappedDekLen = (container[6] << 8) | container[7];
     var offset = _headerFixedLength + wrappedDekLen;
-    if (container.length < offset + 2) {
+    if (container.length < offset) {
       throw const FormatException('Encrypted segment is truncated.');
     }
     final wrappedDek = Uint8List.sublistView(
@@ -140,7 +154,10 @@ class SegmentCipher {
     );
 
     Uint8List? accountWrappedDek;
-    if (ver == versionMultiRecipient && (flags & _flagAccountRecipient) != 0) {
+    if (ver == versionMultiRecipient) {
+      if (container.length < offset + 2) {
+        throw const FormatException('Encrypted segment is truncated.');
+      }
       final accountLen = (container[offset] << 8) | container[offset + 1];
       final accountStart = offset + 2;
       final accountEnd = accountStart + accountLen;
