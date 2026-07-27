@@ -118,13 +118,13 @@ void main() {
           id: 'later',
           endedAtUtc: now.subtract(const Duration(hours: 89)),
           status: SegmentUploadStatus.pending,
-          error: 'offline',
+          error: 'provider/path details must not be copied into the warning',
         ),
         _segment(
           id: 'earlier',
           endedAtUtc: now.subtract(const Duration(hours: 95)),
           status: SegmentUploadStatus.failed,
-          error: 'upload failed',
+          error: 'upload failed with sensitive provider details',
         ),
         _segment(
           id: 'outside-horizon',
@@ -141,7 +141,7 @@ void main() {
 
     expect(warnings.map((warning) => warning.segmentId), ['earlier', 'later']);
     expect(warnings.first.expiresAtUtc, now.add(const Duration(hours: 5)));
-    expect(warnings.first.lastError, 'upload failed');
+    expect(warnings.first.uploadStatus, SegmentUploadStatus.failed);
     expect(
       warnings.first.deletionMessageAt(now),
       'Backup has not completed. The local copy will be deleted at 2026-07-27T17:00:00.000Z.',
