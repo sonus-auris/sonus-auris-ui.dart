@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   transform:
@@ -19,7 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          persist-credentials: false
+          fetch-depth: 0
+          persist-credentials: true
+          ref: agent/den-250-artifact-producer-wiring
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.21.0
         with:
@@ -34,22 +36,18 @@ jobs:
           python3 <<'PY'
           from pathlib import Path
 
-          def one(text, old, new, label):
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'{label}: expected one match, found {count}')
-              return text.replace(old, new, 1)
-
           path = Path('lib/src/models/app_config.dart')
           source = path.read_text()
-          source = one(
-              source,
-              """  static const defaultSupabaseAnonKey = String.fromEnvironment(
+          marker = 'static const maxDeviceRetentionHours = 100;'
+          if marker not in source:
+              replacements = [
+                  (
+                      """  static const defaultSupabaseAnonKey = String.fromEnvironment(
     'SONUS_SUPABASE_ANON_KEY',
   );
 
 """,
-              """  static const defaultSupabaseAnonKey = String.fromEnvironment(
+                      """  static const defaultSupabaseAnonKey = String.fromEnvironment(
     'SONUS_SUPABASE_ANON_KEY',
   );
 
@@ -60,24 +58,21 @@ jobs:
       hours.clamp(minDeviceRetentionHours, maxDeviceRetentionHours).toInt();
 
 """,
-              'retention constants',
-          )
-          source = one(
-              source,
-              '    this.deviceRetentionHours = 100,\n',
-              '    int deviceRetentionHours = maxDeviceRetentionHours,\n',
-              'constructor parameter',
-          )
-          source = one(
-              source,
-              '  }) : _recordingSchedule = recordingSchedule;\n',
-              '  }) : _deviceRetentionHours = deviceRetentionHours,\n       _recordingSchedule = recordingSchedule;\n',
-              'constructor initializer',
-          )
-          source = one(
-              source,
-              '  final int deviceRetentionHours;\n  final int cloudRetentionHours;\n',
-              """  final int _deviceRetentionHours;
+                      'retention constants',
+                  ),
+                  (
+                      '    this.deviceRetentionHours = 100,\n',
+                      '    int deviceRetentionHours = maxDeviceRetentionHours,\n',
+                      'constructor parameter',
+                  ),
+                  (
+                      '  }) : _recordingSchedule = recordingSchedule;\n',
+                      '  }) : _deviceRetentionHours = deviceRetentionHours,\n       _recordingSchedule = recordingSchedule;\n',
+                      'constructor initializer',
+                  ),
+                  (
+                      '  final int deviceRetentionHours;\n  final int cloudRetentionHours;\n',
+                      """  final int _deviceRetentionHours;
 
   /// The effective local plaintext lifetime. Legacy, remote, and directly
   /// constructed oversized values are normalized at the model boundary so no
@@ -87,11 +82,19 @@ jobs:
 
   final int cloudRetentionHours;
 """,
-              'normalized getter',
-          )
-          path.write_text(source)
+                      'normalized getter',
+                  ),
+              ]
+              for old, new, label in replacements:
+                  count = source.count(old)
+                  if count != 1:
+                      raise SystemExit(f'{label}: expected one match, found {count}')
+                  source = source.replace(old, new, 1)
+              path.write_text(source)
 
-          Path('test/device_retention_ceiling_test.dart').write_text("""import 'package:audio_dashcam/src/models/app_config.dart';
+          test = Path('test/device_retention_ceiling_test.dart')
+          if not test.exists():
+              test.write_text("""import 'package:audio_dashcam/src/models/app_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -100,7 +103,7 @@ void main() {
     expect(config.deviceRetentionHours, AppConfig.maxDeviceRetentionHours);
   });
 
-  test('legacy persisted oversized values migrate on read', () {
+  test('legacy persisted oversized values migrate on read and write', () {
     final config = AppConfig.fromJson({
       'deviceId': 'device',
       'deviceRetentionHours': 500,
@@ -110,8 +113,16 @@ void main() {
   });
 
   test('shorter values and the minimum remain supported', () {
-    expect(const AppConfig(deviceId: 'd', deviceRetentionHours: 24).deviceRetentionHours, 24);
-    expect(const AppConfig(deviceId: 'd', deviceRetentionHours: 0).deviceRetentionHours, 1);
+    expect(
+      const AppConfig(deviceId: 'd', deviceRetentionHours: 24)
+          .deviceRetentionHours,
+      24,
+    );
+    expect(
+      const AppConfig(deviceId: 'd', deviceRetentionHours: 0)
+          .deviceRetentionHours,
+      1,
+    );
   });
 }
 """)
@@ -121,25 +132,19 @@ void main() {
         run: |
           set -euo pipefail
           dart format lib/src/models/app_config.dart test/device_retention_ceiling_test.dart
-          git diff --binary --no-ext-diff > "${RUNNER_TEMP}/first.patch"
-          dart format lib/src/models/app_config.dart test/device_retention_ceiling_test.dart
-          git diff --binary --no-ext-diff > "${RUNNER_TEMP}/second.patch"
-          cmp "${RUNNER_TEMP}/first.patch" "${RUNNER_TEMP}/second.patch"
           flutter analyze --no-fatal-infos
           flutter test test/device_retention_ceiling_test.dart
           flutter test test/segment_index_retention_test.dart
 
-      - name: Collect validated files
+      - name: Commit validated source
         run: |
-          out="${RUNNER_TEMP}/den-250-ceiling"
-          mkdir -p "$out/lib/src/models" "$out/test"
-          cp lib/src/models/app_config.dart "$out/lib/src/models/app_config.dart"
-          cp test/device_retention_ceiling_test.dart "$out/test/device_retention_ceiling_test.dart"
-          cp "${RUNNER_TEMP}/first.patch" "$out/generated.patch"
-
-      - uses: actions/upload-artifact@v6
-        with:
-          name: den-250-retention-ceiling
-          path: ${{ runner.temp }}/den-250-ceiling
-          if-no-files-found: error
-          retention-days: 2
+          set -euo pipefail
+          git add lib/src/models/app_config.dart test/device_retention_ceiling_test.dart
+          if git diff --cached --quiet; then
+            echo 'Validated source is already committed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'DEN-250 enforce the 100-hour config boundary'
+          git push origin HEAD:agent/den-250-artifact-producer-wiring
