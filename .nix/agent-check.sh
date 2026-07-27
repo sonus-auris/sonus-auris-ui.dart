@@ -26,15 +26,7 @@ git diff --check
 nixfmt --check flake.nix .nix/devshell.nix
 shellcheck .nix/agent-check.sh
 shfmt -d .nix/agent-check.sh
-
-workflows=()
-while IFS= read -r -d '' workflow; do
-  workflows+=("$workflow")
-done < <(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
-if ((${#workflows[@]} > 0)); then
-  actionlint "${workflows[@]}"
-fi
-
+actionlint .github/workflows/ci.yml .github/workflows/nix.yml
 nix flake check --show-trace
 
 expected_flutter_version="3.44.2"
