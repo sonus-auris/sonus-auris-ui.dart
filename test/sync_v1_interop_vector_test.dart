@@ -143,7 +143,7 @@ void main() {
     );
   });
 
-  test('Dart fails closed for account-wrap and content tampering', () async {
+  test('Dart fails closed for tampering, versions, and flag ambiguity', () async {
     final inputs = _section(vector, 'inputs');
     final accountRecipient = _section(vector, 'account_recipient_v1');
     final containerVector = _section(vector, 'sac1_container_v2');
@@ -177,6 +177,22 @@ void main() {
     unsupported[4] = 3;
     expect(
       () => SegmentCipher.peekHeader(unsupported),
+      throwsFormatException,
+    );
+
+    final unknownFlags = _hex(containerVector['container'] as String);
+    unknownFlags[5] = 0x83;
+    expect(
+      () => SegmentCipher.peekHeader(unknownFlags),
+      throwsFormatException,
+    );
+
+    final missingAccountRecipient = _hex(
+      containerVector['container'] as String,
+    );
+    missingAccountRecipient[5] = 0x01;
+    expect(
+      () => SegmentCipher.peekHeader(missingAccountRecipient),
       throwsFormatException,
     );
   });
