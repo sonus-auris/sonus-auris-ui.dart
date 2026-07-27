@@ -4,6 +4,7 @@ import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
 import '../models/context_trigger.dart';
 import '../models/cloud_provider.dart';
+import '../models/local_retention_warning.dart';
 import '../models/playback_snapshot.dart';
 import '../models/recorder_snapshot.dart';
 import '../models/recording_segment.dart';
@@ -131,9 +132,77 @@ class AppViewModel {
       )
       .length;
 
-  int get failedUploads => segments
-      .where((segment) => segment.uploadStatus == SegmentUploadStatus.failed)
-      .length;
+  int get failedUploads =>
+      segments.where((segment) => segment.uploadStatus == SegmentUploadStatus.failed).length;
+
+  /// The non-bypassable local plaintext deadline for one closed segment.
+  ///
+  /// Retention is based on the segment's UTC end time, never local wall-clock or
+  /// upload-attempt time. Upload retries, timezone changes, and offline operation
+  /// therefore cannot extend the configured 100-hour-or-shorter ceiling.
+  DateTime localPlaintextExpiresAtUtc(RecordingSegment segment) => segment
+      .endedAtUtc
+      .toUtc()
+      .add(Duration(hours: config.deviceRetentionHours));
+
+  /// Content-free warnings for local segments that lack any durable uploaded or
+  /// permanently saved copy and will reach the plaintext deadline within
+  /// [horizon]. Overdue entries are included by default so the privacy dashboard
+  /// can flag a retention sweeper health failure rather than hiding it.
+  List<LocalRetentionWarning> localRetentionWarnings({
+    required DateTime nowUtc,
+    Duration horizon = const Duration(hours: 12),
+    bool includeOverdue = true,
+  }) {
+    if (horizon.isNegative) {
+      throw ArgumentError.value(horizon, 'horizon', 'must not be negative');
+    }
+    final now = nowUtc.toUtc();
+    final cutoff = now.add(horizon);
+    final warnings = <LocalRetentionWarning>[];
+    for (final segment in segments) {
+      if (!segment.isLocal || segment.isUploaded || segment.isPermanentlySaved) {
+        continue;
+      }
+      final expiresAt = localPlaintextExpiresAtUtc(segment);
+      final overdue = !expiresAt.isAfter(now);
+      if ((!includeOverdue && overdue) || expiresAt.isAfter(cutoff)) {
+        continue;
+      }
+      warnings.add(
+        LocalRetentionWarning(
+          segmentId: segment.id,
+          expiresAtUtc: expiresAt,
+          byteSize: segment.byteSize,
+          uploadStatus: segment.uploadStatus,
+          lastError: segment.error,
+        ),
+      );
+    }
+    warnings.sort((left, right) {
+      final byExpiry = left.expiresAtUtc.compareTo(right.expiresAtUtc);
+      return byExpiry != 0 ? byExpiry : left.segmentId.compareTo(right.segmentId);
+    });
+    return List.unmodifiable(warnings);
+  }
+
+  LocalRetentionWarning? earliestLocalRetentionWarning({
+    required DateTime nowUtc,
+    Duration horizon = const Duration(hours: 12),
+    bool includeOverdue = true,
+  }) {
+    final warnings = localRetentionWarnings(
+      nowUtc: nowUtc,
+      horizon: horizon,
+      includeOverdue: includeOverdue,
+    );
+    return warnings.isEmpty ? null : warnings.first;
+  }
+
+  int overdueLocalRetentionCount(DateTime nowUtc) => localRetentionWarnings(
+    nowUtc: nowUtc,
+    horizon: Duration.zero,
+  ).length;
 
   int get uploadedSegments =>
       segments.where((segment) => segment.isUploaded).length;
