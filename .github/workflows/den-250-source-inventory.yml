@@ -12,14 +12,10 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: den-250-retention-ceiling-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   transform:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,15 +27,14 @@ jobs:
           flutter-version: 3.41.5
           cache: true
 
-      - name: Install dependencies
-        run: flutter pub get
+      - run: flutter pub get
 
-      - name: Apply deterministic ceiling transformation
+      - name: Apply config-boundary ceiling
         run: |
           python3 <<'PY'
           from pathlib import Path
 
-          def replace_once(text: str, old: str, new: str, label: str) -> str:
+          def one(text, old, new, label):
               count = text.count(old)
               if count != 1:
                   raise SystemExit(f'{label}: expected one match, found {count}')
@@ -47,285 +42,102 @@ jobs:
 
           path = Path('lib/src/models/app_config.dart')
           source = path.read_text()
-          source = replace_once(
+          source = one(
               source,
-              '''  static const defaultSupabaseAnonKey = String.fromEnvironment(
+              """  static const defaultSupabaseAnonKey = String.fromEnvironment(
     'SONUS_SUPABASE_ANON_KEY',
   );
 
-''',
-              '''  static const defaultSupabaseAnonKey = String.fromEnvironment(
+""",
+              """  static const defaultSupabaseAnonKey = String.fromEnvironment(
     'SONUS_SUPABASE_ANON_KEY',
   );
 
-  /// Local plaintext may never be retained longer than this privacy ceiling.
   static const minDeviceRetentionHours = 1;
   static const maxDeviceRetentionHours = 100;
 
   static int normalizeDeviceRetentionHours(int hours) =>
       hours.clamp(minDeviceRetentionHours, maxDeviceRetentionHours).toInt();
 
-''',
-              'AppConfig retention constants',
+""",
+              'retention constants',
           )
-          source = replace_once(
+          source = one(
               source,
-              '''  final int deviceRetentionHours;
+              '    this.deviceRetentionHours = 100,\n',
+              '    int deviceRetentionHours = maxDeviceRetentionHours,\n',
+              'constructor parameter',
+          )
+          source = one(
+              source,
+              '  }) : _recordingSchedule = recordingSchedule;\n',
+              '  }) : _deviceRetentionHours = deviceRetentionHours,\n       _recordingSchedule = recordingSchedule;\n',
+              'constructor initializer',
+          )
+          source = one(
+              source,
+              '  final int deviceRetentionHours;\n  final int cloudRetentionHours;\n',
+              """  final int _deviceRetentionHours;
+
+  /// The effective local plaintext lifetime. Legacy, remote, and directly
+  /// constructed oversized values are normalized at the model boundary so no
+  /// deletion, sync, estimate, or UI caller can bypass the 100-hour ceiling.
+  int get deviceRetentionHours =>
+      normalizeDeviceRetentionHours(_deviceRetentionHours);
+
   final int cloudRetentionHours;
-''',
-              '''  final int deviceRetentionHours;
-
-  /// Privacy-safe value used by deletion, capacity, sync, and UI surfaces even
-  /// when a legacy or directly constructed config contains an oversized value.
-  int get effectiveDeviceRetentionHours =>
-      normalizeDeviceRetentionHours(deviceRetentionHours);
-
-  final int cloudRetentionHours;
-''',
-              'effective retention getter',
-          )
-          source = replace_once(
-              source,
-              '''      deviceRetentionHours: _asInt(json['deviceRetentionHours'], 100),
-''',
-              '''      deviceRetentionHours: normalizeDeviceRetentionHours(
-        _asInt(json['deviceRetentionHours'], maxDeviceRetentionHours),
-      ),
-''',
-              'legacy config migration',
+""",
+              'normalized getter',
           )
           path.write_text(source)
 
-          path = Path('lib/src/app/app_controller.dart')
-          source = path.read_text()
-          source = replace_once(
-              source,
-              '''    final deviceRetentionHours = config.deviceRetentionHours.clamp(1, 500);
-''',
-              '''    final deviceRetentionHours = AppConfig.normalizeDeviceRetentionHours(
-      config.deviceRetentionHours,
-    );
-''',
-              'controller save clamp',
-          )
-          source = replace_once(
-              source,
-              '''      cutoffUtc: now.subtract(Duration(hours: config.deviceRetentionHours)),
-''',
-              '''      cutoffUtc: now.subtract(
-        Duration(hours: config.effectiveDeviceRetentionHours),
-      ),
-''',
-              'retention deletion cutoff',
-          )
-          path.write_text(source)
-
-          path = Path('lib/src/app/app_view_model.dart')
-          source = path.read_text()
-          source = replace_once(
-              source,
-              '''    deviceHours: config.deviceRetentionHours,
-''',
-              '''    deviceHours: config.effectiveDeviceRetentionHours,
-''',
-              'storage estimate ceiling',
-          )
-          path.write_text(source)
-
-          path = Path('lib/src/services/supabase_rest_client.dart')
-          source = path.read_text()
-          source = replace_once(
-              source,
-              '''      deviceRetentionHours: config.deviceRetentionHours,
-''',
-              '''      deviceRetentionHours: config.effectiveDeviceRetentionHours,
-''',
-              'Supabase config upload ceiling',
-          )
-          source = replace_once(
-              source,
-              '''      deviceRetentionHours: settings.deviceRetentionHours,
-''',
-              '''      deviceRetentionHours: settings.effectiveDeviceRetentionHours,
-''',
-              'Supabase settings upload ceiling',
-          )
-          path.write_text(source)
-
-          path = Path('lib/main.dart')
-          source = path.read_text()
-          source = replace_once(
-              source,
-              '''      deviceRetentionHours: _parseInt(_deviceRetentionController.text, 50),
-''',
-              '''      deviceRetentionHours: AppConfig.normalizeDeviceRetentionHours(
-        _parseInt(
-          _deviceRetentionController.text,
-          AppConfig.maxDeviceRetentionHours,
-        ),
-      ),
-''',
-              'settings save ceiling',
-          )
-          source = replace_once(
-              source,
-              '''          _NumberField(
-            controller: deviceRetentionController,
-            label: 'Local retention hours',
-          ),
-''',
-              '''          _NumberField(
-            controller: deviceRetentionController,
-            label: 'Local retention hours (maximum 100)',
-            maxValue: AppConfig.maxDeviceRetentionHours,
-          ),
-''',
-              'settings validation ceiling',
-          )
-          source = replace_once(
-              source,
-              '''  const _NumberField({
-    required this.controller,
-    required this.label,
-    this.allowZero = false,
-  });
-
-  final TextEditingController controller;
-  final String label;
-  final bool allowZero;
-''',
-              '''  const _NumberField({
-    required this.controller,
-    required this.label,
-    this.allowZero = false,
-    this.maxValue,
-  });
-
-  final TextEditingController controller;
-  final String label;
-  final bool allowZero;
-  final int? maxValue;
-''',
-              'number field maximum property',
-          )
-          source = replace_once(
-              source,
-              '''        if (parsed == null || parsed < 0 || (!allowZero && parsed == 0)) {
-          return allowZero
-              ? 'Use zero or a positive number'
-              : 'Use a positive number';
-        }
-        return null;
-''',
-              '''        if (parsed == null || parsed < 0 || (!allowZero && parsed == 0)) {
-          return allowZero
-              ? 'Use zero or a positive number'
-              : 'Use a positive number';
-        }
-        if (maxValue != null && parsed > maxValue!) {
-          return 'Use $maxValue or less';
-        }
-        return null;
-''',
-              'number field maximum validation',
-          )
-          source = source.replace(
-              'viewModel.config.deviceRetentionHours * 3600',
-              'viewModel.config.effectiveDeviceRetentionHours * 3600',
-          )
-          source = source.replace(
-              "'${viewModel.config.deviceRetentionHours} h local window'",
-              "'${viewModel.config.effectiveDeviceRetentionHours} h local window'",
-          )
-          source = source.replace(
-              "trailingValue: '${viewModel.config.deviceRetentionHours} h'",
-              "trailingValue: '${viewModel.config.effectiveDeviceRetentionHours} h'",
-          )
-          path.write_text(source)
-
-          path = Path('lib/main_desktop.dart')
-          source = path.read_text()
-          source = replace_once(
-              source,
-              '''      ('Retention', '${vm.config.deviceRetentionHours} h'),
-''',
-              '''      ('Retention', '${vm.config.effectiveDeviceRetentionHours} h'),
-''',
-              'desktop retention display',
-          )
-          path.write_text(source)
-
-          test = Path('test/device_retention_ceiling_test.dart')
-          test.write_text('''import 'package:audio_dashcam/src/models/app_config.dart';
+          Path('test/device_retention_ceiling_test.dart').write_text("""import 'package:audio_dashcam/src/models/app_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('direct oversized configs have a non-bypassable effective ceiling', () {
+  test('direct oversized values cannot bypass the model ceiling', () {
     const config = AppConfig(deviceId: 'device', deviceRetentionHours: 500);
-    expect(config.deviceRetentionHours, 500);
-    expect(
-      config.effectiveDeviceRetentionHours,
-      AppConfig.maxDeviceRetentionHours,
-    );
+    expect(config.deviceRetentionHours, AppConfig.maxDeviceRetentionHours);
   });
 
-  test('legacy persisted values migrate to the 100-hour ceiling', () {
+  test('legacy persisted oversized values migrate on read', () {
     final config = AppConfig.fromJson({
       'deviceId': 'device',
       'deviceRetentionHours': 500,
     });
-    expect(config.deviceRetentionHours, AppConfig.maxDeviceRetentionHours);
-    expect(config.effectiveDeviceRetentionHours, 100);
+    expect(config.deviceRetentionHours, 100);
+    expect(config.toJson()['deviceRetentionHours'], 100);
   });
 
-  test('shorter user-selected retention remains unchanged', () {
-    expect(AppConfig.normalizeDeviceRetentionHours(24), 24);
-    expect(AppConfig.normalizeDeviceRetentionHours(0), 1);
-    expect(AppConfig.normalizeDeviceRetentionHours(101), 100);
+  test('shorter values and the minimum remain supported', () {
+    expect(const AppConfig(deviceId: 'd', deviceRetentionHours: 24).deviceRetentionHours, 24);
+    expect(const AppConfig(deviceId: 'd', deviceRetentionHours: 0).deviceRetentionHours, 1);
   });
 }
-''')
+""")
           PY
 
       - name: Format, analyze, and test
         run: |
           set -euo pipefail
-          dart format lib/src/models/app_config.dart \
-            lib/src/app/app_controller.dart \
-            lib/src/app/app_view_model.dart \
-            lib/src/services/supabase_rest_client.dart \
-            lib/main.dart lib/main_desktop.dart \
-            test/device_retention_ceiling_test.dart
-          git diff --binary --no-ext-diff > "${RUNNER_TEMP}/den-250.first.patch"
-          dart format lib/src/models/app_config.dart \
-            lib/src/app/app_controller.dart \
-            lib/src/app/app_view_model.dart \
-            lib/src/services/supabase_rest_client.dart \
-            lib/main.dart lib/main_desktop.dart \
-            test/device_retention_ceiling_test.dart
-          git diff --binary --no-ext-diff > "${RUNNER_TEMP}/den-250.second.patch"
-          cmp "${RUNNER_TEMP}/den-250.first.patch" "${RUNNER_TEMP}/den-250.second.patch"
+          dart format lib/src/models/app_config.dart test/device_retention_ceiling_test.dart
+          git diff --binary --no-ext-diff > "${RUNNER_TEMP}/first.patch"
+          dart format lib/src/models/app_config.dart test/device_retention_ceiling_test.dart
+          git diff --binary --no-ext-diff > "${RUNNER_TEMP}/second.patch"
+          cmp "${RUNNER_TEMP}/first.patch" "${RUNNER_TEMP}/second.patch"
           flutter analyze --no-fatal-infos
           flutter test test/device_retention_ceiling_test.dart
           flutter test test/segment_index_retention_test.dart
 
       - name: Collect validated files
         run: |
-          set -euo pipefail
           out="${RUNNER_TEMP}/den-250-ceiling"
-          mkdir -p "$out/lib/src/models" "$out/lib/src/app" \
-            "$out/lib/src/services" "$out/lib" "$out/test"
+          mkdir -p "$out/lib/src/models" "$out/test"
           cp lib/src/models/app_config.dart "$out/lib/src/models/app_config.dart"
-          cp lib/src/app/app_controller.dart "$out/lib/src/app/app_controller.dart"
-          cp lib/src/app/app_view_model.dart "$out/lib/src/app/app_view_model.dart"
-          cp lib/src/services/supabase_rest_client.dart "$out/lib/src/services/supabase_rest_client.dart"
-          cp lib/main.dart "$out/lib/main.dart"
-          cp lib/main_desktop.dart "$out/lib/main_desktop.dart"
           cp test/device_retention_ceiling_test.dart "$out/test/device_retention_ceiling_test.dart"
-          cp "${RUNNER_TEMP}/den-250.first.patch" "$out/generated.patch"
+          cp "${RUNNER_TEMP}/first.patch" "$out/generated.patch"
 
-      - name: Upload validated transformation
-        uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v6
         with:
           name: den-250-retention-ceiling
           path: ${{ runner.temp }}/den-250-ceiling
