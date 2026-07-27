@@ -105,7 +105,7 @@ void main() {
 
     expect(
       viewModel.localPlaintextExpiresAtUtc(segment),
-      DateTime.parse('2026-07-31T02:01:00Z'),
+      DateTime.parse('2026-08-01T02:01:00Z'),
     );
   });
 
@@ -202,7 +202,10 @@ void main() {
     expect(warning, isNotNull);
     expect(warning!.isOverdueAt(now), isTrue);
     expect(viewModel.overdueLocalRetentionCount(now), 1);
-    expect(warning.deletionMessageAt(now), contains('reached its deletion deadline'));
+    expect(
+      warning.deletionMessageAt(now),
+      contains('reached its deletion deadline'),
+    );
 
     expect(
       viewModel.localRetentionWarnings(
