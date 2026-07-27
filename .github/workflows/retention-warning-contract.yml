@@ -1,0 +1,62 @@
+name: retention warning contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/retention-warning-contract.yml
+      - lib/src/app/app_view_model.dart
+      - lib/src/models/local_retention_warning.dart
+      - test/app_view_model_test.dart
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/retention-warning-contract.yml
+      - lib/src/app/app_view_model.dart
+      - lib/src/models/local_retention_warning.dart
+      - test/app_view_model_test.dart
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retention-warning-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+      - run: flutter pub get
+      - name: Run focused retention contract
+        id: focused
+        shell: bash
+        run: |
+          set +e
+          flutter test test/app_view_model_test.dart --reporter expanded \
+            > retention-warning-test.log 2>&1
+          status=$?
+          cat retention-warning-test.log
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload focused test output
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: retention-warning-test-output
+          path: retention-warning-test.log
+          if-no-files-found: error
+          retention-days: 7
+      - name: Enforce focused contract result
+        if: steps.focused.outputs.exit_code != '0'
+        run: exit 1
