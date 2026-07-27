@@ -132,8 +132,11 @@ class AppViewModel {
       )
       .length;
 
-  int get failedUploads =>
-      segments.where((segment) => segment.uploadStatus == SegmentUploadStatus.failed).length;
+  int get failedUploads => segments
+      .where(
+        (segment) => segment.uploadStatus == SegmentUploadStatus.failed,
+      )
+      .length;
 
   /// The non-bypassable local plaintext deadline for one closed segment.
   ///
@@ -175,13 +178,14 @@ class AppViewModel {
           expiresAtUtc: expiresAt,
           byteSize: segment.byteSize,
           uploadStatus: segment.uploadStatus,
-          lastError: segment.error,
         ),
       );
     }
     warnings.sort((left, right) {
       final byExpiry = left.expiresAtUtc.compareTo(right.expiresAtUtc);
-      return byExpiry != 0 ? byExpiry : left.segmentId.compareTo(right.segmentId);
+      return byExpiry != 0
+          ? byExpiry
+          : left.segmentId.compareTo(right.segmentId);
     });
     return List.unmodifiable(warnings);
   }
