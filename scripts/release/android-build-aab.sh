@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a signed Google Play **App Bundle** (.aab). Does NOT upload.
+# Build a signed Google Play **App Bundle** (.aab).
 #
 # Output: build/app/outputs/bundle/release/app-release.aab
 # Symbols: build/symbols/ (upload to Play for readable crash stacks)
@@ -24,6 +24,22 @@ if (( ${#missing_config[@]} > 0 )); then
   exit 1
 fi
 
+build_args=()
+if [[ -n "${SONUS_BUILD_NAME:-}" ]]; then
+  [[ "$SONUS_BUILD_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][A-Za-z0-9.-]+)?$ ]] || {
+    echo "SONUS_BUILD_NAME must be SemVer-like (for example 1.2.3)." >&2
+    exit 1
+  }
+  build_args+=(--build-name="$SONUS_BUILD_NAME")
+fi
+if [[ -n "${SONUS_BUILD_NUMBER:-}" ]]; then
+  [[ "$SONUS_BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
+    echo "SONUS_BUILD_NUMBER must be a positive integer." >&2
+    exit 1
+  }
+  build_args+=(--build-number="$SONUS_BUILD_NUMBER")
+fi
+
 echo "Flutter: $(flutter --version | head -1)"
 flutter pub get
 
@@ -34,11 +50,12 @@ for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; d
 done
 
 # --obfuscate + --split-debug-info shrinks the binary and keeps Dart stack
-# traces de-obfuscatable (keep build/symbols/ to symbolicate crashes later).
+# traces de-obfuscatable (retain build/symbols/ beside each store build).
 flutter build appbundle \
   --release \
   --obfuscate \
   --split-debug-info=build/symbols \
+  "${build_args[@]}" \
   "${dart_define_args[@]}"
 
 aab="build/app/outputs/bundle/release/app-release.aab"
@@ -47,5 +64,5 @@ echo "Built: $aab"
 [[ -f "$aab" ]] && ls -la "$aab"
 echo
 echo "Inspect before upload:"
-echo "  bundletool build-apks --bundle=$aab --output=/tmp/app.apks --mode=universal   # optional"
-echo "Upload (explicit): Play Console > Internal testing, or 'cd android && fastlane internal'."
+echo "  bundletool build-apks --bundle=$aab --output=/tmp/app.apks --mode=universal"
+echo "Publish through .github/workflows/android-release.yml or Play Console internal testing."
