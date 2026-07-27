@@ -28,11 +28,15 @@ See `RECORDING_SCHEDULE_LIMITATIONS.md` for the reviewer-facing behavior matrix.
 ## Local plaintext and encrypted outbound data
 
 The rolling working audio window may remain plaintext inside the app-private
-sandbox for the configured local retention period (50 hours by default) so
-approved on-device analysis can run. App backup is disabled for this cache.
-Every backup or cross-device-sync object is encrypted on-device before it leaves
-the device. Do not claim that all on-device audio is encrypted at rest while the
-working plaintext window exists.
+sandbox for the configured local retention period so approved on-device analysis
+can run. App backup is disabled for this cache. Every backup or cross-device-sync
+object is encrypted on-device before it leaves the device. Do not claim that all
+on-device audio is encrypted at rest while the working plaintext window exists.
+
+The product requirement is a 50-hour release default, but the current
+`AppConfig` constructor/deserialization fallback remains 100 hours. Do not submit
+to either store until DEN-197 aligns the code, upgrade migration, tests, and all
+public/store wording.
 
 ## iOS (Info.plist usage strings — all present)
 
@@ -67,6 +71,8 @@ working plaintext window exists.
 - [x] Documented force-quit/force-stop and killed-process schedule limitations.
 - [x] Disclosed that the local working window can remain plaintext while every
       outbound backup/sync object is encrypted on-device.
+- [ ] Change the release default from 100 to 50 hours with a migration that does
+      not overwrite intentional user settings; add upgrade and retention tests.
 - [ ] Decide whether Android schedule standby can retain a microphone-typed
       foreground service while the mic is closed; redesign if policy/device tests
       do not support it.
