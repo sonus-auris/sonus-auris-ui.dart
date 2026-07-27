@@ -44,6 +44,16 @@ jobs:
       - name: Evaluate and build flake checks
         run: nix flake check --show-trace
 
+      - name: Capture locked Flutter version
+        run: nix develop -c flutter --version --machine > flutter-version.json
+
+      - name: Upload locked Flutter version
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: flutter-version
+          path: flutter-version.json
+          retention-days: 1
+
       - name: Verify Flutter version parity
         run: nix develop -c agent-check version
 
