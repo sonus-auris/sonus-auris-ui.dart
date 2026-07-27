@@ -7,6 +7,11 @@ runtime behavior. In Play's terminology, data that is transmitted off-device is
 processor or user-directed destination is "shared" must be answered from the
 current Play definitions and the exact shipped integration.
 
+> Release blocker: the intended local retention default is 50 hours, while the
+> current `AppConfig` constructor/deserialization fallback is 100 hours. Do not
+> submit a fixed retention claim until DEN-197 aligns code, migration, tests, and
+> every disclosure.
+
 ## Security practices
 
 - **Encrypted in transit:** Yes (TLS/HTTPS).
@@ -14,8 +19,8 @@ current Play definitions and the exact shipped integration.
   authenticated on-device envelope encryption; the server/object store receives
   ciphertext and wrapped object keys.
 - **All data encrypted at rest on the device:** Do **not** claim this while the
-  rolling working window remains plaintext in app-private storage. The default
-  local retention is 50 hours so approved local recording/playback/AI analysis can
+  rolling working window remains plaintext in app-private storage. The local
+  retention is user-configurable so approved recording/playback/AI analysis can
   run. App backup is disabled for that cache, and expired plaintext/temp files
   must be deleted deterministically.
 - **Users can request deletion:** Yes — in-app plus the public account-deletion URL.
@@ -58,10 +63,13 @@ current Play definitions and the exact shipped integration.
 
 - [ ] Compare this document against the production merged manifest, native
       capabilities, privacy manifest, Dart dependencies, build flags, and URLs.
+- [ ] Align the intended 50-hour release default with the constructor,
+      deserialization fallback, upgrade migration, retention sweeper, tests, UI,
+      policy, and store answers.
 - [ ] Decide the current Play "shared" answer for every user-directed storage and
       external-processing provider; retain the rationale and contract role.
-- [ ] Confirm the local 50-hour plaintext window and every derived-data retention
-      setting appear in the public privacy policy and in-app controls.
+- [ ] Confirm the local plaintext window and every derived-data retention setting
+      appear in the public privacy policy and in-app controls.
 - [ ] Confirm account deletion removes ciphertext, metadata, device keys/public
       records, transcripts, summaries, diagnostics, and local files as promised.
 - [ ] Upload the foreground-service/exact-alarm demonstration video and reviewer
