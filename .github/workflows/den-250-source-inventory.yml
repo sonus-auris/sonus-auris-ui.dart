@@ -1,0 +1,68 @@
+name: DEN-250 local artifact producer inventory
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/den-250-source-inventory.yml'
+  push:
+    branches:
+      - agent/den-250-artifact-producer-wiring
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: den-250-source-inventory-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build source-only inventory
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/den-250-source"
+          mkdir -p "$out"
+          cp -R lib "$out/lib"
+          cp -R test "$out/test"
+          cp pubspec.yaml "$out/pubspec.yaml"
+          python3 <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          root = Path.cwd()
+          out = Path(os.environ['RUNNER_TEMP']) / 'den-250-source'
+          patterns = re.compile(
+              r'File\s*\(|Directory\s*\(|writeAs(?:String|Bytes)|openWrite\s*\(|'
+              r'copy\s*\(|rename\s*\(|createTemp\s*\(|\.part|transcript|scratch|'
+              r'assembled|cache|features\.json|analysis',
+              re.IGNORECASE,
+          )
+          hits = []
+          for path in sorted((root / 'lib').rglob('*.dart')):
+              for line_number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+                  if patterns.search(line):
+                      hits.append(f'{path.relative_to(root)}:{line_number}: {line.strip()}')
+          (out / 'artifact-producer-hits.txt').write_text(
+              ''.join(f'{hit}\n' for hit in hits),
+              encoding='utf-8',
+          )
+          if not hits:
+              raise SystemExit('no local artifact producer candidates found')
+          PY
+
+      - name: Upload source-only inventory
+        uses: actions/upload-artifact@v6
+        with:
+          name: den-250-source-inventory
+          path: ${{ runner.temp }}/den-250-source
+          if-no-files-found: error
+          retention-days: 2
