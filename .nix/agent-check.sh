@@ -22,24 +22,68 @@ mkdir -p \
 	"$XDG_CONFIG_HOME" \
 	"$XDG_DATA_HOME"
 
-git diff --check
-nixfmt --check flake.nix .nix/devshell.nix
-shellcheck .nix/agent-check.sh
-shfmt -d .nix/agent-check.sh
-actionlint .github/workflows/ci.yml .github/workflows/nix.yml
-nix flake check --show-trace
+run_preflight() {
+	git diff --check
+	nixfmt --check flake.nix .nix/devshell.nix
+	shellcheck .nix/agent-check.sh
+	shfmt -d .nix/agent-check.sh
+	actionlint .github/workflows/ci.yml .github/workflows/nix.yml
+	nix flake check --show-trace
+}
 
-expected_flutter_version="3.44.2"
-actual_flutter_version="$(flutter --version --machine | jq -r '.frameworkVersion')"
-if [ "$actual_flutter_version" != "$expected_flutter_version" ]; then
-	printf 'expected Flutter %s from the Nix lock, found %s\n' \
-		"$expected_flutter_version" \
-		"$actual_flutter_version" >&2
-	exit 1
-fi
+run_flutter_version() {
+	local expected_flutter_version="3.44.2"
+	local actual_flutter_version
 
-flutter --version
-dart --version
-flutter pub get
-flutter analyze --no-fatal-infos
-flutter test
+	actual_flutter_version="$(flutter --version --machine | jq -r '.frameworkVersion')"
+	if [ "$actual_flutter_version" != "$expected_flutter_version" ]; then
+		printf 'expected Flutter %s from the Nix lock, found %s\n' \
+			"$expected_flutter_version" \
+			"$actual_flutter_version" >&2
+		return 1
+	fi
+
+	flutter --version
+	dart --version
+}
+
+run_pub_get() {
+	flutter pub get
+}
+
+run_analyze() {
+	flutter analyze --no-fatal-infos
+}
+
+run_tests() {
+	flutter test
+}
+
+case "${1:-all}" in
+preflight)
+	run_preflight
+	;;
+version)
+	run_flutter_version
+	;;
+pub)
+	run_pub_get
+	;;
+analyze)
+	run_analyze
+	;;
+test)
+	run_tests
+	;;
+all)
+	run_preflight
+	run_flutter_version
+	run_pub_get
+	run_analyze
+	run_tests
+	;;
+*)
+	printf 'usage: agent-check [all|preflight|version|pub|analyze|test]\n' >&2
+	exit 64
+	;;
+esac
