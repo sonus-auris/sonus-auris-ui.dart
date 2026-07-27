@@ -3,96 +3,151 @@
 _Last updated: <SET DATE>. Publisher: <LEGAL ENTITY NAME>, contact: <privacy@yourdomain>._
 
 > This draft is written to match how the app actually behaves. Review the
-> bracketed `<…>` placeholders, have counsel review if needed, then host it at a
-> stable public URL (e.g. on the Sonus Auris website / GitHub Pages) and enter
-> that URL in the App Store and Play Console. Both stores require a reachable
-> privacy policy URL.
+> bracketed `<…>` placeholders, have counsel review it, host it at a stable public
+> URL, and keep that published version synchronized with every shipped build and
+> store disclosure.
 
 ## Summary
 
-Sonus Auris records audio you choose to capture. Your recordings are **encrypted
-on your device** before they leave it. If you enable backup, ciphertext can be
-sent to storage **you** connect (your own S3 bucket, Google Drive, OneDrive, or
-iCloud) or to Sonus Auris backup storage. We cannot decrypt your clips because
-their keys stay on your device.
+Sonus Auris records audio only after you start recording, accept a recording
+prompt, or explicitly arm a recording schedule. A rolling working window can
+remain plaintext inside the app-private storage on your device for the local
+retention period you choose (50 hours by default) so approved local analysis can
+run. Every backup or cross-device-sync object is encrypted on your device before
+it leaves. The Sonus Auris backend and ordinary object-storage providers receive
+ciphertext and cannot decrypt it.
+
+A schedule records your intent, but it cannot override iOS or Android lifecycle
+rules. Force-quitting, force-stopping, or operating-system termination can prevent
+a future scheduled start until you reopen the app. While recording is active,
+Android shows a persistent notification and iOS shows its system microphone
+indicator.
 
 ## What we collect and why
 
-**Audio recordings** — created only after you tap Start. Stored locally as a
-rolling window and encrypted on-device (AES-256-GCM; keys derived with
-HKDF/Argon2id and held on your device). Purpose: the core recording feature.
+**Audio recordings** — created only after an explicit Start action, accepted
+prompt, or armed schedule. The app keeps a rolling working window in app-private
+local storage for the configured retention period. That local working audio may
+be plaintext so the app can record, play, transcribe, and analyze it. Purpose:
+the core recording and user-selected analysis features.
 
-**Optional location** — OFF by default. If you enable geotagging, the approximate
-or precise location at capture time is attached to a clip so you can prove where
-it was recorded. Purpose: app functionality you opt into.
+**Encrypted backups and device sync** — if you enable backup or sync, each audio
+object is encrypted on-device with a fresh per-object key before upload. The
+object key is wrapped only for authorized device/account recipients. Purpose:
+backup, restoration, and access from your authorized devices.
 
-**Optional on-device audio analysis** — OFF by default. Sleep/snore, music, and
-loud-event detection run locally on your device. Detection results stay with your
-data; raw audio is not sent anywhere for analysis.
+**Optional location** — OFF by default. If you enable geotagging, approximate or
+precise location at capture time can be attached to a clip. Purpose: app
+functionality you opt into.
 
-**Account / backend data (only if you use an account)** — your email address, a
-user and device identifier, authentication tokens, and metadata about clips you
-choose to back up or share (timestamps, sizes, upload status). Purpose:
-authentication, backup coordination, and optional alert/listening links you request.
+**Optional local audio analysis** — configurable analysis can identify music,
+produce meeting notes, detect non-diagnostic sleep/snore patterns, mark loud or
+raised-voice events, and provide diction, pacing, filler-word, pronunciation, or
+word-choice suggestions. Derived results can include transcripts, summaries,
+tasks, labels, and confidence scores. These features do not prove identity,
+intent, an altercation, a medical condition, legal facts, or perfect accuracy.
 
-**Diagnostics** — after you sign in, sanitized app events, errors, stack traces,
-platform, and app version can be sent to our Supabase project under your user and
-device ID so we can operate and fix the app. Secret-shaped fields are redacted;
-diagnostics do not contain recording audio. We do not include third-party
-advertising or analytics SDKs.
+**Optional external processing** — some features can send a user-selected or
+minimum necessary clip, transcript, signature, or derived data to a service you
+configure or explicitly enable, such as speech-to-text or music identification.
+The app must identify the destination before sending data. That provider's terms,
+retention, and privacy practices apply. Raw audio is not sent to an external AI
+or transcription service by default.
 
-## What we do NOT do
+**Account / backend data** — if you use an account, we process your email address,
+user and device identifiers, authentication/session data, authorized-device
+public keys, consent records, settings, encrypted-object metadata, timestamps,
+sizes, hashes, upload state, retention/deletion state, and sync manifests.
+Purpose: authentication, encrypted backup/sync, device authorization, deletion,
+and features you request.
+
+**Diagnostics** — after sign-in, sanitized app events, errors, stack traces,
+platform, app version, and operation state can be sent to our Supabase project
+under your user/device ID. Secret-shaped fields are redacted. Diagnostics must
+not contain audio content, transcripts, private keys, object keys, tokens, or
+user-entered notes. We do not bundle advertising SDKs.
+
+## What we do not do
 
 - We do not sell your data.
-- We do not use your data for advertising.
-- We do not have access to the contents of your encrypted recordings.
-- We do not record without you starting capture.
+- We do not use your data for advertising or cross-app tracking.
+- We do not record until you start, accept a prompt, or explicitly arm a schedule.
+- We do not claim that a schedule can bypass force-quit, force-stop, permission,
+  or operating-system restrictions.
+- We cannot decrypt ordinary encrypted backup/sync objects because the required
+  private keys remain on authorized client devices or in user-controlled recovery.
+- We do not send raw audio to external AI/transcription services by default.
 
 ## Where your data goes
 
-- **On your device** by default (encrypted).
-- **To storage you control**, if you connect it (your S3-compatible bucket,
-  Google Drive, OneDrive, or iCloud). Their handling is governed by their terms.
-- **To Supabase and the optional Sonus Auris backend**, only for features you
-  invoke (authentication, settings/consent sync, diagnostics, backup
-  coordination, encrypted backup, and alert links). Recordings remain
-  client-encrypted; the services cannot derive the device-held key.
+- **On your device:** the app-private rolling working window, local analysis,
+  playback, temporary analysis artifacts, settings, and secure key material.
+- **To storage you connect:** encrypted objects can go to your S3-compatible
+  bucket, Google Drive, OneDrive, iCloud, or another supported destination.
+- **To Supabase and the Sonus Auris backend:** account/auth data, consent/settings,
+  authorized-device public keys, diagnostics, encrypted backup/sync objects or
+  coordination metadata, and features you request.
+- **To an optional processing provider:** only when you explicitly enable a
+  feature that needs it; the app sends the minimum declared data for that feature.
 
 ## Retention
 
-Local clips age out automatically based on your rolling-window setting. Backed-up
-clips persist according to the retention settings for their destination or until
-you delete them. Backend ciphertext and metadata are removed when their retention
-expires or on account deletion, subject to the limited legal retention below.
+The local working audio window ages out automatically according to your setting,
+which defaults to 50 hours. The app must also remove expired partial files,
+temporary clips, caches, and analysis scratch data. You can shorten retention,
+stop recording, disable analysis, or delete the local window.
+
+Encrypted backups persist according to the configured destination/plan until
+their retention expires or you delete them. Derived transcripts, summaries,
+detections, and annotations have their own visible retention/deletion controls.
+Account deletion removes backend ciphertext and metadata subject to narrowly
+required legal/security retention documented at the time of deletion.
 
 ## Your choices and rights
 
-- Start/stop recording at any time; delete any clip in the app.
-- Turn location, analysis, and backup on or off at any time.
-- **Delete your account and associated data** — see ACCOUNT_DELETION (linked
-  in-app and on our website). Depending on your region (e.g. GDPR/CCPA), you may
-  also request access to or export of data we hold; contact us below.
+- Start, pause, or stop recording at any time.
+- Arm, edit, or disable schedules and see whether the app is armed or recording.
+- Shorten local retention and delete the current local window.
+- Turn each optional analysis, location, context-trigger, backup, device-sync, or
+  external-processing feature on or off.
+- Review and revoke authorized devices; revoked devices must not receive keys for
+  newly created audio.
+- Export or delete clips, transcripts, summaries, and account data.
+- Delete your account in-app and through the public account-deletion page.
+- Exercise applicable regional access, correction, portability, restriction,
+  objection, or deletion rights by contacting us.
 
 ## Children
 
-Sonus Auris is not directed to children under 13 (or the minimum age in your
-country) and we do not knowingly collect their data.
+Sonus Auris is not directed to children under 13 or the applicable minimum age in
+your country, and we do not knowingly collect their data.
 
 ## Security
 
-Recordings are encrypted on-device before storage or upload. Transport uses
-TLS/HTTPS. Tokens and keys are stored using platform secure storage (iOS Keychain
-/ Android Keystore).
+Local working audio is isolated in the app-private sandbox and excluded from app
+backup, but it may be plaintext during the configured rolling period. Every
+outbound backup/sync audio object is encrypted on-device using authenticated
+envelope encryption. Private keys and tokens use platform secure storage (iOS
+Keychain / Android Keystore), and network transport uses TLS/HTTPS.
+
+No system can eliminate all risk. A person who can unlock or compromise your
+device may be able to access the local working window while it exists. Use device
+lock, current operating-system updates, the shortest practical retention, and
+account/device-revocation controls.
 
 ## Recording responsibly
 
-You are responsible for complying with the audio-recording and consent laws that
-apply to you. Sonus Auris is for recording your own environment, not for covertly
-recording others.
+You are responsible for complying with recording, consent, privacy, employment,
+and other laws that apply to you and the people around you. Sonus Auris is not a
+covert-surveillance tool. Do not use sleep, altercation, diction, transcription,
+or other analysis as a medical diagnosis, emergency service, legal conclusion,
+or guaranteed account of events.
 
 ## Changes
 
-We will update this policy as the app evolves and revise the "Last updated" date.
+We will update this policy as the app evolves, revise the "Last updated" date,
+and request renewed consent when a material recording or processing disclosure
+changes.
 
 ## Contact
 
