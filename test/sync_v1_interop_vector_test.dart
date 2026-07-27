@@ -44,80 +44,80 @@ void main() {
     expect(_toHex(recovered), inputs['data_encryption_key']);
   });
 
-  test('Dart parses and opens the complete normative SAC1 v2 container', () async {
-    final inputs = _section(vector, 'inputs');
-    final deviceWrap = _section(vector, 'device_wrap_v1');
-    final accountRecipient = _section(vector, 'account_recipient_v1');
-    final containerVector = _section(vector, 'sac1_container_v2');
-    final container = _hex(containerVector['container'] as String);
+  test(
+    'Dart parses and opens the complete normative SAC1 v2 container',
+    () async {
+      final inputs = _section(vector, 'inputs');
+      final deviceWrap = _section(vector, 'device_wrap_v1');
+      final accountRecipient = _section(vector, 'account_recipient_v1');
+      final containerVector = _section(vector, 'sac1_container_v2');
+      final container = _hex(containerVector['container'] as String);
 
-    expect(container.length, containerVector['container_size']);
-    final header = SegmentCipher.peekHeader(container);
-    expect(header.version, SegmentCipher.versionMultiRecipient);
-    expect(header.flags, containerVector['flags']);
-    expect(_toHex(header.wrappedDek), deviceWrap['wrapped_dek']);
-    expect(
-      _toHex(header.accountWrappedDek!),
-      accountRecipient['sealed_dek'],
-    );
+      expect(container.length, containerVector['container_size']);
+      final header = SegmentCipher.peekHeader(container);
+      expect(header.version, SegmentCipher.versionMultiRecipient);
+      expect(header.flags, containerVector['flags']);
+      expect(_toHex(header.wrappedDek), deviceWrap['wrapped_dek']);
+      expect(
+        _toHex(header.accountWrappedDek!),
+        accountRecipient['sealed_dek'],
+      );
 
-    final store = InMemoryKeyStore({
-      KeyManager.masterKeyStorageId: base64Encode(
-        _hex(inputs['device_master_key'] as String),
-      ),
-    });
-    final openedOnOriginDevice = await SegmentCipher().open(
-      container: container,
-      unwrapDek: KeyManager(store: store).unwrapDek,
-    );
-    expect(
-      utf8.decode(openedOnOriginDevice),
-      inputs['plaintext_utf8'],
-    );
+      final store = InMemoryKeyStore({
+        KeyManager.masterKeyStorageId: base64Encode(
+          _hex(inputs['device_master_key'] as String),
+        ),
+      });
+      final openedOnOriginDevice = await SegmentCipher().open(
+        container: container,
+        unwrapDek: KeyManager(store: store).unwrapDek,
+      );
+      expect(
+        utf8.decode(openedOnOriginDevice),
+        inputs['plaintext_utf8'],
+      );
 
-    final dek = await AccountRecipient().open(
-      privateSeed: _hex(inputs['account_x25519_private_seed'] as String),
-      blob: header.accountWrappedDek!,
-    );
-    final contentBox = SecretBox.fromConcatenation(
-      Uint8List.sublistView(container, header.contentOffset),
-      nonceLength: SegmentCipher.nonceLength,
-      macLength: SegmentCipher.macLength,
-    );
-    final openedOnAuthorizedPeer = await AesGcm.with256bits().decrypt(
-      contentBox,
-      secretKey: SecretKey(dek),
-    );
-    expect(utf8.decode(openedOnAuthorizedPeer), inputs['plaintext_utf8']);
-  });
+      final dek = await AccountRecipient().open(
+        privateSeed: _hex(inputs['account_x25519_private_seed'] as String),
+        blob: header.accountWrappedDek!,
+      );
+      final contentBox = SecretBox.fromConcatenation(
+        Uint8List.sublistView(container, header.contentOffset),
+        nonceLength: SegmentCipher.nonceLength,
+        macLength: SegmentCipher.macLength,
+      );
+      final openedOnAuthorizedPeer = await AesGcm.with256bits().decrypt(
+        contentBox,
+        secretKey: SecretKey(dek),
+      );
+      expect(utf8.decode(openedOnAuthorizedPeer), inputs['plaintext_utf8']);
+    },
+  );
 
-  test('Dart reproduces the object, recipient-set, and manifest hashes', () async {
-    final containerVector = _section(vector, 'sac1_container_v2');
-    final recipientSet = _section(vector, 'recipient_set');
-    final manifest = _section(vector, 'signed_manifest_v1');
-    final sha256 = Sha256();
+  test(
+    'Dart reproduces the object, recipient-set, and manifest hashes',
+    () async {
+      final containerVector = _section(vector, 'sac1_container_v2');
+      final recipientSet = _section(vector, 'recipient_set');
+      final manifest = _section(vector, 'signed_manifest_v1');
+      final sha256 = Sha256();
 
-    expect(
-      _toHex((await sha256.hash(_hex(containerVector['container'] as String))).bytes),
-      containerVector['container_sha256'],
-    );
-    expect(
-      _toHex(
-        (await sha256.hash(
-          utf8.encode(recipientSet['canonical_json'] as String),
-        )).bytes,
-      ),
-      recipientSet['sha256'],
-    );
-    expect(
-      _toHex(
-        (await sha256.hash(
-          utf8.encode(manifest['canonical_json'] as String),
-        )).bytes,
-      ),
-      manifest['sha256'],
-    );
-  });
+      final objectHash = await sha256.hash(
+        _hex(containerVector['container'] as String),
+      );
+      expect(_toHex(objectHash.bytes), containerVector['container_sha256']);
+
+      final recipientSetHash = await sha256.hash(
+        utf8.encode(recipientSet['canonical_json'] as String),
+      );
+      expect(_toHex(recipientSetHash.bytes), recipientSet['sha256']);
+
+      final manifestHash = await sha256.hash(
+        utf8.encode(manifest['canonical_json'] as String),
+      );
+      expect(_toHex(manifestHash.bytes), manifest['sha256']);
+    },
+  );
 
   test('Dart verifies the normative Ed25519 manifest signature', () async {
     final manifest = _section(vector, 'signed_manifest_v1');
@@ -135,7 +135,8 @@ void main() {
       isTrue,
     );
 
-    final tampered = Uint8List.fromList(message)..[10] ^= 0x01;
+    final tampered = Uint8List.fromList(message);
+    tampered[10] ^= 0x01;
     expect(
       await Ed25519().verify(tampered, signature: signature),
       isFalse,
@@ -147,8 +148,8 @@ void main() {
     final accountRecipient = _section(vector, 'account_recipient_v1');
     final containerVector = _section(vector, 'sac1_container_v2');
 
-    final tamperedWrap = _hex(accountRecipient['sealed_dek'] as String)
-      ..[50] ^= 0x01;
+    final tamperedWrap = _hex(accountRecipient['sealed_dek'] as String);
+    tamperedWrap[50] ^= 0x01;
     await expectLater(
       AccountRecipient().open(
         privateSeed: _hex(inputs['account_x25519_private_seed'] as String),
@@ -157,8 +158,8 @@ void main() {
       throwsA(isA<Object>()),
     );
 
-    final tamperedContainer = _hex(containerVector['container'] as String)
-      ..[220] ^= 0x01;
+    final tamperedContainer = _hex(containerVector['container'] as String);
+    tamperedContainer[220] ^= 0x01;
     final store = InMemoryKeyStore({
       KeyManager.masterKeyStorageId: base64Encode(
         _hex(inputs['device_master_key'] as String),
@@ -172,7 +173,8 @@ void main() {
       throwsA(isA<Object>()),
     );
 
-    final unsupported = _hex(containerVector['container'] as String)..[4] = 3;
+    final unsupported = _hex(containerVector['container'] as String);
+    unsupported[4] = 3;
     expect(
       () => SegmentCipher.peekHeader(unsupported),
       throwsFormatException,
