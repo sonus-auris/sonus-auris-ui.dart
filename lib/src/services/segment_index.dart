@@ -7,11 +7,21 @@ import 'package:path_provider/path_provider.dart';
 
 import '../models/recording_segment.dart';
 
+typedef SegmentBaseDirectoryProvider = Future<Directory> Function();
+
 class SegmentIndex {
+  SegmentIndex({SegmentBaseDirectoryProvider? baseDirectoryProvider})
+    : _baseDirectoryProvider =
+          baseDirectoryProvider ?? getApplicationSupportDirectory;
+
   static const _indexFileName = 'segments.v1.json';
+  static const retentionExpiredErrorPrefix =
+      'Local plaintext expired before backup completed';
+
+  final SegmentBaseDirectoryProvider _baseDirectoryProvider;
 
   Future<Directory> get segmentsDirectory async {
-    final base = await getApplicationSupportDirectory();
+    final base = await _baseDirectoryProvider();
     final directory = Directory(p.join(base.path, 'segments'));
     if (!await directory.exists()) {
       await directory.create(recursive: true);
@@ -20,7 +30,7 @@ class SegmentIndex {
   }
 
   Future<File> get _indexFile async {
-    final base = await getApplicationSupportDirectory();
+    final base = await _baseDirectoryProvider();
     return File(p.join(base.path, _indexFileName));
   }
 
@@ -150,30 +160,49 @@ class SegmentIndex {
     return recovered;
   }
 
+  /// Enforces the local plaintext ceiling independently of upload success.
+  ///
+  /// Durability and privacy are separate guarantees: a failed or disabled
+  /// backup must never extend the app-private plaintext lifetime beyond the
+  /// configured cutoff. Metadata is retained so the UI can explain that an
+  /// unbacked local copy expired, but the upload queue will not retry it because
+  /// [RecordingSegment.localPath] is cleared.
   Future<List<RecordingSegment>> enforceDeviceRetention({
     required List<RecordingSegment> segments,
     required DateTime cutoffUtc,
   }) async {
+    final cutoff = cutoffUtc.toUtc();
     final updated = <RecordingSegment>[];
     for (final segment in segments) {
-      if (segment.localPath == null || segment.endedAtUtc.isAfter(cutoffUtc)) {
+      final localPath = segment.localPath;
+      if (localPath == null || segment.endedAtUtc.isAfter(cutoff)) {
         updated.add(segment);
         continue;
       }
-      final canDeleteLocal = segment.isUploaded || segment.isPermanentlySaved;
-      if (!canDeleteLocal) {
-        updated.add(segment);
+
+      final file = File(localPath);
+      try {
+        await _deleteLocalArtifacts(file);
+      } catch (error) {
+        updated.add(
+          segment.copyWith(error: 'Local retention deletion failed: $error'),
+        );
         continue;
       }
-      final file = File(segment.localPath!);
-      if (await file.exists()) {
-        await file.delete();
-      }
-      final sidecar = File(_spectralSidecarPath(file.path));
-      if (await sidecar.exists()) {
-        await sidecar.delete();
-      }
-      updated.add(segment.copyWith(localPath: null));
+
+      final expiredBeforeBackup =
+          !segment.isUploaded && !segment.isPermanentlySaved;
+      updated.add(
+        segment.copyWith(
+          localPath: null,
+          uploadStatus: expiredBeforeBackup
+              ? SegmentUploadStatus.failed
+              : segment.uploadStatus,
+          error: expiredBeforeBackup
+              ? '$retentionExpiredErrorPrefix at ${cutoff.toIso8601String()}.'
+              : segment.error,
+        ),
+      );
     }
     await saveSegments(updated);
     return updated;
@@ -182,10 +211,9 @@ class SegmentIndex {
   /// "Space permitting": the rolling window keeps up to the configured hours,
   /// but never at the cost of filling the disk. When free space on the
   /// segments volume is below [minFreeBytes], the oldest local copies that are
-  /// safe to drop (uploaded or permanently saved — the same eligibility rule
-  /// as [enforceDeviceRetention]) are deleted oldest-first until the floor is
-  /// met or nothing eligible remains. An unknown free-space reading (null)
-  /// prunes nothing.
+  /// safe to drop (uploaded or permanently saved) are deleted oldest-first until
+  /// the floor is met or nothing eligible remains. An unknown free-space reading
+  /// (null) prunes nothing.
   Future<List<RecordingSegment>> enforceFreeSpaceFloor({
     required List<RecordingSegment> segments,
     required int minFreeBytes,
@@ -214,7 +242,13 @@ class SegmentIndex {
         try {
           bytes = await file.length();
         } catch (_) {}
-        await file.delete();
+      }
+      try {
+        await _deleteLocalArtifacts(file);
+      } catch (_) {
+        // Keep the index entry pointing at the local path so a later pass can
+        // retry; never claim bytes were removed when companion cleanup failed.
+        continue;
       }
       reclaimed += bytes;
       replacements[segment.id] = segment.copyWith(localPath: null);
@@ -254,6 +288,23 @@ class SegmentIndex {
     final dot = audioPath.lastIndexOf('.');
     final stem = dot < 0 ? audioPath : audioPath.substring(0, dot);
     return '$stem.features.json';
+  }
+
+  /// Deletes sensitive companions before the canonical audio file. If a
+  /// companion deletion fails, the audio remains and the indexed path is kept so
+  /// a later pass can retry rather than falsely reporting successful cleanup.
+  static Future<void> _deleteLocalArtifacts(File audioFile) async {
+    final sidecar = File(_spectralSidecarPath(audioFile.path));
+    if (await sidecar.exists()) {
+      await sidecar.delete();
+    }
+    final partial = File('${audioFile.path}.part');
+    if (await partial.exists()) {
+      await partial.delete();
+    }
+    if (await audioFile.exists()) {
+      await audioFile.delete();
+    }
   }
 
   Future<void> _quarantineCorruptIndex(File file) async {
