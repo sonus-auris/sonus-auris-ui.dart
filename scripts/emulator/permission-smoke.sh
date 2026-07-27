@@ -18,6 +18,13 @@ APK="${1:?usage: permission-smoke.sh <apk-path> [adb-serial]}"
 SERIAL="${2:-}"
 PKG="com.ores.audio_dashcam"
 ACTIVITY="$PKG/.MainActivity"
+EVIDENCE_DIR="${SMOKE_EVIDENCE_DIR:-}"
+
+if [[ -n "$EVIDENCE_DIR" ]]; then
+  mkdir -p "$EVIDENCE_DIR"
+  # Preserve the complete assertion trace even when the harness exits early.
+  exec > >(tee "$EVIDENCE_DIR/run.log") 2>&1
+fi
 
 adb_() { if [[ -n "$SERIAL" ]]; then adb -s "$SERIAL" "$@"; else adb "$@"; fi; }
 
@@ -125,6 +132,21 @@ capture_failure_evidence() {
       for (i = start; i <= count; i++) print lines[i]
     }
   '
+  if [[ -n "$EVIDENCE_DIR" ]]; then
+    printf '%s\n' "$ui_xml" > "$EVIDENCE_DIR/window.xml"
+    adb_ logcat -d > "$EVIDENCE_DIR/logcat.txt" 2>&1 || true
+    adb_ shell dumpsys package "$PKG" > "$EVIDENCE_DIR/package.txt" 2>&1 || true
+    adb_ shell dumpsys activity activities > "$EVIDENCE_DIR/activities.txt" 2>&1 || true
+    adb_ shell pidof "$PKG" > "$EVIDENCE_DIR/pid.txt" 2>&1 || true
+  fi
+}
+
+require_ui_text() {
+  local label="$1"
+  if ! assert_ui_text "$label" "$ui_xml"; then
+    capture_failure_evidence
+    exit 1
+  fi
 }
 
 echo "== account UI smoke-test =="
@@ -134,17 +156,18 @@ if ! wait_for_ui_text "Welcome to Sonus Auris" 40; then
   capture_failure_evidence
   exit 1
 fi
-assert_ui_text "Welcome to Sonus Auris" "$ui_xml"
-assert_ui_text "Continue" "$ui_xml"
+require_ui_text "Welcome to Sonus Auris"
+require_ui_text "Continue"
 tap_ui_text "Continue" "$ui_xml"
 if ! wait_for_ui_text "Create your account" 20; then
   echo "  ✗ account screen did not become ready within 20 seconds"
   capture_failure_evidence
   exit 1
 fi
-assert_ui_text "Create your account" "$ui_xml"
-assert_ui_text "Sign in" "$ui_xml"
-assert_ui_text "Create account" "$ui_xml"
+require_ui_text "Create your account"
+require_ui_text "Email"
+require_ui_text "New here? Signing in creates your account automatically."
+require_ui_text "Email me a sign-in link"
 if adb_ logcat -d 2>/dev/null | grep -m1 -F "A RenderFlex overflowed"; then
   echo "  ✗ Flutter reported a visible layout overflow"
   capture_failure_evidence
@@ -202,6 +225,8 @@ if [[ -n "${SMOKE_SCREENSHOT:-}" ]]; then
 fi
 
 if [[ "$fail" -ne 0 ]]; then
-  echo "PERMISSION SMOKE TEST FAILED"; exit 1
+  capture_failure_evidence
+  echo "PERMISSION SMOKE TEST FAILED"
+  exit 1
 fi
 echo "PERMISSION SMOKE TEST PASSED"

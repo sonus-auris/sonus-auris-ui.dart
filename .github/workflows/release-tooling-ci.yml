@@ -1,0 +1,94 @@
+name: release tooling CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-tooling-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-release-tooling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+
+      - name: Compile Python release tools
+        run: >-
+          python3 -m py_compile
+          scripts/release/publish_google_play.py
+          scripts/release/publish_desktop_r2.py
+
+      - name: Validate shell release tools
+        run: |
+          bash -n \
+            scripts/release/android-build-aab.sh \
+            scripts/release/ios-build-ipa.sh \
+            scripts/release/upload_app_store.sh
+          if command -v shellcheck >/dev/null; then
+            shellcheck \
+              scripts/release/android-build-aab.sh \
+              scripts/release/ios-build-ipa.sh \
+              scripts/release/upload_app_store.sh
+          fi
+
+      - name: Exercise Google Play dry run
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-test"
+          printf 'not-a-real-bundle' > "$RUNNER_TEMP/release-test/app.aab"
+          python3 scripts/release/publish_google_play.py \
+            --dry-run \
+            --package-name com.ores.audio_dashcam \
+            --aab "$RUNNER_TEMP/release-test/app.aab" \
+            --track internal \
+            --status completed
+
+      - name: Exercise R2 dry run and manifest generation
+        run: |
+          dist="$RUNNER_TEMP/release-test/dist"
+          mkdir -p "$dist"
+          printf 'windows' > "$dist/sonus-auris-windows-x64.exe"
+          printf 'macos' > "$dist/sonus-auris-macos-universal.dmg"
+          printf 'linux' > "$dist/sonus-auris-linux-x86_64.deb"
+          python3 scripts/release/publish_desktop_r2.py \
+            --dry-run \
+            --version 1.2.3-rc.1 \
+            --dist "$dist" \
+            --bucket validation-bucket \
+            --endpoint-url https://account.r2.cloudflarestorage.com \
+            --public-base-url https://downloads.example.test
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          dist = Path(os.environ['RUNNER_TEMP']) / 'release-test' / 'dist'
+          manifest = json.loads((dist / 'latest.json').read_text())
+          assert manifest['schemaVersion'] == 1
+          assert manifest['version'] == '1.2.3-rc.1'
+          assert set(manifest['artifacts']) == {'windows', 'macos', 'linux'}
+          assert (dist / 'SHA256SUMS').is_file()
+          PY
+
+      - name: Reject server credentials in client build inputs
+        run: |
+          if git grep -n -E 'SUPABASE_(SERVICE_ROLE|SECRET)_KEY' -- \
+            '.github/workflows/*.yml' \
+            'scripts/release/*' \
+            ':!scripts/release/publish_google_play.py'; then
+            echo '::error::Client release tooling must never accept Supabase server credentials.'
+            exit 1
+          fi
