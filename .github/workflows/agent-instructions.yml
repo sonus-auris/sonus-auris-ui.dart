@@ -1,0 +1,85 @@
+name: agent instructions
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: console-agent-instructions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22
+      - name: Validate canonical instructions and hierarchy
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { existsSync, readFileSync, realpathSync } from 'node:fs';
+          import path from 'node:path';
+
+          const root = process.cwd();
+          const canonical = path.join(root, 'agents.md');
+          assert.ok(existsSync(canonical), 'missing lowercase agents.md');
+          const text = readFileSync(canonical, 'utf8');
+          for (const phrase of [
+            'github.com/sonus-auris',
+            'Linear project: `github.com/sonus-auris`',
+            'Resolve conflicts semantically',
+            'git fetch --all --prune',
+            '<<<<<<<',
+            'service-role',
+            'Puppeteer/Playwright',
+            'failed critical assets',
+          ]) assert.ok(text.includes(phrase), `agents.md missing ${phrase}`);
+
+          const pointers = new Map([
+            ['AGENTS.md', '# Canonical agent instructions\n\nRead and apply [`agents.md`](agents.md). This compatibility file must not duplicate repository instructions.\n'],
+            ['.claude/CLAUDE.md', '# Canonical agent instructions\n\nRead and apply [`../agents.md`](../agents.md). Do not duplicate repository instructions here.\n'],
+            ['.gemini/GEMINI.md', '# Canonical agent instructions\n\nRead and apply [`../agents.md`](../agents.md). Do not duplicate repository instructions here.\n'],
+            ['.openai/AGENTS.md', '# Canonical agent instructions\n\nRead and apply [`../agents.md`](../agents.md). Do not duplicate repository instructions here.\n'],
+          ]);
+          for (const [relative, expected] of pointers) {
+            const file = path.join(root, relative);
+            assert.ok(existsSync(file), `missing ${relative}`);
+            assert.equal(readFileSync(file, 'utf8'), expected, `${relative} duplicates or diverges`);
+          }
+
+          let directory = realpathSync(path.join(root, 'lib'));
+          const ancestors = [];
+          while (true) {
+            ancestors.push(directory);
+            const parent = path.dirname(directory);
+            if (parent === directory) break;
+            directory = parent;
+          }
+          ancestors.reverse();
+          const found = [];
+          const seen = new Set();
+          for (const ancestor of ancestors) {
+            const candidate = path.join(ancestor, 'agents.md');
+            if (!existsSync(candidate)) continue;
+            const resolved = realpathSync(candidate);
+            readFileSync(candidate, 'utf8');
+            if (seen.has(resolved)) continue;
+            seen.add(resolved);
+            found.push(resolved);
+          }
+          assert.deepEqual(found, [realpathSync(canonical)], `wrong agents.md chain: ${found.join(', ')}`);
+          console.log('agents.md chain for lib/:');
+          for (const file of found) console.log(`  - ${path.relative(root, file)}`);
+          JS
