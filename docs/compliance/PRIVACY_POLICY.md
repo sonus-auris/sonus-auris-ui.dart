@@ -5,17 +5,19 @@ _Last updated: <SET DATE>. Publisher: <LEGAL ENTITY NAME>, contact: <privacy@you
 > This draft is written to match how the app actually behaves. Review the
 > bracketed `<…>` placeholders, have counsel review it, host it at a stable public
 > URL, and keep that published version synchronized with every shipped build and
-> store disclosure.
+> store disclosure. **Release blocker:** the intended local default is 50 hours,
+> while the current `AppConfig` fallback is 100 hours. Do not publish a fixed
+> default until DEN-197 aligns code, migration, tests, and wording.
 
 ## Summary
 
 Sonus Auris records audio only after you start recording, accept a recording
 prompt, or explicitly arm a recording schedule. A rolling working window can
 remain plaintext inside the app-private storage on your device for the local
-retention period you choose (50 hours by default) so approved local analysis can
-run. Every backup or cross-device-sync object is encrypted on your device before
-it leaves. The Sonus Auris backend and ordinary object-storage providers receive
-ciphertext and cannot decrypt it.
+retention period you configure so approved local analysis can run. Every backup
+or cross-device-sync object is encrypted on your device before it leaves. The
+Sonus Auris backend and ordinary object-storage providers receive ciphertext and
+cannot decrypt it.
 
 A schedule records your intent, but it cannot override iOS or Android lifecycle
 rules. Force-quitting, force-stopping, or operating-system termination can prevent
@@ -92,10 +94,12 @@ user-entered notes. We do not bundle advertising SDKs.
 
 ## Retention
 
-The local working audio window ages out automatically according to your setting,
-which defaults to 50 hours. The app must also remove expired partial files,
-temporary clips, caches, and analysis scratch data. You can shorten retention,
-stop recording, disable analysis, or delete the local window.
+The local working audio window ages out automatically according to your setting.
+The app must also remove expired partial files, temporary clips, caches, and
+analysis scratch data. You can shorten retention, stop recording, disable
+analysis, or delete the local window. The published policy and store answers must
+state the actual production default only after the release build and upgrade
+migration are verified.
 
 Encrypted backups persist according to the configured destination/plan until
 their retention expires or you delete them. Derived transcripts, summaries,
