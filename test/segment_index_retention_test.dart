@@ -48,6 +48,7 @@ void main() {
     final persisted = await index.loadSegments();
     expect(persisted.single.localPath, isNull);
     expect(persisted.single.uploadStatus, SegmentUploadStatus.failed);
+    expect(await _tombstoneFile(temp).exists(), isFalse);
   });
 
   test('segment one instant inside the window is retained', () async {
@@ -116,6 +117,146 @@ void main() {
     expect(await File('${audio.path}.part').exists(), isFalse);
     expect(result.single.localPath, isNull);
     expect(result.single.remoteKey, 'ciphertext/space.sac');
+    expect(await _tombstoneFile(temp).exists(), isFalse);
+  });
+
+  test('registered transcript and scratch artifacts expire with the audio', () async {
+    final cutoff = DateTime.utc(2026, 7, 27, 12);
+    final audio = await _writeArtifactSet(temp, 'registered.wav');
+    final transcript = File(p.join(temp.path, 'segments', 'registered.transcript.json'));
+    final scratch = File(p.join(temp.path, 'analysis', 'registered.scratch'));
+    await transcript.writeAsString('{"text":"sensitive"}', flush: true);
+    await scratch.parent.create(recursive: true);
+    await scratch.writeAsBytes([4, 5, 6], flush: true);
+    final segment = _segment(
+      id: 'registered',
+      audio: audio,
+      endedAtUtc: cutoff,
+      uploadStatus: SegmentUploadStatus.pending,
+    );
+    await index.saveSegments([segment]);
+    await index.registerLocalArtifact(
+      segmentId: segment.id,
+      artifactPath: transcript.path,
+    );
+    await index.registerLocalArtifact(
+      segmentId: segment.id,
+      artifactPath: scratch.path,
+    );
+
+    final result = await index.enforceDeviceRetention(
+      segments: await index.loadSegments(),
+      cutoffUtc: cutoff,
+    );
+
+    expect(result.single.localPath, isNull);
+    expect(await transcript.exists(), isFalse);
+    expect(await scratch.exists(), isFalse);
+    expect(
+      await File(p.join(temp.path, 'segment-artifacts.v1.json')).exists(),
+      isFalse,
+    );
+  });
+
+  test('restart replays a tombstone after a crash before deletion', () async {
+    final cutoff = DateTime.utc(2026, 7, 27, 12);
+    final audio = await _writeArtifactSet(temp, 'crash-before-delete.wav');
+    final segment = _segment(
+      id: 'crash-before-delete',
+      audio: audio,
+      endedAtUtc: cutoff,
+      uploadStatus: SegmentUploadStatus.pending,
+    );
+    await index.saveSegments([segment]);
+    final crashing = SegmentIndex(
+      baseDirectoryProvider: () async => temp,
+      retentionMutationHook: (stage, _) async {
+        if (stage == RetentionMutationStage.tombstonePersisted) {
+          throw StateError('simulated process stop');
+        }
+      },
+    );
+
+    await expectLater(
+      crashing.enforceDeviceRetention(
+        segments: [segment],
+        cutoffUtc: cutoff,
+      ),
+      throwsStateError,
+    );
+    expect(await audio.exists(), isTrue);
+    expect(await _tombstoneFile(temp).exists(), isTrue);
+
+    final restarted = SegmentIndex(baseDirectoryProvider: () async => temp);
+    final recovered = await restarted.loadSegments();
+
+    expect(await audio.exists(), isFalse);
+    expect(await File(_sidecarPath(audio.path)).exists(), isFalse);
+    expect(recovered.single.localPath, isNull);
+    expect(recovered.single.uploadStatus, SegmentUploadStatus.failed);
+    expect(await _tombstoneFile(temp).exists(), isFalse);
+  });
+
+  test('restart converges after files were deleted but index was stale', () async {
+    final cutoff = DateTime.utc(2026, 7, 27, 12);
+    final audio = await _writeArtifactSet(temp, 'crash-after-delete.wav');
+    final segment = _segment(
+      id: 'crash-after-delete',
+      audio: audio,
+      endedAtUtc: cutoff,
+      uploadStatus: SegmentUploadStatus.pending,
+    );
+    await index.saveSegments([segment]);
+    final crashing = SegmentIndex(
+      baseDirectoryProvider: () async => temp,
+      retentionMutationHook: (stage, _) async {
+        if (stage == RetentionMutationStage.artifactsDeleted) {
+          throw StateError('simulated process stop');
+        }
+      },
+    );
+
+    await expectLater(
+      crashing.enforceDeviceRetention(
+        segments: [segment],
+        cutoffUtc: cutoff,
+      ),
+      throwsStateError,
+    );
+    expect(await audio.exists(), isFalse);
+    expect(await _tombstoneFile(temp).exists(), isTrue);
+
+    final restarted = SegmentIndex(baseDirectoryProvider: () async => temp);
+    final recovered = await restarted.loadSegments();
+
+    expect(recovered.single.localPath, isNull);
+    expect(recovered.single.uploadStatus, SegmentUploadStatus.failed);
+    expect(await _tombstoneFile(temp).exists(), isFalse);
+  });
+
+  test('artifact registration rejects paths outside app storage', () async {
+    final audio = await _writeArtifactSet(temp, 'bounded.wav');
+    final segment = _segment(
+      id: 'bounded',
+      audio: audio,
+      endedAtUtc: DateTime.utc(2026, 7, 27, 12),
+      uploadStatus: SegmentUploadStatus.pending,
+    );
+    await index.saveSegments([segment]);
+    final outside = File(p.join(temp.parent.path, '${temp.path.hashCode}.secret'));
+    await outside.writeAsString('do not delete', flush: true);
+    addTearDown(() async {
+      if (await outside.exists()) await outside.delete();
+    });
+
+    await expectLater(
+      index.registerLocalArtifact(
+        segmentId: segment.id,
+        artifactPath: outside.path,
+      ),
+      throwsStateError,
+    );
+    expect(await outside.exists(), isTrue);
   });
 }
 
@@ -152,3 +293,7 @@ String _sidecarPath(String audioPath) {
   final stem = dot < 0 ? audioPath : audioPath.substring(0, dot);
   return '$stem.features.json';
 }
+
+File _tombstoneFile(Directory base) => File(
+  p.join(base.path, SegmentIndex.retentionTombstoneFileName),
+);

@@ -9,6 +9,7 @@ import 'acoustic/music_detector.dart';
 import 'acoustic/safety_sound_detector.dart';
 import 'acoustic/speech_detector.dart';
 import 'acoustic/spectral_features.dart';
+import 'segment_index.dart';
 
 /// Writes a **time-aligned spectral analysis track** next to each rolling WAV
 /// segment — a parallel decomposition of the audio, derived by FFT.
@@ -25,13 +26,15 @@ import 'acoustic/spectral_features.dart';
 /// bands, chroma, etc. are natural future sidecars in the same scheme — see the
 /// `kind` field, which lets multiple analysis tracks coexist.
 class SpectralSidecar {
-  SpectralSidecar({this.fftSize = 1024})
-    : assert(
+  SpectralSidecar({this.fftSize = 1024, SegmentIndex? segmentIndex})
+    : _segmentIndex = segmentIndex ?? SegmentIndex(),
+      assert(
         fftSize > 0 && (fftSize & (fftSize - 1)) == 0,
         'fftSize must be a power of two',
       );
 
   final int fftSize;
+  final SegmentIndex _segmentIndex;
 
   static const int formatVersion = 2;
 
@@ -42,23 +45,44 @@ class SpectralSidecar {
     return '$stem.features.json';
   }
 
-  /// Analyze a finished segment's WAV and write its spectral sidecar. Best-effort
-  /// and side-effect-free on failure: returns the sidecar file, or null if the
-  /// audio is missing, unreadable, or shorter than one FFT frame.
+  /// Analyze a finished segment's WAV, write its spectral sidecar, and register
+  /// the sidecar in the segment's durable retention unit before returning it.
+  ///
+  /// Registration is fail-closed: if the segment no longer exists locally or the
+  /// inventory cannot be durably updated, the newly written sidecar is removed
+  /// so an untracked sensitive artifact cannot outlive its audio segment.
   Future<File?> writeForSegment(RecordingSegment segment) async {
     final path = segment.localPath;
     if (path == null) {
       return null;
     }
-    return writeForWav(
+    final sidecar = await writeForWav(
       path,
       sampleRate: segment.sampleRate,
       channels: segment.channels,
       startedAtUtc: segment.startedAtUtc,
       captureSessionId: segment.captureSessionId,
     );
+    if (sidecar == null) {
+      return null;
+    }
+    try {
+      await _segmentIndex.registerLocalArtifact(
+        segmentId: segment.id,
+        artifactPath: sidecar.path,
+      );
+      return sidecar;
+    } catch (_) {
+      if (await sidecar.exists()) {
+        await sidecar.delete();
+      }
+      rethrow;
+    }
   }
 
+  /// Analyze a WAV and write a sidecar without registering it against a segment.
+  /// This lower-level API is retained for isolated tooling/tests. Production
+  /// segment processing should use [writeForSegment].
   Future<File?> writeForWav(
     String wavPath, {
     required int sampleRate,

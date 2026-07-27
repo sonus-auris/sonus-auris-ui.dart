@@ -7,6 +7,23 @@ void main() {
     expect(required, [ConsentItem.microphone]);
   });
 
+  test('microphone disclosure states schedule and plaintext boundaries', () {
+    final disclosure = ConsentItem.microphone.rationale.toLowerCase();
+    expect(disclosure, contains('explicitly arm a schedule'));
+    expect(disclosure, contains('force-quitting'));
+    expect(disclosure, contains('force-stopping'));
+    expect(disclosure, contains('plaintext'));
+    expect(disclosure, contains('app-private device sandbox'));
+    expect(disclosure, contains('encrypted on-device before it leaves'));
+  });
+
+  test('cloud consent covers encrypted backup and device sync', () {
+    final disclosure = ConsentItem.cloudBackup.rationale.toLowerCase();
+    expect(ConsentItem.cloudBackup.title.toLowerCase(), contains('device sync'));
+    expect(disclosure, contains('authorized devices'));
+    expect(disclosure, contains('end-to-end encrypted'));
+  });
+
   test('fromKey round-trips every item and rejects unknown keys', () {
     for (final item in ConsentItem.values) {
       expect(ConsentItem.fromKey(item.key), item);

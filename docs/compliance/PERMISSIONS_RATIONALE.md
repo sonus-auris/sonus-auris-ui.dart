@@ -5,35 +5,88 @@ risks to address before submitting**. The app's permission set is sensitive
 (microphone + background audio + location + Bluetooth + exact alarms), so expect
 scrutiny on both stores.
 
+## Recording consent versus operating-system capability
+
+A user can explicitly start recording, accept a context-trigger prompt, or arm a
+recording schedule. Those actions record user intent; they do **not** override
+platform restrictions.
+
+- A live recording session that the user started can continue through normal
+  backgrounding/lock while the operating system keeps the process and audio
+  session alive.
+- Force-quitting on iOS or force-stopping on Android prevents future scheduled
+  starts until the user launches the app again.
+- Android exact alarms persist a desired schedule state; their background
+  callback does not open the microphone or start a microphone foreground service.
+- iOS local notifications are reminders/relaunch affordances, not permission to
+  relaunch a force-quit app and silently open the microphone.
+- Active capture must remain visible through the Android persistent notification
+  and iOS system microphone indicator.
+
+See `RECORDING_SCHEDULE_LIMITATIONS.md` for the reviewer-facing behavior matrix.
+
+## Local plaintext and encrypted outbound data
+
+The rolling working audio window may remain plaintext inside the app-private
+sandbox for the configured local retention period so approved on-device analysis
+can run. App backup is disabled for this cache. Every backup or cross-device-sync
+object is encrypted on-device before it leaves the device. Do not claim that all
+on-device audio is encrypted at rest while the working plaintext window exists.
+
+The intended release default and maximum supported local plaintext window is
+**100 hours**, with support for user-selected shorter values. `AppConfig`, the
+retention sweeper, and crash-replayable retention tombstones now enforce the core
+fail-closed ceiling even when uploads are disabled, offline, pending, or failing.
+The remaining DEN-250 release work is to register every transcript, analysis,
+cache, scratch, and assembled-clip worker with the artifact inventory; add the
+pre-expiry warning/export experience and privacy-dashboard health; and prove
+account-deletion and consent-revocation races.
+
 ## iOS (Info.plist usage strings — all present)
+
 | Key | Why |
 |---|---|
-| `NSMicrophoneUsageDescription` | Core feature; mic used **only after** the user taps Start. |
+| `NSMicrophoneUsageDescription` | Core feature; microphone use begins only after Start, an accepted prompt, or an explicitly armed schedule. The usage string also discloses force-quit limitations. |
 | `NSLocationWhenInUseUsageDescription` | Optional geotagging, OFF by default. When-in-use only; **no** background location. |
 | `NSBluetoothAlways/PeripheralUsageDescription` | Optional: notice nearby devices to offer a scheduled-capture prompt. |
-| `UIBackgroundModes: audio` | Continuous capture while locked (e.g. overnight). Session starts only after Start. |
+| `UIBackgroundModes: audio` | Continue a user-started live capture while locked or normally backgrounded; it is not a future-start entitlement. |
 | `ITSAppUsesNonExemptEncryption = false` | See EXPORT_COMPLIANCE.md. |
 
 ## Android (AndroidManifest permissions)
+
 | Permission | Why | Notes / risk |
 |---|---|---|
-| `RECORD_AUDIO` | Core recording. | Prominent disclosure required. |
-| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE` | Keep capturing in background under a visible notification. | Android 14+ needs the service declared `foregroundServiceType="microphone"` **and** a Play Console **Foreground service** declaration with a short video. |
-| `POST_NOTIFICATIONS` | Show the capture/notification UI. | Runtime prompt; fine. |
-| `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` | Optional geotagging, OFF by default. | Requires the Play **Location permissions** declaration. No background location requested (good). |
+| `RECORD_AUDIO` | Core recording. | Prominent disclosure required before the runtime prompt. |
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE` | Keep user-started capture alive in background under a visible notification. | Android 14+ needs `foregroundServiceType="microphone"` and a Play Console **Foreground service** declaration with a demo video. The schedule-standby use of a microphone-typed service must be validated against current policy and real devices before release. |
+| `POST_NOTIFICATIONS` | Show recording state, controls, schedule reminders, and consent prompts. | Runtime prompt; denied notifications must produce a clear degraded-mode warning. |
+| `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` | Optional geotagging, OFF by default. | Requires the Play **Location permissions** declaration. No background location requested. |
 | `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT` | Optional nearby-device prompts. | `BLUETOOTH_SCAN` is marked `neverForLocation`; GPS tagging uses its separate permission. |
 | `NEARBY_WIFI_DEVICES` | Optional nearby-device context. | Marked `neverForLocation`; used only for an opt-in schedule prompt. |
-| `SCHEDULE_EXACT_ALARM` | Fire scheduled-recording windows precisely. | User-grantable only when a schedule is armed; denied access degrades to the live in-app timer. |
-| `RECEIVE_BOOT_COMPLETED` | Re-arm scheduled windows after reboot. | Justify; common and low-risk. |
+| `SCHEDULE_EXACT_ALARM` | Wake at declared schedule boundaries to persist/reconcile desired state. | User-grantable only when a schedule is armed. It does not directly start the microphone from a prohibited background state. |
+| `RECEIVE_BOOT_COMPLETED` | Re-arm schedule alarms after reboot. | The receiver must not auto-start microphone capture or a microphone foreground service. |
 | `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `INTERNET` | Upload gating to user-controlled storage. | Low-risk. |
 
 ## Action items before submission
+
 - [x] Removed restricted `USE_EXACT_ALARM` and unused `USE_FULL_SCREEN_INTENT`.
 - [x] Added `neverForLocation` to `BLUETOOTH_SCAN` and `NEARBY_WIFI_DEVICES`.
 - [x] Confirmed `foregroundServiceType="microphone"` and added the prominent
       disclosure before the OS permission prompt.
-- [ ] Complete the Play **Foreground service** declaration (+ demo video).
-- [ ] Complete the Play **Location permissions** declaration (or ship with location
-      disabled and drop the permissions).
-- [ ] Record a short demo video for App Review showing Start → background capture
-      → Stop → playback (covers mic + background `audio` justification).
+- [x] Documented force-quit/force-stop and killed-process schedule limitations.
+- [x] Disclosed that the local working window can remain plaintext while every
+      outbound backup/sync object is encrypted on-device.
+- [x] Confirmed the configured release default is 100 hours in `AppConfig`.
+- [x] Enforced fail-closed deletion of expired audio, known sidecars/partials, and
+      crash-replayable registered artifacts even when backup is unavailable.
+- [ ] Wire every sensitive derived-artifact producer into the DEN-250 inventory,
+      warning/export, dashboard, and race-test work.
+- [ ] Decide whether Android schedule standby can retain a microphone-typed
+      foreground service while the mic is closed; redesign if policy/device tests
+      do not support it.
+- [ ] Complete the Play **Foreground service** declaration and demo video.
+- [ ] Complete the Play **Location permissions** declaration, or ship with
+      location disabled and remove the permissions.
+- [ ] Record an App Review video showing consent → Start → lock/background → Stop
+      → playback, plus the force-quit/scheduled-start limitation.
+- [ ] Complete 24-hour and 72-hour physical-device endurance tests on supported
+      iPhone and Android hardware.
