@@ -5,11 +5,6 @@ production IPA's actual endpoints, build flags, permissions, SDKs, and enabled
 features. Apple groups answers into **Used to Track You**, **Linked to You**, and
 **Not Linked to You**.
 
-> Release blocker: the intended local retention default is 50 hours, while the
-> current `AppConfig` constructor/deserialization fallback is 100 hours. Do not
-> publish a fixed retention claim until DEN-197 aligns code, migration, tests,
-> in-app controls, and public/store wording.
-
 ## Tracking
 
 - **Used to track you: NONE.** The app does not track users across apps/websites
@@ -34,15 +29,16 @@ features. Apple groups answers into **Used to Track You**, **Linked to You**, an
 ## Local-only data
 
 The rolling working audio window can remain plaintext inside the app-private
-sandbox for the configured retention period so recording, playback,
-transcription, and approved local analysis can run. Data that never leaves the
-device is not "collected" for App Privacy, but the public privacy policy and
-in-app disclosure must still explain the local plaintext/security boundary
-accurately.
+sandbox for **100 hours by default**, or a user-selected shorter period, so
+recording, playback, transcription, and approved local analysis can run. Data
+that never leaves the device is not "collected" for App Privacy, but the public
+privacy policy and in-app disclosure must still explain the local
+plaintext/security boundary accurately.
 
 Every ordinary backup or cross-device-sync audio object is encrypted on-device
 before leaving. Do not describe the local working window itself as encrypted at
-rest while plaintext files exist.
+rest while plaintext files exist. Failed or disabled backup must not extend the
+local plaintext lifetime beyond the configured 100-hour-or-shorter ceiling.
 
 ## Optional external processing
 
@@ -60,6 +56,8 @@ linkage, and provider role before release.
 - Keep App Store Connect answers synchronized with
   `ios/Runner/PrivacyInfo.xcprivacy`, the public privacy policy, and the runtime
   data-flow inventory.
+- Verify the production build, UI, tests, and retention sweeper all enforce the
+  100-hour default and preserve shorter user-selected settings.
 - Privacy policy URL: `https://sonusauris.app/privacy/`.
 - Account deletion URL: `https://sonusauris.app/account-deletion/`.
 - Re-audit whenever providers, SDKs, analysis categories, retention, encryption,
