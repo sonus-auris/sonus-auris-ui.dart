@@ -141,6 +141,14 @@ capture_failure_evidence() {
   fi
 }
 
+require_ui_text() {
+  local label="$1"
+  if ! assert_ui_text "$label" "$ui_xml"; then
+    capture_failure_evidence
+    exit 1
+  fi
+}
+
 echo "== account UI smoke-test =="
 ui_xml=""
 if ! wait_for_ui_text "Welcome to Sonus Auris" 40; then
@@ -148,17 +156,18 @@ if ! wait_for_ui_text "Welcome to Sonus Auris" 40; then
   capture_failure_evidence
   exit 1
 fi
-assert_ui_text "Welcome to Sonus Auris" "$ui_xml"
-assert_ui_text "Continue" "$ui_xml"
+require_ui_text "Welcome to Sonus Auris"
+require_ui_text "Continue"
 tap_ui_text "Continue" "$ui_xml"
 if ! wait_for_ui_text "Create your account" 20; then
   echo "  ✗ account screen did not become ready within 20 seconds"
   capture_failure_evidence
   exit 1
 fi
-assert_ui_text "Create your account" "$ui_xml"
-assert_ui_text "Sign in" "$ui_xml"
-assert_ui_text "Create account" "$ui_xml"
+require_ui_text "Create your account"
+require_ui_text "Email"
+require_ui_text "New here? Signing in creates your account automatically."
+require_ui_text "Email me a sign-in link"
 if adb_ logcat -d 2>/dev/null | grep -m1 -F "A RenderFlex overflowed"; then
   echo "  ✗ Flutter reported a visible layout overflow"
   capture_failure_evidence
