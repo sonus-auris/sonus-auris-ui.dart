@@ -23,12 +23,26 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+
       - name: Install Nix
         uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+
+      - name: Check Nix formatting
+        run: nix develop -c nixfmt --check flake.nix .nix/devshell.nix
+
+      - name: Check agent shell
+        run: |
+          nix develop -c shellcheck .nix/agent-check.sh
+          nix develop -c shfmt -d .nix/agent-check.sh
+
+      - name: Check relevant GitHub Actions
+        run: nix develop -c actionlint .github/workflows/ci.yml .github/workflows/nix.yml
+
       - name: Evaluate and build flake checks
         run: nix flake check --show-trace
+
       - name: Run the Flutter agent contract
         run: nix develop -c agent-check
