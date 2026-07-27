@@ -1,33 +1,39 @@
 { pkgs, agentCheck }:
 let
-  linuxPackages = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (with pkgs; [
-    clang
-    cmake
-    glib
-    gtk3
-    libGL
-    libsecret
-    ninja
-    pkg-config
-  ]);
+  linuxPackages = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (
+    with pkgs;
+    [
+      clang
+      cmake
+      glib
+      gtk3
+      libGL
+      libsecret
+      ninja
+      pkg-config
+    ]
+  );
   linuxLibraries = with pkgs; [
     glib
     gtk3
     libGL
     libsecret
   ];
-  shellPackages = (with pkgs; [
-    actionlint
-    cacert
-    flutter
-    git
-    jdk17
-    jq
-    just
-    nixfmt-rfc-style
-    shellcheck
-    shfmt
-  ]) ++ linuxPackages ++ [ agentCheck ];
+  shellPackages =
+    (with pkgs; [
+      actionlint
+      cacert
+      flutter
+      git
+      jdk17
+      jq
+      just
+      nixfmt-rfc-style
+      shellcheck
+      shfmt
+    ])
+    ++ linuxPackages
+    ++ [ agentCheck ];
 in
 pkgs.mkShell {
   packages = shellPackages;
