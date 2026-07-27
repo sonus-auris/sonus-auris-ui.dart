@@ -7,11 +7,6 @@ runtime behavior. In Play's terminology, data that is transmitted off-device is
 processor or user-directed destination is "shared" must be answered from the
 current Play definitions and the exact shipped integration.
 
-> Release blocker: the intended local retention default is 50 hours, while the
-> current `AppConfig` constructor/deserialization fallback is 100 hours. Do not
-> submit a fixed retention claim until DEN-197 aligns code, migration, tests, and
-> every disclosure.
-
 ## Security practices
 
 - **Encrypted in transit:** Yes (TLS/HTTPS).
@@ -19,10 +14,11 @@ current Play definitions and the exact shipped integration.
   authenticated on-device envelope encryption; the server/object store receives
   ciphertext and wrapped object keys.
 - **All data encrypted at rest on the device:** Do **not** claim this while the
-  rolling working window remains plaintext in app-private storage. The local
-  retention is user-configurable so approved recording/playback/AI analysis can
-  run. App backup is disabled for that cache, and expired plaintext/temp files
-  must be deleted deterministically.
+  rolling working window remains plaintext in app-private storage. The intended
+  default and maximum supported local plaintext window is **100 hours**, with
+  user-selected shorter values. App backup is disabled for that cache, and
+  expired plaintext/temp/derived files must be deleted deterministically even
+  when backup is disabled or failing.
 - **Users can request deletion:** Yes — in-app plus the public account-deletion URL.
 - **Committed to Play Families policy:** app is not directed to children.
 - **Independent security review:** declare only after a qualifying review exists.
@@ -52,9 +48,11 @@ current Play definitions and the exact shipped integration.
   iOS shows its system microphone indicator during capture.
 - Exact alarms persist/reconcile schedule state and do not directly open the
   microphone from a prohibited background receiver.
-- Local plaintext is limited to the app-private rolling window and analysis
-  scratch data; every ordinary backup/device-sync audio object is encrypted
-  before leaving the device.
+- Local plaintext is limited to the app-private rolling window for 100 hours by
+  default or a shorter selected period; every ordinary backup/device-sync audio
+  object is encrypted before leaving the device.
+- Failed or disabled backup does not authorize plaintext retention beyond the
+  configured ceiling.
 - Raw audio is not sent to an external AI/transcription provider by default. Any
   optional provider must be separately enabled and disclosed.
 - No data is sold or used for advertising or cross-app tracking.
@@ -63,13 +61,12 @@ current Play definitions and the exact shipped integration.
 
 - [ ] Compare this document against the production merged manifest, native
       capabilities, privacy manifest, Dart dependencies, build flags, and URLs.
-- [ ] Align the intended 50-hour release default with the constructor,
-      deserialization fallback, upgrade migration, retention sweeper, tests, UI,
-      policy, and store answers.
+- [ ] Verify the 100-hour default in constructor/deserialization, UI, tests,
+      retention sweeper, README, policy, and production binary.
+- [ ] Prove expired pending/failed/unconfigured uploads and every sensitive
+      companion artifact are removed at the 100-hour-or-shorter ceiling.
 - [ ] Decide the current Play "shared" answer for every user-directed storage and
       external-processing provider; retain the rationale and contract role.
-- [ ] Confirm the local plaintext window and every derived-data retention setting
-      appear in the public privacy policy and in-app controls.
 - [ ] Confirm account deletion removes ciphertext, metadata, device keys/public
       records, transcripts, summaries, diagnostics, and local files as promised.
 - [ ] Upload the foreground-service/exact-alarm demonstration video and reviewer
