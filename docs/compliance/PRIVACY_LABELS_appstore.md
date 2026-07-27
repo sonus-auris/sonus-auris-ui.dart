@@ -5,6 +5,11 @@ production IPA's actual endpoints, build flags, permissions, SDKs, and enabled
 features. Apple groups answers into **Used to Track You**, **Linked to You**, and
 **Not Linked to You**.
 
+> Release blocker: the intended local retention default is 50 hours, while the
+> current `AppConfig` constructor/deserialization fallback is 100 hours. Do not
+> publish a fixed retention claim until DEN-197 aligns code, migration, tests,
+> in-app controls, and public/store wording.
+
 ## Tracking
 
 - **Used to track you: NONE.** The app does not track users across apps/websites
@@ -29,11 +34,11 @@ features. Apple groups answers into **Used to Track You**, **Linked to You**, an
 ## Local-only data
 
 The rolling working audio window can remain plaintext inside the app-private
-sandbox for the configured retention period (50 hours by default) so recording,
-playback, transcription, and approved local analysis can run. Data that never
-leaves the device is not "collected" for App Privacy, but the public privacy
-policy and in-app disclosure must still explain the local plaintext/security
-boundary accurately.
+sandbox for the configured retention period so recording, playback,
+transcription, and approved local analysis can run. Data that never leaves the
+device is not "collected" for App Privacy, but the public privacy policy and
+in-app disclosure must still explain the local plaintext/security boundary
+accurately.
 
 Every ordinary backup or cross-device-sync audio object is encrypted on-device
 before leaving. Do not describe the local working window itself as encrypted at
