@@ -9,7 +9,7 @@ nix run .#agent-check
 nix flake check --show-trace
 ```
 
-`agent-check` is non-interactive. It validates the flake and workflows, requires Flutter 3.44.2 to match the existing GitHub Actions toolchain, resolves packages, runs `flutter analyze --no-fatal-infos`, and runs all unit tests.
+`agent-check` is non-interactive. It validates the flake and workflows, requires Flutter 3.44.3 to match the Nix lock and primary GitHub Actions toolchain, resolves packages, runs `flutter analyze --no-fatal-infos`, and runs all unit tests.
 
 Mutable Pub, Gradle, Flutter, Dart, and XDG state is kept below `.cache/nix-agent/` unless the caller explicitly overrides those locations. Analytics are suppressed without mutating global user configuration.
 
