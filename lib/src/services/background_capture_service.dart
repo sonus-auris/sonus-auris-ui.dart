@@ -47,8 +47,9 @@ class BackgroundCaptureService {
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
         channelId: 'audio_dashcam_capture',
-        channelName: 'Sonus Auris',
-        channelDescription: 'Shows while audio capture is active.',
+        channelName: 'Sonus Auris recording & schedules',
+        channelDescription:
+            'Shows while recording is active or a user-defined recording schedule is armed.',
         onlyAlertOnce: true,
         playSound: false,
         enableVibration: false,
