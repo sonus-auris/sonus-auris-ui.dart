@@ -33,10 +33,11 @@ can run. App backup is disabled for this cache. Every backup or cross-device-syn
 object is encrypted on-device before it leaves the device. Do not claim that all
 on-device audio is encrypted at rest while the working plaintext window exists.
 
-The product requirement is a 50-hour release default, but the current
-`AppConfig` constructor/deserialization fallback remains 100 hours. Do not submit
-to either store until DEN-197 aligns the code, upgrade migration, tests, and all
-public/store wording.
+The intended release default and maximum supported local plaintext window is
+**100 hours**, with support for user-selected shorter values. The current
+`AppConfig` constructor and deserialization fallback already use 100 hours. The
+remaining release blocker is enforcing that ceiling even when uploads fail or
+are disabled, including deletion of sidecars and temporary/derived artifacts.
 
 ## iOS (Info.plist usage strings — all present)
 
@@ -71,8 +72,9 @@ public/store wording.
 - [x] Documented force-quit/force-stop and killed-process schedule limitations.
 - [x] Disclosed that the local working window can remain plaintext while every
       outbound backup/sync object is encrypted on-device.
-- [ ] Change the release default from 100 to 50 hours with a migration that does
-      not overwrite intentional user settings; add upgrade and retention tests.
+- [x] Confirmed the configured release default is 100 hours in `AppConfig`.
+- [ ] Enforce the 100-hour-or-shorter hard plaintext ceiling even when upload is
+      disabled, offline, pending, or failing; delete all sensitive companions.
 - [ ] Decide whether Android schedule standby can retain a microphone-typed
       foreground service while the mic is closed; redesign if policy/device tests
       do not support it.
