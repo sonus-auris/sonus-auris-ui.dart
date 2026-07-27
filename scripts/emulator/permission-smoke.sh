@@ -18,6 +18,13 @@ APK="${1:?usage: permission-smoke.sh <apk-path> [adb-serial]}"
 SERIAL="${2:-}"
 PKG="com.ores.audio_dashcam"
 ACTIVITY="$PKG/.MainActivity"
+EVIDENCE_DIR="${SMOKE_EVIDENCE_DIR:-}"
+
+if [[ -n "$EVIDENCE_DIR" ]]; then
+  mkdir -p "$EVIDENCE_DIR"
+  # Preserve the complete assertion trace even when the harness exits early.
+  exec > >(tee "$EVIDENCE_DIR/run.log") 2>&1
+fi
 
 adb_() { if [[ -n "$SERIAL" ]]; then adb -s "$SERIAL" "$@"; else adb "$@"; fi; }
 
@@ -125,6 +132,13 @@ capture_failure_evidence() {
       for (i = start; i <= count; i++) print lines[i]
     }
   '
+  if [[ -n "$EVIDENCE_DIR" ]]; then
+    printf '%s\n' "$ui_xml" > "$EVIDENCE_DIR/window.xml"
+    adb_ logcat -d > "$EVIDENCE_DIR/logcat.txt" 2>&1 || true
+    adb_ shell dumpsys package "$PKG" > "$EVIDENCE_DIR/package.txt" 2>&1 || true
+    adb_ shell dumpsys activity activities > "$EVIDENCE_DIR/activities.txt" 2>&1 || true
+    adb_ shell pidof "$PKG" > "$EVIDENCE_DIR/pid.txt" 2>&1 || true
+  fi
 }
 
 echo "== account UI smoke-test =="
@@ -202,6 +216,8 @@ if [[ -n "${SMOKE_SCREENSHOT:-}" ]]; then
 fi
 
 if [[ "$fail" -ne 0 ]]; then
-  echo "PERMISSION SMOKE TEST FAILED"; exit 1
+  capture_failure_evidence
+  echo "PERMISSION SMOKE TEST FAILED"
+  exit 1
 fi
 echo "PERMISSION SMOKE TEST PASSED"
