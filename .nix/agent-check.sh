@@ -32,7 +32,7 @@ run_preflight() {
 }
 
 run_flutter_version() {
-	local expected_flutter_version="3.44.2"
+	local expected_flutter_version="3.44.3"
 	local actual_flutter_version
 
 	actual_flutter_version="$(flutter --version --machine | jq -r '.frameworkVersion')"
