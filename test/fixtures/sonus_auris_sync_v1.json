@@ -49,6 +49,8 @@
     {"name": "flip_one_bit_in_content_ciphertext", "expected": "authentication_failure"},
     {"name": "truncate_container_before_content_tag", "expected": "format_error"},
     {"name": "unsupported_container_version_3", "expected": "unsupported_version"},
+    {"name": "unknown_container_flag_bit", "expected": "unsupported_flags"},
+    {"name": "v2_missing_account_recipient_flag", "expected": "unsupported_flags"},
     {"name": "recipient_set_hash_mismatch", "expected": "manifest_verification_failure"},
     {"name": "manifest_signature_mismatch", "expected": "manifest_verification_failure"},
     {"name": "manifest_rollback_previous_hash_mismatch", "expected": "rollback_rejected"}
