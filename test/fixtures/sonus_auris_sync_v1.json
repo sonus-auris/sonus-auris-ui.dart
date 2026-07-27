@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "description": "Deterministic interoperability vector for Sonus Auris Sync Protocol v1 and legacy SAC1 container version 2.",
+  "encoding": "hex unless a field name contains canonical_json",
+  "inputs": {
+    "account_x25519_private_seed": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "account_x25519_public_key": "8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f",
+    "ephemeral_x25519_private_seed": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+    "ephemeral_x25519_public_key": "358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254",
+    "device_master_key": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+    "data_encryption_key": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "device_wrap_nonce": "000102030405060708090a0b",
+    "account_wrap_nonce": "101112131415161718191a1b",
+    "content_nonce": "202122232425262728292a2b",
+    "plaintext_utf8": "Sonus Auris encrypted sync test vector v1\n"
+  },
+  "account_recipient_v1": {
+    "hkdf_info_utf8": "sonus-auris/account-recipient/v1",
+    "shared_secret": "9663aa1da97e848a914a436d04163dfbb89178f107f1b5b77ed3854203382854",
+    "derived_kek": "b927a2d019821fbbd6e2ef8bbb08de995df602a13b8929625fe866be3d4dea9f",
+    "sealed_dek": "358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254101112131415161718191a1ba327fb118f6aaa957196d242dcf5d06dab6afdba0b6920e5df6e37806d8029a70a5ab26b8cfe0b75325f18fc6ebd37a6"
+  },
+  "device_wrap_v1": {
+    "wrapped_dek": "000102030405060708090a0b9aa4cedbd329e2076abb2a691440621433759fbad8f91be45699522dfd0cd7e10f8fc5e30e11861ea7e50a1c314a72fb"
+  },
+  "content_aes_256_gcm": {
+    "content_box": "202122232425262728292a2b4fb5baf4b256dbafd9fff3b757aca8ff0488a9b8a72e568f575aeced74577984283f6bc860aca2f816efc6a9f4f124b99b5ed577ba769e020e26"
+  },
+  "sac1_container_v2": {
+    "flags": 3,
+    "container": "534143310203003c000102030405060708090a0b9aa4cedbd329e2076abb2a691440621433759fbad8f91be45699522dfd0cd7e10f8fc5e30e11861ea7e50a1c314a72fb005c358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254101112131415161718191a1ba327fb118f6aaa957196d242dcf5d06dab6afdba0b6920e5df6e37806d8029a70a5ab26b8cfe0b75325f18fc6ebd37a6202122232425262728292a2b4fb5baf4b256dbafd9fff3b757aca8ff0488a9b8a72e568f575aeced74577984283f6bc860aca2f816efc6a9f4f124b99b5ed577ba769e020e26",
+    "container_sha256": "d081e096ea4b097673375afb63440f457ff7ca0f5477066128e9de57243e1f80",
+    "container_size": 232
+  },
+  "recipient_set": {
+    "canonical_json": "[{\"id\":\"device-a\",\"kind\":\"device-local\"},{\"id\":\"account-epoch-7\",\"kind\":\"account-epoch\"}]",
+    "sha256": "442baf244c45c06911e19e4bdca0e8663997196566aec1f49e1f13e59f62786b"
+  },
+  "signed_manifest_v1": {
+    "ed25519_private_seed": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+    "ed25519_public_key": "174553b456dddfc6908ecab1c101fe6ab21e2baa0617795b7d43a63482993fd5",
+    "canonical_json": "{\"account_id\":\"account-test-0001\",\"container_sha256\":\"d081e096ea4b097673375afb63440f457ff7ca0f5477066128e9de57243e1f80\",\"container_size\":232,\"container_version\":2,\"content_type\":\"audio/wav\",\"created_at\":\"2026-07-27T18:01:00Z\",\"device_id\":\"device-a\",\"key_epoch\":7,\"object_id\":\"seg-20260727T180000Z-000001\",\"plaintext_size\":42,\"previous_manifest_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"protocol\":\"sonus-auris-sync\",\"protocol_version\":1,\"recipient_set_sha256\":\"442baf244c45c06911e19e4bdca0e8663997196566aec1f49e1f13e59f62786b\",\"retention_expires_at\":\"2026-07-31T22:01:00Z\",\"tombstone\":false}",
+    "sha256": "e34dfa75cb01d04b81c6c0ca0178f9371bdd1cc4a06ad25cda3dcd6bf2975aa6",
+    "signature": "c531d5bedddb22b3da5ae54613112efaa428fdc20b4dbdd993caffe938daac6c99068b4e887aa7ac363e31b07ab57a64605521fbf23cc7e3fcbc4a7083ca3e05"
+  },
+  "negative_cases": [
+    {"name": "wrong_account_private_key", "expected": "authentication_failure"},
+    {"name": "flip_one_bit_in_account_wrapped_dek", "expected": "authentication_failure"},
+    {"name": "flip_one_bit_in_content_ciphertext", "expected": "authentication_failure"},
+    {"name": "truncate_container_before_content_tag", "expected": "format_error"},
+    {"name": "unsupported_container_version_3", "expected": "unsupported_version"},
+    {"name": "recipient_set_hash_mismatch", "expected": "manifest_verification_failure"},
+    {"name": "manifest_signature_mismatch", "expected": "manifest_verification_failure"},
+    {"name": "manifest_rollback_previous_hash_mismatch", "expected": "rollback_rejected"}
+  ]
+}
