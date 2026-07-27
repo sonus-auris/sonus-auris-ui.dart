@@ -16,11 +16,11 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$cache_root/xdg-cache}"
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$cache_root/xdg-config}"
 export XDG_DATA_HOME="${XDG_DATA_HOME:-$cache_root/xdg-data}"
 mkdir -p \
-  "$PUB_CACHE" \
-  "$GRADLE_USER_HOME" \
-  "$XDG_CACHE_HOME" \
-  "$XDG_CONFIG_HOME" \
-  "$XDG_DATA_HOME"
+	"$PUB_CACHE" \
+	"$GRADLE_USER_HOME" \
+	"$XDG_CACHE_HOME" \
+	"$XDG_CONFIG_HOME" \
+	"$XDG_DATA_HOME"
 
 git diff --check
 nixfmt --check flake.nix .nix/devshell.nix
@@ -32,10 +32,10 @@ nix flake check --show-trace
 expected_flutter_version="3.44.2"
 actual_flutter_version="$(flutter --version --machine | jq -r '.frameworkVersion')"
 if [ "$actual_flutter_version" != "$expected_flutter_version" ]; then
-  printf 'expected Flutter %s from the Nix lock, found %s\n' \
-    "$expected_flutter_version" \
-    "$actual_flutter_version" >&2
-  exit 1
+	printf 'expected Flutter %s from the Nix lock, found %s\n' \
+		"$expected_flutter_version" \
+		"$actual_flutter_version" >&2
+	exit 1
 fi
 
 flutter --version
