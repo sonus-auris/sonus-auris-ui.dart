@@ -4,7 +4,7 @@ Flutter Android/iOS app for continuous rolling audio capture. It keeps one micro
 
 ## Defaults
 
-- Local retention: 50 hours
+- Local retention: 100 hours
 - Cloud retention: 500 hours
 - Segment length: 1 minute
 - Overlap: 2 seconds at the start of every segment after the first
@@ -23,21 +23,22 @@ bytes = bitrate_bits_per_second / 8 * seconds
 At the default 16 kHz mono PCM16 setting:
 
 - 1 minute is about 1.92 MB before the small WAV header and overlap overhead.
-- 50 hours is about 5.76 GB.
+- 100 hours is about 11.52 GB.
 - 500 hours is about 57.6 GB.
 
 Compressed AAC at 64 kbps would be about 14.4 GB for 500 hours, but stop/start encoder file rotation cannot guarantee sample-continuous minute boundaries the way PCM stream chunking can.
 
 ## Runtime Notes
 
-- Android uses a foreground microphone service while recording. The app asks for microphone permission and notification permission; it does not request storage, location, contacts, or battery optimization permissions.
+- Android uses a foreground microphone service while recording. The app asks for microphone and notification permission for core capture; location, Bluetooth, nearby-Wi-Fi, and motion capabilities remain separately disclosed and opt-in.
 - On Android 11+, microphone capture must be started while the app is foregrounded. After the foreground microphone service is running, the app can move to the background and continue recording under the visible notification. The app does not try to auto-start microphone capture from boot or from a background-only state.
 - Android app backup is disabled so app-local audio and cloud configuration are not copied into device backups.
 - iOS uses microphone permission and the `audio` background mode. iOS will still stop capture if the user force-quits the app or the OS terminates it.
 - Segment boundaries are sample-counted. Playback trims the duplicate overlap with `just_audio` clipping so local playback does not repeat the overlap.
-- Local files are stored inside the app support directory. The segment index is written atomically, and corrupt index files are quarantined instead of crashing startup. Old local files are deleted only after they are uploaded, so failed uploads do not silently discard audio.
+- Local files are stored inside the app support directory. The segment index is written atomically, and corrupt index files are quarantined instead of crashing startup.
+- The core 100-hour-or-shorter fail-closed retention path is merged: expired audio, known sidecars/partials, and registered derived artifacts are deleted even when backup is unavailable, with crash-replayable tombstones. DEN-250 still tracks complete worker registration, pre-expiry warning/export, privacy-dashboard evidence, and account-deletion/consent-revocation race tests.
 - Segments persisted as `uploading` are retried on the next upload drain, so a crash during upload does not strand them forever.
-- Backend uploads create a server upload session, presign each segment, PUT the WAV file to the signed URL, then mark the segment complete.
+- Backend uploads create a server upload session, presign each segment, PUT the encrypted object to the signed URL, then mark the segment complete.
 - Permanent saves select indexed segments overlapping a playback timestamp range. Direct S3 saves write or copy segments under `<prefix>/<deviceId>/permanent/...`; backend providers use `POST /api/mobile/v1/permanent-saves` so the server can copy retained chunks into the provider's long-term location.
 - Paid access for permanent saves should be enforced by the backend or billing entitlement layer. Gate or disable the direct S3 fallback in production if client-only S3 credentials would bypass that entitlement.
 - Alert requests can ask the backend to email a listening link 20 seconds before a manual or commotion trigger. The app queues alerts until matching uploaded audio is available, and the backend rejects alerts that do not overlap uploaded retained segments. The backend exposes `POST /api/mobile/v1/alerts` and `/listen/:alert_id`.
@@ -131,12 +132,11 @@ create table public.acoustic_events (
   started_at  timestamptz not null,
   ended_at    timestamptz not null,
   confidence  double precision not null default 0,
-  details     jsonb not null default '{}'::jsonb,
+  details     jsonb not null default '{}',
   created_at  timestamptz not null default now()
 );
 
 alter table public.acoustic_events enable row level security;
-
 create policy "own rows: insert" on public.acoustic_events
   for insert with check (user_id = auth.uid());
 create policy "own rows: select" on public.acoustic_events
