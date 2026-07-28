@@ -13,19 +13,25 @@ import 'segment_cipher.dart';
 /// (the desktop, behind the PIN) can open it. Anonymous sealed-box construction:
 ///
 /// ```
-/// blob = ephemeralPublicKey(32) | nonce(12) | ciphertext | tag(16)
+/// blob = ephemeralPublicKey(32) | nonce(12) | ciphertext(32) | tag(16)
 /// shared = X25519(ephemeralPrivate, accountPublic)
 /// key    = HKDF-SHA256(shared, info="sonus-auris/account-recipient/v1")
 /// (ct,tag) = AES-256-GCM(dek, key, nonce)
 /// ```
 ///
-/// The Rust desktop must implement this exact wire format to interoperate.
+/// Both sides reject a non-contributory/all-zero X25519 output before HKDF.
+/// The Rust desktop must implement this exact 92-byte wire format.
 class AccountRecipient {
   AccountRecipient({X25519? x25519, AesGcm? aead})
     : _x25519 = x25519 ?? X25519(),
       _aead = aead ?? AesGcm.with256bits();
 
   static const int publicKeyLength = 32;
+  static const int sealedDekLength =
+      publicKeyLength +
+      SegmentCipher.nonceLength +
+      SegmentCipher.dekLength +
+      SegmentCipher.macLength;
   static const List<int> _info = [
     // utf8 "sonus-auris/account-recipient/v1"
     115, 111, 110, 117, 115, 45, 97, 117, 114, 105, 115, 47, 97, 99, 99, 111,
@@ -39,13 +45,21 @@ class AccountRecipient {
   /// store (encrypted under the account KEK on the desktop); the public bytes
   /// are published to the backend and handed to every device.
   Future<AccountKeyPair> generateKeyPair() async {
-    final kp = await _x25519.newKeyPair();
-    final pub = await kp.extractPublicKey();
-    final seed = await kp.extractPrivateKeyBytes();
-    return AccountKeyPair(
-      publicKey: Uint8List.fromList(pub.bytes),
-      privateSeed: Uint8List.fromList(seed),
-    );
+    final keyPair = await _x25519.newKeyPair();
+    try {
+      final publicKey = await keyPair.extractPublicKey();
+      final privateSeed = await keyPair.extractPrivateKeyBytes();
+      if (publicKey.bytes.length != publicKeyLength ||
+          privateSeed.length != publicKeyLength) {
+        throw StateError('X25519 produced an invalid key length.');
+      }
+      return AccountKeyPair(
+        publicKey: Uint8List.fromList(publicKey.bytes),
+        privateSeed: Uint8List.fromList(privateSeed),
+      );
+    } finally {
+      keyPair.destroy();
+    }
   }
 
   /// Seals [dekBytes] (a raw 32-byte DEK) to the account [publicKey]. Suitable as
@@ -57,46 +71,102 @@ class AccountRecipient {
     if (publicKey.length != publicKeyLength) {
       throw ArgumentError('Account public key must be 32 bytes.');
     }
-    final ephemeral = await _x25519.newKeyPair();
-    final ephemeralPub = await ephemeral.extractPublicKey();
-    final shared = await _x25519.sharedSecretKey(
-      keyPair: ephemeral,
-      remotePublicKey: SimplePublicKey(publicKey, type: KeyPairType.x25519),
-    );
-    final key = await _deriveKey(shared);
-    final box = await _aead.encrypt(dekBytes, secretKey: key);
+    if (dekBytes.length != SegmentCipher.dekLength) {
+      throw ArgumentError('Data encryption key must be 32 bytes.');
+    }
 
-    final out = BytesBuilder(copy: false);
-    out.add(ephemeralPub.bytes);
-    out.add(box.concatenation());
-    return out.toBytes();
+    final ephemeral = await _x25519.newKeyPair();
+    try {
+      final ephemeralPublic = await ephemeral.extractPublicKey();
+      if (ephemeralPublic.bytes.length != publicKeyLength) {
+        throw StateError('X25519 produced an invalid public key length.');
+      }
+      final shared = await _x25519.sharedSecretKey(
+        keyPair: ephemeral,
+        remotePublicKey: SimplePublicKey(
+          publicKey,
+          type: KeyPairType.x25519,
+        ),
+      );
+      final key = await _deriveValidatedKey(shared);
+      try {
+        final box = await _aead.encrypt(dekBytes, secretKey: key);
+        final out = BytesBuilder(copy: false)
+          ..add(ephemeralPublic.bytes)
+          ..add(box.concatenation());
+        final encoded = out.toBytes();
+        if (encoded.length != sealedDekLength) {
+          throw StateError('Account-sealed DEK has an invalid encoded length.');
+        }
+        return encoded;
+      } finally {
+        key.destroy();
+      }
+    } finally {
+      ephemeral.destroy();
+    }
   }
 
   /// Opens a sealed blob with the account [privateSeed] (32-byte X25519 seed),
-  /// recovering the DEK bytes. Used by the desktop master (and by tests).
+  /// recovering the DEK bytes. Used by an authorized peer and by tests.
   Future<Uint8List> open({
     required Uint8List privateSeed,
     required Uint8List blob,
   }) async {
-    if (blob.length <
-        publicKeyLength + SegmentCipher.nonceLength + SegmentCipher.macLength) {
-      throw const FormatException('Account-sealed DEK is truncated.');
+    if (privateSeed.length != publicKeyLength) {
+      throw const FormatException('Account private seed must be 32 bytes.');
     }
-    final ephemeralPub = Uint8List.sublistView(blob, 0, publicKeyLength);
+    if (blob.length != sealedDekLength) {
+      throw FormatException(
+        'Account-sealed DEK must be exactly $sealedDekLength bytes.',
+      );
+    }
+
+    final ephemeralPublic = Uint8List.sublistView(blob, 0, publicKeyLength);
     final rest = Uint8List.sublistView(blob, publicKeyLength);
     final keyPair = await _x25519.newKeyPairFromSeed(privateSeed);
-    final shared = await _x25519.sharedSecretKey(
-      keyPair: keyPair,
-      remotePublicKey: SimplePublicKey(ephemeralPub, type: KeyPairType.x25519),
-    );
-    final key = await _deriveKey(shared);
-    final secretBox = SecretBox.fromConcatenation(
-      rest,
-      nonceLength: SegmentCipher.nonceLength,
-      macLength: SegmentCipher.macLength,
-    );
-    final dek = await _aead.decrypt(secretBox, secretKey: key);
-    return Uint8List.fromList(dek);
+    try {
+      final shared = await _x25519.sharedSecretKey(
+        keyPair: keyPair,
+        remotePublicKey: SimplePublicKey(
+          ephemeralPublic,
+          type: KeyPairType.x25519,
+        ),
+      );
+      final key = await _deriveValidatedKey(shared);
+      try {
+        final secretBox = SecretBox.fromConcatenation(
+          rest,
+          nonceLength: SegmentCipher.nonceLength,
+          macLength: SegmentCipher.macLength,
+        );
+        final dek = await _aead.decrypt(secretBox, secretKey: key);
+        if (dek.length != SegmentCipher.dekLength) {
+          throw const FormatException(
+            'Account-sealed DEK did not contain a 32-byte key.',
+          );
+        }
+        return Uint8List.fromList(dek);
+      } finally {
+        key.destroy();
+      }
+    } finally {
+      keyPair.destroy();
+    }
+  }
+
+  Future<SecretKey> _deriveValidatedKey(SecretKey shared) async {
+    try {
+      final bytes = await shared.extractBytes();
+      if (bytes.length != publicKeyLength || bytes.every((byte) => byte == 0)) {
+        throw const FormatException(
+          'X25519 key agreement produced a non-contributory shared secret.',
+        );
+      }
+      return await _deriveKey(shared);
+    } finally {
+      shared.destroy();
+    }
   }
 
   Future<SecretKey> _deriveKey(SecretKey shared) {
