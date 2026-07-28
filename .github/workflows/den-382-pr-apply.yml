@@ -35,9 +35,11 @@ jobs:
       - name: Apply exact source integration
         run: python3 tool/apply_den_382.py
 
-      - name: Resolve and format
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Format changed Dart sources
         run: |
-          flutter pub get
           dart format \
             lib/main.dart \
             lib/src/app/app_controller.dart \
@@ -47,9 +49,11 @@ jobs:
             test/local_export_service_test.dart \
             test/retention_expiry_banner_test.dart
 
-      - name: Analyze and run focused tests
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Run focused export, banner, and retention tests
         run: |
-          flutter analyze
           flutter test \
             test/local_export_service_test.dart \
             test/retention_expiry_banner_test.dart \
