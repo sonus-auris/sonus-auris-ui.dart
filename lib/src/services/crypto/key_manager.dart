@@ -53,29 +53,51 @@ class KeyManager {
   final Random _random = Random.secure();
 
   SecretKey? _cachedMasterKey;
+  Future<SecretKey>? _masterKeyInitialization;
 
   /// Returns the device master key, generating and persisting one on first use.
-  Future<SecretKey> getOrCreateMasterKey() async {
+  Future<SecretKey> getOrCreateMasterKey() {
     final cached = _cachedMasterKey;
     if (cached != null) {
-      return cached;
+      return Future<SecretKey>.value(cached);
     }
-    final existing = await _store.read(masterKeyStorageId);
-    if (existing != null && existing.trim().isNotEmpty) {
-      final bytes = base64Decode(existing.trim());
-      if (bytes.length != SegmentCipher.dekLength) {
-        throw StateError('Stored master key has an unexpected length.');
+    final initialization = _masterKeyInitialization;
+    if (initialization != null) {
+      return initialization;
+    }
+    final started = _loadOrCreateMasterKey();
+    _masterKeyInitialization = started;
+    return started;
+  }
+
+  Future<SecretKey> _loadOrCreateMasterKey() async {
+    try {
+      final existing = await _store.read(masterKeyStorageId);
+      if (existing != null && existing.trim().isNotEmpty) {
+        final bytes = base64Decode(existing.trim());
+        if (bytes.length != SegmentCipher.dekLength) {
+          throw StateError('Stored master key has an unexpected length.');
+        }
+        return _cachedMasterKey = SecretKeyData(
+          bytes,
+          overwriteWhenDestroyed: true,
+        );
       }
-      return _cachedMasterKey = SecretKey(bytes);
+      final created = await _aead.newSecretKey();
+      try {
+        final bytes = await created.extractBytes();
+        if (bytes.length != SegmentCipher.dekLength) {
+          throw StateError('Generated master key has an unexpected length.');
+        }
+        await _store.write(masterKeyStorageId, base64Encode(bytes));
+        return _cachedMasterKey = created;
+      } catch (_) {
+        created.destroy();
+        rethrow;
+      }
+    } finally {
+      _masterKeyInitialization = null;
     }
-    final created = await _aead.newSecretKey();
-    final bytes = await created.extractBytes();
-    if (bytes.length != SegmentCipher.dekLength) {
-      created.destroy();
-      throw StateError('Generated master key has an unexpected length.');
-    }
-    await _store.write(masterKeyStorageId, base64Encode(bytes));
-    return _cachedMasterKey = created;
   }
 
   /// True once a master key exists on this device.
@@ -124,7 +146,7 @@ class KeyManager {
         'Device-wrapped DEK did not contain a 32-byte key.',
       );
     }
-    return SecretKey(dekBytes);
+    return SecretKeyData(dekBytes, overwriteWhenDestroyed: true);
   }
 
   /// Hands a single DEK to the caller in the clear, for the rare, user-initiated
@@ -284,7 +306,7 @@ class KeyManager {
     }
     await _store.write(masterKeyStorageId, base64Encode(mkBytes));
     _cachedMasterKey?.destroy();
-    _cachedMasterKey = SecretKey(mkBytes);
+    _cachedMasterKey = SecretKeyData(mkBytes, overwriteWhenDestroyed: true);
   }
 
   void _requireStrongPassphrase(String passphrase) {

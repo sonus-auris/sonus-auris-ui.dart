@@ -21,6 +21,11 @@ import 'segment_cipher.dart';
 ///
 /// Both sides reject a non-contributory/all-zero X25519 output before HKDF.
 /// The Rust peer must implement this exact 92-byte wire format.
+///
+/// This is a cryptographic primitive, not sync authorization. A receiver must
+/// verify the signed manifest, device/account binding, complete container
+/// hash and length, key epoch, recipient-set hash, and predecessor checkpoint
+/// before using [open] to expose synchronized plaintext or mutate durable state.
 class AccountRecipient {
   AccountRecipient({X25519? x25519, AesGcm? aead})
     : _x25519 = x25519 ?? X25519(),
@@ -75,40 +80,48 @@ class AccountRecipient {
       throw ArgumentError('Data encryption key must be 32 bytes.');
     }
 
-    final ephemeral = await _x25519.newKeyPair();
+    final publicKeySnapshot = Uint8List.fromList(publicKey);
+    final dekSnapshot = Uint8List.fromList(dekBytes);
     try {
-      final ephemeralPublic = await ephemeral.extractPublicKey();
-      if (ephemeralPublic.bytes.length != publicKeyLength) {
-        throw StateError('X25519 produced an invalid public key length.');
-      }
-      final shared = await _sharedSecret(
-        keyPair: ephemeral,
-        remotePublicKey: SimplePublicKey(
-          publicKey,
-          type: KeyPairType.x25519,
-        ),
-      );
-      final key = await _deriveValidatedKey(shared);
+      final ephemeral = await _x25519.newKeyPair();
       try {
-        final box = await _aead.encrypt(dekBytes, secretKey: key);
-        final out = BytesBuilder(copy: false)
-          ..add(ephemeralPublic.bytes)
-          ..add(box.concatenation());
-        final encoded = out.toBytes();
-        if (encoded.length != sealedDekLength) {
-          throw StateError('Account-sealed DEK has an invalid encoded length.');
+        final ephemeralPublic = await ephemeral.extractPublicKey();
+        if (ephemeralPublic.bytes.length != publicKeyLength) {
+          throw StateError('X25519 produced an invalid public key length.');
         }
-        return encoded;
+        final shared = await _sharedSecret(
+          keyPair: ephemeral,
+          remotePublicKey: SimplePublicKey(
+            publicKeySnapshot,
+            type: KeyPairType.x25519,
+          ),
+        );
+        final key = await _deriveValidatedKey(shared);
+        try {
+          final box = await _aead.encrypt(dekSnapshot, secretKey: key);
+          final out = BytesBuilder(copy: false)
+            ..add(ephemeralPublic.bytes)
+            ..add(box.concatenation());
+          final encoded = out.toBytes();
+          if (encoded.length != sealedDekLength) {
+            throw StateError(
+              'Account-sealed DEK has an invalid encoded length.',
+            );
+          }
+          return encoded;
+        } finally {
+          key.destroy();
+        }
       } finally {
-        key.destroy();
+        ephemeral.destroy();
       }
     } finally {
-      ephemeral.destroy();
+      _zeroize(dekSnapshot);
     }
   }
 
   /// Opens a sealed blob with the account [privateSeed] (32-byte X25519 seed),
-  /// recovering the DEK bytes. Used by an authorized peer and by tests.
+  /// recovering the DEK bytes after the caller has completed sync authorization.
   Future<Uint8List> open({
     required Uint8List privateSeed,
     required Uint8List blob,
@@ -122,36 +135,50 @@ class AccountRecipient {
       );
     }
 
-    final ephemeralPublic = Uint8List.sublistView(blob, 0, publicKeyLength);
-    final rest = Uint8List.sublistView(blob, publicKeyLength);
-    final keyPair = await _x25519.newKeyPairFromSeed(privateSeed);
+    final privateSeedSnapshot = Uint8List.fromList(privateSeed);
+    final blobSnapshot = Uint8List.fromList(blob);
     try {
-      final shared = await _sharedSecret(
-        keyPair: keyPair,
-        remotePublicKey: SimplePublicKey(
-          ephemeralPublic,
-          type: KeyPairType.x25519,
-        ),
+      final ephemeralPublic = Uint8List.sublistView(
+        blobSnapshot,
+        0,
+        publicKeyLength,
       );
-      final key = await _deriveValidatedKey(shared);
+      final rest = Uint8List.sublistView(blobSnapshot, publicKeyLength);
+      final keyPair = await _x25519.newKeyPairFromSeed(privateSeedSnapshot);
       try {
-        final secretBox = SecretBox.fromConcatenation(
-          rest,
-          nonceLength: SegmentCipher.nonceLength,
-          macLength: SegmentCipher.macLength,
+        final shared = await _sharedSecret(
+          keyPair: keyPair,
+          remotePublicKey: SimplePublicKey(
+            ephemeralPublic,
+            type: KeyPairType.x25519,
+          ),
         );
-        final dek = await _aead.decrypt(secretBox, secretKey: key);
-        if (dek.length != SegmentCipher.dekLength) {
-          throw const FormatException(
-            'Account-sealed DEK did not contain a 32-byte key.',
+        final key = await _deriveValidatedKey(shared);
+        try {
+          final secretBox = SecretBox.fromConcatenation(
+            rest,
+            nonceLength: SegmentCipher.nonceLength,
+            macLength: SegmentCipher.macLength,
           );
+          final dek = await _aead.decrypt(secretBox, secretKey: key);
+          try {
+            if (dek.length != SegmentCipher.dekLength) {
+              throw const FormatException(
+                'Account-sealed DEK did not contain a 32-byte key.',
+              );
+            }
+            return Uint8List.fromList(dek);
+          } finally {
+            _zeroize(dek);
+          }
+        } finally {
+          key.destroy();
         }
-        return Uint8List.fromList(dek);
       } finally {
-        key.destroy();
+        keyPair.destroy();
       }
     } finally {
-      keyPair.destroy();
+      _zeroize(privateSeedSnapshot);
     }
   }
 
@@ -202,6 +229,15 @@ class AccountRecipient {
       outputLength: SegmentCipher.dekLength,
     );
     return hkdf.deriveKey(secretKey: shared, nonce: const [], info: _info);
+  }
+
+  static void _zeroize(List<int> bytes) {
+    try {
+      bytes.fillRange(0, bytes.length, 0);
+    } on UnsupportedError {
+      // Some platform providers expose read-only views; key objects are still
+      // invalidated with destroy(), but physical erasure is provider-dependent.
+    }
   }
 }
 

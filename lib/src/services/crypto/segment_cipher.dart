@@ -67,77 +67,88 @@ class SegmentCipher {
   /// the DEK is *also* sealed to the account recipient, producing a v2
   /// multi-recipient container that the desktop master can open with the account
   /// private key. Without it, a v1 container is produced exactly as before.
+  ///
+  /// Both wrapping callbacks borrow the generated DEK for the duration of the
+  /// awaited call. They must not retain or destroy it; [seal] destroys it after
+  /// every success or failure path.
   Future<Uint8List> seal({
     required Uint8List plaintext,
     required Future<Uint8List> Function(SecretKey dek) wrapDek,
     Future<Uint8List> Function(SecretKey dek)? wrapForAccount,
   }) async {
-    final dek = await _aead.newSecretKey();
+    final plaintextSnapshot = Uint8List.fromList(plaintext);
     try {
-      final wrappedDek = await wrapDek(dek);
-      if (wrappedDek.length != wrappedDekLength) {
-        throw ArgumentError(
-          'Device-wrapped DEK must be exactly $wrappedDekLength bytes.',
-        );
-      }
-      final accountWrapped = wrapForAccount == null
-          ? null
-          : await wrapForAccount(dek);
-      if (accountWrapped != null &&
-          accountWrapped.length != accountWrappedDekLength) {
-        throw ArgumentError(
-          'Account-wrapped DEK must be exactly $accountWrappedDekLength bytes.',
-        );
-      }
+      final dek = await _aead.newSecretKey();
+      try {
+        final wrappedDek = await wrapDek(dek);
+        if (wrappedDek.length != wrappedDekLength) {
+          throw ArgumentError(
+            'Device-wrapped DEK must be exactly $wrappedDekLength bytes.',
+          );
+        }
+        final accountWrapped = wrapForAccount == null
+            ? null
+            : await wrapForAccount(dek);
+        if (accountWrapped != null &&
+            accountWrapped.length != accountWrappedDekLength) {
+          throw ArgumentError(
+            'Account-wrapped DEK must be exactly $accountWrappedDekLength bytes.',
+          );
+        }
 
-      final contentBox = await _aead.encrypt(plaintext, secretKey: dek);
-      final contentBytes = contentBox.concatenation();
-      if (contentBytes.length < minimumContentBoxLength) {
-        throw StateError('Encrypted content box is unexpectedly truncated.');
-      }
+        final contentBox = await _aead.encrypt(
+          plaintextSnapshot,
+          secretKey: dek,
+        );
+        final contentBytes = contentBox.concatenation();
+        if (contentBytes.length < minimumContentBoxLength) {
+          throw StateError('Encrypted content box is unexpectedly truncated.');
+        }
 
-      final out = BytesBuilder(copy: false);
-      out.add(magic);
-      if (accountWrapped == null) {
-        out.addByte(version);
-        out.addByte(_flagWrappedByMasterKey);
-        out.add(_u16be(wrappedDek.length));
-        out.add(wrappedDek);
-      } else {
-        out.addByte(versionMultiRecipient);
-        out.addByte(_flagWrappedByMasterKey | _flagAccountRecipient);
-        out.add(_u16be(wrappedDek.length));
-        out.add(wrappedDek);
-        out.add(_u16be(accountWrapped.length));
-        out.add(accountWrapped);
+        final out = BytesBuilder(copy: false);
+        out.add(magic);
+        if (accountWrapped == null) {
+          out.addByte(version);
+          out.addByte(_flagWrappedByMasterKey);
+          out.add(_u16be(wrappedDek.length));
+          out.add(wrappedDek);
+        } else {
+          out.addByte(versionMultiRecipient);
+          out.addByte(_flagWrappedByMasterKey | _flagAccountRecipient);
+          out.add(_u16be(wrappedDek.length));
+          out.add(wrappedDek);
+          out.add(_u16be(accountWrapped.length));
+          out.add(accountWrapped);
+        }
+        out.add(contentBytes);
+        return out.toBytes();
+      } finally {
+        dek.destroy();
       }
-      out.add(contentBytes);
-      return out.toBytes();
     } finally {
-      dek.destroy();
+      plaintextSnapshot.fillRange(0, plaintextSnapshot.length, 0);
     }
   }
 
-  /// Reverses [seal]. [unwrapDek] is supplied by the [KeyManager] and recovers
-  /// the DEK from its wrapped form using the device master key.
+  /// Reverses [seal]. [unwrapDek] is supplied by the [KeyManager] and transfers
+  /// ownership of a fresh DEK recovered with the device master key. [open]
+  /// destroys that key after every success or failure path, so callbacks must
+  /// never return a cached or otherwise shared key.
   Future<Uint8List> open({
     required Uint8List container,
     required Future<SecretKey> Function(Uint8List wrappedDek) unwrapDek,
   }) async {
     final header = peekHeader(container);
+    final contentBytes = Uint8List.sublistView(container, header.contentOffset);
+    final box = SecretBox.fromConcatenation(
+      contentBytes,
+      nonceLength: nonceLength,
+      macLength: macLength,
+    );
     final dek = await unwrapDek(header.wrappedDek);
     try {
-      final contentBytes = Uint8List.sublistView(
-        container,
-        header.contentOffset,
-      );
-      final box = SecretBox.fromConcatenation(
-        contentBytes,
-        nonceLength: nonceLength,
-        macLength: macLength,
-      );
       final clear = await _aead.decrypt(box, secretKey: dek);
-      return Uint8List.fromList(clear);
+      return clear is Uint8List ? clear : Uint8List.fromList(clear);
     } finally {
       dek.destroy();
     }
@@ -180,10 +191,8 @@ class SegmentCipher {
     if (container.length < offset) {
       throw const FormatException('Encrypted segment is truncated.');
     }
-    final wrappedDek = Uint8List.sublistView(
-      container,
-      _headerFixedLength,
-      offset,
+    final wrappedDek = Uint8List.fromList(
+      Uint8List.sublistView(container, _headerFixedLength, offset),
     );
 
     Uint8List? accountWrappedDek;
@@ -202,10 +211,8 @@ class SegmentCipher {
       if (container.length < accountEnd) {
         throw const FormatException('Encrypted segment is truncated.');
       }
-      accountWrappedDek = Uint8List.sublistView(
-        container,
-        accountStart,
-        accountEnd,
+      accountWrappedDek = Uint8List.fromList(
+        Uint8List.sublistView(container, accountStart, accountEnd),
       );
       offset = accountEnd;
     }

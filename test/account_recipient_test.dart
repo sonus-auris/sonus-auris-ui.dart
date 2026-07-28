@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:audio_dashcam/src/services/crypto/account_recipient.dart';
 import 'package:audio_dashcam/src/services/crypto/key_manager.dart';
 import 'package:audio_dashcam/src/services/crypto/segment_cipher.dart';
+import 'package:audio_dashcam/src/services/crypto/segment_encryptor.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -30,6 +31,32 @@ void main() {
       blob: blob,
     );
     expect(recovered, equals(dek));
+  });
+
+  test('account wrapping snapshots mutable caller inputs', () async {
+    final account = await recipient.generateKeyPair();
+    final expectedDek = sample(SegmentCipher.dekLength);
+    final mutablePublicKey = Uint8List.fromList(account.publicKey);
+    final mutableDek = Uint8List.fromList(expectedDek);
+
+    final sealing = recipient.seal(
+      publicKey: mutablePublicKey,
+      dekBytes: mutableDek,
+    );
+    mutablePublicKey.fillRange(0, mutablePublicKey.length, 0);
+    mutableDek.fillRange(0, mutableDek.length, 0);
+    final blob = await sealing;
+
+    final mutablePrivateSeed = Uint8List.fromList(account.privateSeed);
+    final mutableBlob = Uint8List.fromList(blob);
+    final opening = recipient.open(
+      privateSeed: mutablePrivateSeed,
+      blob: mutableBlob,
+    );
+    mutablePrivateSeed.fillRange(0, mutablePrivateSeed.length, 0);
+    mutableBlob.fillRange(0, mutableBlob.length, 0);
+
+    expect(await opening, expectedDek);
   });
 
   test('account wrapper rejects non-canonical key and blob lengths', () async {
@@ -68,8 +95,22 @@ void main() {
     );
   });
 
-  test('non-contributory all-zero X25519 input is rejected before HKDF', () async {
+  test('non-contributory X25519 inputs are rejected before HKDF', () async {
     final account = await recipient.generateKeyPair();
+    await expectLater(
+      recipient.seal(
+        publicKey: Uint8List(AccountRecipient.publicKeyLength),
+        dekBytes: sample(SegmentCipher.dekLength),
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('non-contributory'),
+        ),
+      ),
+    );
+
     final zeroShared = SecretKey(List<int>.filled(32, 0));
     final hkdf = Hkdf(
       hmac: Hmac.sha256(),
@@ -89,21 +130,24 @@ void main() {
       ..add(List<int>.filled(AccountRecipient.publicKeyLength, 0))
       ..add(box.concatenation());
 
-    expect(
-      () => recipient.open(
-        privateSeed: account.privateSeed,
-        blob: maliciousBlob.toBytes(),
-      ),
-      throwsA(
-        isA<FormatException>().having(
-          (error) => error.message,
-          'message',
-          contains('non-contributory'),
+    try {
+      await expectLater(
+        recipient.open(
+          privateSeed: account.privateSeed,
+          blob: maliciousBlob.toBytes(),
         ),
-      ),
-    );
-    zeroDerivedKey.destroy();
-    zeroShared.destroy();
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('non-contributory'),
+          ),
+        ),
+      );
+    } finally {
+      zeroDerivedKey.destroy();
+      zeroShared.destroy();
+    }
   });
 
   test('a different account key cannot open the sealed DEK', () async {
@@ -194,6 +238,53 @@ void main() {
       );
     },
   );
+
+  test('SegmentEncryptor validates and copies account public keys', () async {
+    final phone = KeyManager(store: InMemoryKeyStore());
+    final account = await recipient.generateKeyPair();
+    expect(
+      () => SegmentEncryptor(
+        keyManager: phone,
+        accountPublicKey: Uint8List(AccountRecipient.publicKeyLength - 1),
+      ),
+      throwsArgumentError,
+    );
+
+    final constructorKey = Uint8List.fromList(account.publicKey);
+    final encryptor = SegmentEncryptor(
+      keyManager: phone,
+      accountPublicKey: constructorKey,
+    );
+    constructorKey.fillRange(0, constructorKey.length, 0);
+
+    Future<void> expectAccountWrapperOpens() async {
+      final container = await encryptor.seal(sample(64));
+      final accountWrapper = SegmentCipher.peekHeader(
+        container,
+      ).accountWrappedDek;
+      expect(accountWrapper, isNotNull);
+      expect(
+        await recipient.open(
+          privateSeed: account.privateSeed,
+          blob: accountWrapper!,
+        ),
+        hasLength(SegmentCipher.dekLength),
+      );
+    }
+
+    await expectAccountWrapperOpens();
+    expect(
+      () => encryptor.accountPublicKey = Uint8List(
+        AccountRecipient.publicKeyLength + 1,
+      ),
+      throwsArgumentError,
+    );
+
+    final setterKey = Uint8List.fromList(account.publicKey);
+    encryptor.accountPublicKey = setterKey;
+    setterKey.fillRange(0, setterKey.length, 0);
+    await expectAccountWrapperOpens();
+  });
 
   test('v1 containers (no account key) still round-trip', () async {
     final phone = KeyManager(store: InMemoryKeyStore());

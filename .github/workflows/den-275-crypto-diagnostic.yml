@@ -46,7 +46,7 @@ jobs:
             test/account_recipient_test.dart \
             test/segment_cipher_test.dart \
             test/key_manager_test.dart \
-            test/sync_protocol_vector_test.dart \
+            test/sync_v1_interop_vector_test.dart \
             > "$RUNNER_TEMP/tests.log" 2>&1
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
