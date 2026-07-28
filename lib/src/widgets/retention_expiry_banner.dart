@@ -29,8 +29,7 @@ class RetentionExpirySurface extends StatefulWidget {
   final UtcNowProvider? utcNow;
 
   @override
-  State<RetentionExpirySurface> createState() =>
-      _RetentionExpirySurfaceState();
+  State<RetentionExpirySurface> createState() => _RetentionExpirySurfaceState();
 }
 
 class _RetentionExpirySurfaceState extends State<RetentionExpirySurface> {

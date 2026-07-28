@@ -1184,8 +1184,6 @@ class _HomeView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final nowUtc = DateTime.now().toUtc();
-    final retentionWarnings = viewModel.localRetentionWarnings(nowUtc: nowUtc);
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
       children: [
@@ -1201,16 +1199,13 @@ class _HomeView extends StatelessWidget {
           const _SignInNotice(),
           const SizedBox(height: 12),
         ],
-        if (retentionWarnings.isNotEmpty) ...[
-          RetentionExpiryBanner(
-            warnings: retentionWarnings,
-            nowUtc: nowUtc,
-            onRetryBackup: onRetryBackup,
-            onExportLocalCopy: onExportLocalCopy,
-            onRunCleanup: onRunRetentionCleanup,
-          ),
-          const SizedBox(height: 12),
-        ],
+        RetentionExpirySurface(
+          warningProvider: (nowUtc) =>
+              viewModel.localRetentionWarnings(nowUtc: nowUtc),
+          onRetryBackup: onRetryBackup,
+          onExportLocalCopy: onExportLocalCopy,
+          onRunCleanup: onRunRetentionCleanup,
+        ),
         _StatusSection(
           viewModel: viewModel,
           onStart: onStart,
