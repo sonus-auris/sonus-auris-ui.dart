@@ -4,6 +4,96 @@ import 'package:flutter/material.dart';
 
 import '../models/local_retention_warning.dart';
 
+typedef LocalRetentionWarningsProvider =
+    List<LocalRetentionWarning> Function(DateTime nowUtc);
+typedef UtcNowProvider = DateTime Function();
+
+/// Keeps the content-free warning projection current even when the app is idle
+/// and no unrelated recorder/upload state event rebuilds the Home surface.
+class RetentionExpirySurface extends StatefulWidget {
+  const RetentionExpirySurface({
+    super.key,
+    required this.warningProvider,
+    required this.onRetryBackup,
+    required this.onExportLocalCopy,
+    required this.onRunCleanup,
+    this.refreshInterval = const Duration(minutes: 1),
+    this.utcNow,
+  });
+
+  final LocalRetentionWarningsProvider warningProvider;
+  final Future<void> Function() onRetryBackup;
+  final Future<void> Function(String segmentId) onExportLocalCopy;
+  final Future<void> Function() onRunCleanup;
+  final Duration refreshInterval;
+  final UtcNowProvider? utcNow;
+
+  @override
+  State<RetentionExpirySurface> createState() =>
+      _RetentionExpirySurfaceState();
+}
+
+class _RetentionExpirySurfaceState extends State<RetentionExpirySurface> {
+  Timer? _timer;
+  late DateTime _nowUtc;
+
+  @override
+  void initState() {
+    super.initState();
+    _nowUtc = _readNow();
+    _armTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant RetentionExpirySurface oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _nowUtc = _readNow();
+    if (oldWidget.refreshInterval != widget.refreshInterval ||
+        oldWidget.utcNow != widget.utcNow) {
+      _timer?.cancel();
+      _armTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _armTimer() {
+    if (widget.refreshInterval <= Duration.zero) {
+      return;
+    }
+    _timer = Timer.periodic(widget.refreshInterval, (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _nowUtc = _readNow());
+    });
+  }
+
+  DateTime _readNow() => (widget.utcNow?.call() ?? DateTime.now()).toUtc();
+
+  @override
+  Widget build(BuildContext context) {
+    final warnings = widget.warningProvider(_nowUtc);
+    if (warnings.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: RetentionExpiryBanner(
+        warnings: warnings,
+        nowUtc: _nowUtc,
+        onRetryBackup: widget.onRetryBackup,
+        onExportLocalCopy: widget.onExportLocalCopy,
+        onRunCleanup: widget.onRunCleanup,
+      ),
+    );
+  }
+}
+
 /// Prominent, content-free warning for app-private plaintext that is nearing or
 /// has crossed its non-bypassable deletion deadline.
 ///
