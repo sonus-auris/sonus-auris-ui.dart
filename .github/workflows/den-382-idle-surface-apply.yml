@@ -1,0 +1,52 @@
+name: Apply DEN-382 idle warning refresh
+
+on:
+  push:
+    branches:
+      - agent/den-382-retention-banner-export
+
+permissions:
+  contents: write
+
+concurrency:
+  group: den-382-idle-surface
+  cancel-in-progress: false
+
+jobs:
+  apply-test-and-clean:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: true
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: 3.44.3
+          cache: true
+
+      - name: Apply the exact Home surface replacement
+        run: python3 tool/apply_den_382_idle_surface.py
+
+      - name: Validate the idle refresh behavior
+        run: |
+          flutter pub get
+          dart format lib/main.dart lib/src/widgets/retention_expiry_banner.dart test/retention_expiry_banner_test.dart
+          flutter analyze
+          flutter test test/retention_expiry_banner_test.dart test/local_retention_policy_test.dart
+          git diff --check
+
+      - name: Commit only the product change
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/main.dart lib/src/widgets/retention_expiry_banner.dart test/retention_expiry_banner_test.dart
+          git rm .github/workflows/den-382-idle-surface-apply.yml tool/apply_den_382_idle_surface.py
+          git commit -m 'Refresh retention warnings while the app is idle'
+          git push origin "HEAD:${BRANCH}"
