@@ -45,6 +45,7 @@ jobs:
             lib/src/app/app_controller.dart \
             lib/src/app/app_view_model.dart \
             lib/src/services/local_export_service.dart \
+            lib/src/services/segment_index.dart \
             lib/src/widgets/retention_expiry_banner.dart \
             test/local_export_service_test.dart \
             test/retention_expiry_banner_test.dart
@@ -90,6 +91,7 @@ jobs:
             lib/src/app/app_controller.dart \
             lib/src/app/app_view_model.dart \
             lib/src/services/local_export_service.dart \
+            lib/src/services/segment_index.dart \
             lib/src/widgets/retention_expiry_banner.dart \
             test/local_export_service_test.dart \
             test/retention_expiry_banner_test.dart \
