@@ -7,10 +7,10 @@ import 'segment_cipher.dart';
 
 /// Public-key wrapping of a segment DEK to the **account** recipient.
 ///
-/// This is what lets the desktop "master" read every device's audio while a
-/// phone reads only its own: a phone seals each segment's DEK to the account's
-/// X25519 **public** key, and only the holder of the account **private** key
-/// (the desktop, behind the PIN) can open it. Anonymous sealed-box construction:
+/// This is what lets an authorized peer read another device's encrypted object
+/// while a device master key remains local: a phone seals each segment DEK to
+/// the account's X25519 **public** key, and only a holder of the corresponding
+/// account **private** seed can open it. Anonymous sealed-box construction:
 ///
 /// ```
 /// blob = ephemeralPublicKey(32) | nonce(12) | ciphertext(32) | tag(16)
@@ -20,7 +20,7 @@ import 'segment_cipher.dart';
 /// ```
 ///
 /// Both sides reject a non-contributory/all-zero X25519 output before HKDF.
-/// The Rust desktop must implement this exact 92-byte wire format.
+/// The Rust peer must implement this exact 92-byte wire format.
 class AccountRecipient {
   AccountRecipient({X25519? x25519, AesGcm? aead})
     : _x25519 = x25519 ?? X25519(),
@@ -42,8 +42,8 @@ class AccountRecipient {
   final AesGcm _aead;
 
   /// Generates a fresh account keypair. The 32-byte seed is the private key to
-  /// store (encrypted under the account KEK on the desktop); the public bytes
-  /// are published to the backend and handed to every device.
+  /// store encrypted under the account recovery/authorization boundary; the
+  /// public bytes may be published in a verified key bundle.
   Future<AccountKeyPair> generateKeyPair() async {
     final keyPair = await _x25519.newKeyPair();
     try {
@@ -81,7 +81,7 @@ class AccountRecipient {
       if (ephemeralPublic.bytes.length != publicKeyLength) {
         throw StateError('X25519 produced an invalid public key length.');
       }
-      final shared = await _x25519.sharedSecretKey(
+      final shared = await _sharedSecret(
         keyPair: ephemeral,
         remotePublicKey: SimplePublicKey(
           publicKey,
@@ -126,7 +126,7 @@ class AccountRecipient {
     final rest = Uint8List.sublistView(blob, publicKeyLength);
     final keyPair = await _x25519.newKeyPairFromSeed(privateSeed);
     try {
-      final shared = await _x25519.sharedSecretKey(
+      final shared = await _sharedSecret(
         keyPair: keyPair,
         remotePublicKey: SimplePublicKey(
           ephemeralPublic,
@@ -155,10 +155,37 @@ class AccountRecipient {
     }
   }
 
+  Future<SecretKey> _sharedSecret({
+    required SimpleKeyPair keyPair,
+    required SimplePublicKey remotePublicKey,
+  }) async {
+    try {
+      return await _x25519.sharedSecretKey(
+        keyPair: keyPair,
+        remotePublicKey: remotePublicKey,
+      );
+    } catch (_) {
+      throw const FormatException(
+        'X25519 key agreement rejected a non-contributory public key.',
+      );
+    }
+  }
+
   Future<SecretKey> _deriveValidatedKey(SecretKey shared) async {
     try {
       final bytes = await shared.extractBytes();
-      if (bytes.length != publicKeyLength || bytes.every((byte) => byte == 0)) {
+      if (bytes.length != publicKeyLength) {
+        throw const FormatException(
+          'X25519 key agreement produced an invalid shared-secret length.',
+        );
+      }
+      // Scan every byte and branch only after the fixed 32-byte loop; do not use
+      // `every`, `any`, or an early return that leaks the first non-zero offset.
+      var aggregate = 0;
+      for (final byte in bytes) {
+        aggregate |= byte;
+      }
+      if (aggregate == 0) {
         throw const FormatException(
           'X25519 key agreement produced a non-contributory shared secret.',
         );
