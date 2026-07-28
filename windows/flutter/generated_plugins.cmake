@@ -6,11 +6,13 @@ list(APPEND FLUTTER_PLUGIN_LIST
   battery_plus
   connectivity_plus
   desktop_webview_window
+  file_selector_windows
   flutter_secure_storage_windows
   flutter_tts
   geolocator_windows
   permission_handler_windows
   record_windows
+  share_plus
   url_launcher_windows
   window_to_front
 )
