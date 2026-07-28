@@ -12,7 +12,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:rxdart/rxdart.dart';
 import 'package:uuid/uuid.dart';
 
-
 import '../models/account_status.dart';
 import '../models/acoustic_detection.dart';
 import '../models/audio_trigger_event.dart';
@@ -40,6 +39,7 @@ import '../services/crypto/key_manager.dart';
 import '../services/crypto/segment_encryptor.dart';
 import '../services/icloud_sync_service.dart';
 import '../services/location_service.dart';
+import '../services/local_export_service.dart';
 import '../services/diagnostic_log.dart';
 import '../services/context_trigger_service.dart';
 import '../services/context_trigger_sources.dart';
@@ -75,6 +75,7 @@ import '../services/voice/handlers/recording_command_handler.dart';
 import '../services/voice/voice_command_dispatcher.dart';
 import '../services/voice/voice_command_parser.dart';
 import '../services/voice_id/voice_profile_service.dart';
+import '../retention/local_retention_policy.dart';
 import 'app_view_model.dart';
 
 /// Consent string recorded against the device on registration. Bump when the
@@ -106,6 +107,7 @@ class AppController {
     DiagnosticLog? diagnosticLog,
     RecordingFeedback? feedback,
     LocationService? locationService,
+    LocalExportService? localExportService,
     PowerNetworkGate? powerNetworkGate,
     SupabaseRestClient? supabaseRestClient,
     DeviceRegistry? deviceRegistry,
@@ -155,6 +157,7 @@ class AppController {
       diagnostics: effectiveDiagnostics,
       feedback: feedback ?? RecordingFeedback(),
       locationService: locationService ?? LocationService(),
+      localExportService: localExportService ?? LocalExportService(),
       powerNetworkGate: powerNetworkGate ?? PowerNetworkGate(),
       supabaseRestClient: supabaseRestClient ?? SupabaseRestClient(),
       deviceRegistry: deviceRegistry ?? DeviceRegistry(),
@@ -202,6 +205,7 @@ class AppController {
     required this._diagnostics,
     required this._feedback,
     required this._locationService,
+    required this._localExportService,
     required this._powerNetworkGate,
     required this._supabaseRestClient,
     required this._deviceRegistry,
@@ -349,6 +353,7 @@ class AppController {
   final DiagnosticLog _diagnostics;
   final RecordingFeedback _feedback;
   final LocationService _locationService;
+  final LocalExportService _localExportService;
   final PowerNetworkGate _powerNetworkGate;
   final SupabaseRestClient _supabaseRestClient;
   final SupabaseTelemetryRealtimeClient _telemetryRealtimeClient;
@@ -518,8 +523,9 @@ class AppController {
   /// Account-level cloud state (pending MFA challenge, this device's revoked
   /// state, plan / device-limit gate). Kept out of [AppViewModel] because its
   /// combineLatest is already at max arity; UI listens to this separately.
-  final BehaviorSubject<AccountStatus> _accountStatus =
-      BehaviorSubject.seeded(const AccountStatus());
+  final BehaviorSubject<AccountStatus> _accountStatus = BehaviorSubject.seeded(
+    const AccountStatus(),
+  );
 
   Stream<AccountStatus> get accountStatus => _accountStatus;
 
@@ -861,7 +867,9 @@ class AppController {
   }
 
   Future<void> saveConfig(AppConfig config) async {
-    final deviceRetentionHours = config.deviceRetentionHours.clamp(1, 500);
+    final deviceRetentionHours = config.deviceRetentionHours
+        .clamp(1, LocalRetentionPolicy.maxPlaintextRetentionHours)
+        .toInt();
     final cloudRetentionHours = config.cloudRetentionHours.clamp(
       deviceRetentionHours,
       2000,
@@ -1417,10 +1425,7 @@ class AppController {
         : decodeSupabaseAal(secrets.supabaseAccessToken);
     final pending = hasVerified && aal != 'aal2';
     _accountStatus.add(
-      _accountStatus.value.copyWith(
-        mfaRequired: pending,
-        mfaFactors: factors,
-      ),
+      _accountStatus.value.copyWith(mfaRequired: pending, mfaFactors: factors),
     );
     return pending;
   }
@@ -1473,8 +1478,7 @@ class AppController {
     if (registration.error != null) {
       _diagnostics.add('Device registry sync: ${registration.error}');
     }
-    final ownRevoked =
-        (registration.device?.revokedAt ?? '').trim().isNotEmpty;
+    final ownRevoked = (registration.device?.revokedAt ?? '').trim().isNotEmpty;
     await _refreshEntitlementsAndDeviceGate(deviceRevoked: ownRevoked);
   }
 
@@ -2819,6 +2823,75 @@ class AppController {
     if (!_uploadRequests.isClosed) {
       _uploadRequests.add(null);
     }
+  }
+
+  /// Re-evaluates the transfer gate and requests the existing upload drain. This
+  /// action never modifies a local plaintext deadline.
+  Future<void> retryPendingBackups() async {
+    final pending = (_segments.valueOrNull ?? const <RecordingSegment>[])
+        .where(
+          (segment) =>
+              segment.isLocal &&
+              (segment.uploadStatus == SegmentUploadStatus.pending ||
+                  segment.uploadStatus == SegmentUploadStatus.uploading ||
+                  segment.uploadStatus == SegmentUploadStatus.failed),
+        )
+        .length;
+    if (pending == 0) {
+      _message.add('No local backups are waiting to retry.');
+      return;
+    }
+    final config = _config.valueOrNull;
+    if (config == null || !config.uploadEnabled) {
+      _message.add(
+        'Backup is disabled. The app-private deletion deadline did not change.',
+      );
+      return;
+    }
+    final gate = await _refreshTransferStatus();
+    if (!gate.allowed) {
+      _message.add(
+        'Backup is still paused by the current power or network policy. The deletion deadline did not change.',
+      );
+      return;
+    }
+    requestUploadDrain();
+    _message.add(
+      'Retrying backup for $pending local ${pending == 1 ? 'copy' : 'copies'}. The deletion deadline did not change.',
+    );
+  }
+
+  /// Runs the existing fail-closed retention cleanup immediately. The user-facing
+  /// result is intentionally content-free and never includes paths or provider
+  /// details.
+  Future<void> runRetentionCleanupNow() async {
+    try {
+      await _enforceRetention();
+      _message.add('Local retention cleanup completed.');
+    } catch (_) {
+      _diagnostics.add('Manual local retention cleanup failed.');
+      _message.add(
+        'Privacy cleanup could not complete. Restart Sonus Auris and try again.',
+      );
+    }
+  }
+
+  /// Exports one explicit user-controlled copy without changing the segment's
+  /// upload state or app-private retention deadline.
+  Future<void> exportLocalCopy(String segmentId) async {
+    RecordingSegment? selected;
+    for (final segment in _segments.valueOrNull ?? const <RecordingSegment>[]) {
+      if (segment.id == segmentId) {
+        selected = segment;
+        break;
+      }
+    }
+    if (selected == null || !selected.isLocal) {
+      _message.add('This local copy is no longer available to export.');
+      return;
+    }
+    final result = await _localExportService.exportSegment(selected);
+    _message.add(result.message);
   }
 
   Future<void> clearMessage() async {

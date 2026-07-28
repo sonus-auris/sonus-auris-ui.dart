@@ -7,10 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   testWidgets('renders nothing when no local copy is at risk', (tester) async {
     await tester.pumpWidget(
-      _app(
-        warnings: const [],
-        nowUtc: DateTime.utc(2026, 7, 27, 12),
-      ),
+      _app(warnings: const [], nowUtc: DateTime.utc(2026, 7, 27, 12)),
     );
 
     expect(find.text('Local copy nearing automatic deletion'), findsNothing);
@@ -25,14 +22,8 @@ void main() {
     var cleanups = 0;
     final now = DateTime.utc(2026, 7, 27, 12);
     final warnings = [
-      _warning(
-        id: 'later',
-        expiresAtUtc: now.add(const Duration(hours: 6)),
-      ),
-      _warning(
-        id: 'earliest',
-        expiresAtUtc: now.add(const Duration(hours: 2)),
-      ),
+      _warning(id: 'later', expiresAtUtc: now.add(const Duration(hours: 6))),
+      _warning(id: 'earliest', expiresAtUtc: now.add(const Duration(hours: 2))),
     ];
 
     await tester.pumpWidget(
@@ -94,7 +85,10 @@ void main() {
     await tester.pump();
 
     expect(find.text('Privacy cleanup overdue'), findsOneWidget);
-    expect(find.textContaining('crossed the app-private deletion deadline'), findsOneWidget);
+    expect(
+      find.textContaining('crossed the app-private deletion deadline'),
+      findsOneWidget,
+    );
     expect(find.text('Run cleanup again'), findsOneWidget);
     expect(cleanups, 1);
 

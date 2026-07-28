@@ -47,15 +47,16 @@ class _RetentionExpiryBannerState extends State<RetentionExpiryBanner> {
 
   void _scheduleCleanupForOverduePlaintext() {
     final now = widget.nowUtc.toUtc();
-    final overdue = widget.warnings
-        .where((warning) => warning.isOverdueAt(now))
-        .toList(growable: false)
-      ..sort((left, right) {
-        final byDeadline = left.expiresAtUtc.compareTo(right.expiresAtUtc);
-        return byDeadline != 0
-            ? byDeadline
-            : left.segmentId.compareTo(right.segmentId);
-      });
+    final overdue =
+        widget.warnings
+            .where((warning) => warning.isOverdueAt(now))
+            .toList(growable: false)
+          ..sort((left, right) {
+            final byDeadline = left.expiresAtUtc.compareTo(right.expiresAtUtc);
+            return byDeadline != 0
+                ? byDeadline
+                : left.segmentId.compareTo(right.segmentId);
+          });
     if (overdue.isEmpty) {
       _lastAutomaticCleanupSignature = null;
       return;
@@ -134,9 +135,7 @@ class _RetentionExpiryBannerState extends State<RetentionExpiryBanner> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(
-                    isOverdue
-                        ? Icons.privacy_tip
-                        : Icons.schedule_outlined,
+                    isOverdue ? Icons.privacy_tip : Icons.schedule_outlined,
                     color: isOverdue
                         ? scheme.onErrorContainer
                         : scheme.onTertiaryContainer,
@@ -148,12 +147,13 @@ class _RetentionExpiryBannerState extends State<RetentionExpiryBanner> {
                       children: [
                         Text(
                           title,
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            color: isOverdue
-                                ? scheme.onErrorContainer
-                                : scheme.onTertiaryContainer,
-                          ),
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: isOverdue
+                                    ? scheme.onErrorContainer
+                                    : scheme.onTertiaryContainer,
+                              ),
                         ),
                         const SizedBox(height: 6),
                         Text(deadlineCopy),
@@ -185,9 +185,8 @@ class _RetentionExpiryBannerState extends State<RetentionExpiryBanner> {
                     label: const Text('Retry backup'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: () => unawaited(
-                      widget.onExportLocalCopy(earliest.segmentId),
-                    ),
+                    onPressed: () =>
+                        unawaited(widget.onExportLocalCopy(earliest.segmentId)),
                     icon: const Icon(Icons.ios_share_outlined),
                     label: const Text('Export local copy'),
                   ),

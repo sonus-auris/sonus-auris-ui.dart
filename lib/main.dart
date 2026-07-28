@@ -29,6 +29,7 @@ import 'src/services/voice_id/voice_profile_service.dart';
 import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
 import 'src/widgets/supabase_auth_form.dart';
+import 'src/widgets/retention_expiry_banner.dart';
 
 const String _privacyPolicyUrl = 'https://sonusauris.app/privacy/';
 const String _accountDeletionUrl = 'https://sonusauris.app/account-deletion/';
@@ -1008,6 +1009,9 @@ class _SettingsPageState extends State<SettingsPage> {
           onToggleHighQuality: widget.controller.toggleHighQualityRecording,
           onSendAlert: widget.controller.sendManualAlert,
           onConfirm: widget.controller.confirmRecording,
+          onRetryBackup: widget.controller.retryPendingBackups,
+          onExportLocalCopy: widget.controller.exportLocalCopy,
+          onRunRetentionCleanup: widget.controller.runRetentionCleanupNow,
         );
     }
   }
@@ -1046,7 +1050,7 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
     final config = viewModel.config.copyWith(
-      deviceRetentionHours: _parseInt(_deviceRetentionController.text, 50),
+      deviceRetentionHours: _parseInt(_deviceRetentionController.text, 100),
       cloudRetentionHours: _parseInt(_cloudRetentionController.text, 500),
       segmentMinutes: _parseInt(_segmentMinutesController.text, 1),
       overlapSeconds: _parseInt(_overlapSecondsController.text, 2),
@@ -1162,6 +1166,9 @@ class _HomeView extends StatelessWidget {
     required this.onToggleHighQuality,
     required this.onSendAlert,
     required this.onConfirm,
+    required this.onRetryBackup,
+    required this.onExportLocalCopy,
+    required this.onRunRetentionCleanup,
   });
 
   final AppViewModel viewModel;
@@ -1171,9 +1178,14 @@ class _HomeView extends StatelessWidget {
   final VoidCallback onToggleHighQuality;
   final VoidCallback onSendAlert;
   final VoidCallback onConfirm;
+  final Future<void> Function() onRetryBackup;
+  final Future<void> Function(String segmentId) onExportLocalCopy;
+  final Future<void> Function() onRunRetentionCleanup;
 
   @override
   Widget build(BuildContext context) {
+    final nowUtc = DateTime.now().toUtc();
+    final retentionWarnings = viewModel.localRetentionWarnings(nowUtc: nowUtc);
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
       children: [
@@ -1187,6 +1199,16 @@ class _HomeView extends StatelessWidget {
         const SizedBox(height: 16),
         if (!viewModel.isSignedIn) ...[
           const _SignInNotice(),
+          const SizedBox(height: 12),
+        ],
+        if (retentionWarnings.isNotEmpty) ...[
+          RetentionExpiryBanner(
+            warnings: retentionWarnings,
+            nowUtc: nowUtc,
+            onRetryBackup: onRetryBackup,
+            onExportLocalCopy: onExportLocalCopy,
+            onRunCleanup: onRunRetentionCleanup,
+          ),
           const SizedBox(height: 12),
         ],
         _StatusSection(

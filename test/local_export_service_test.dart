@@ -5,45 +5,48 @@ import 'package:share_plus/share_plus.dart';
 
 void main() {
   group('LocalExportService', () {
-    test('copies to an explicit desktop destination without exposing paths', () async {
-      String? copiedFrom;
-      String? copiedTo;
-      String? copiedName;
-      final service = LocalExportService(
-        platform: LocalExportPlatform.desktopSave,
-        fileExists: (_) async => true,
-        pickSavePath: ({required suggestedName}) async {
-          expect(
-            suggestedName,
-            'sonus-auris-2026-07-27T12-00-00-000Z.wav',
-          );
-          return '/user-selected/export.wav';
-        },
-        copyFile:
-            ({
-              required sourcePath,
-              required destinationPath,
-              required contentType,
-              required suggestedName,
-            }) async {
-              copiedFrom = sourcePath;
-              copiedTo = destinationPath;
-              copiedName = suggestedName;
-              expect(contentType, 'audio/wav');
-            },
-      );
+    test(
+      'copies to an explicit desktop destination without exposing paths',
+      () async {
+        String? copiedFrom;
+        String? copiedTo;
+        String? copiedName;
+        final service = LocalExportService(
+          platform: LocalExportPlatform.desktopSave,
+          fileExists: (_) async => true,
+          pickSavePath: ({required suggestedName}) async {
+            expect(suggestedName, 'sonus-auris-2026-07-27T12-00-00-000Z.wav');
+            return '/user-selected/export.wav';
+          },
+          copyFile:
+              ({
+                required sourcePath,
+                required destinationPath,
+                required contentType,
+                required suggestedName,
+              }) async {
+                copiedFrom = sourcePath;
+                copiedTo = destinationPath;
+                copiedName = suggestedName;
+                expect(contentType, 'audio/wav');
+              },
+        );
 
-      final result = await service.exportSegment(_segment());
+        final result = await service.exportSegment(_segment());
 
-      expect(result.status, LocalExportStatus.completed);
-      expect(result.succeeded, isTrue);
-      expect(copiedFrom, '/app-private/segment.wav');
-      expect(copiedTo, '/user-selected/export.wav');
-      expect(copiedName, 'sonus-auris-2026-07-27T12-00-00-000Z.wav');
-      expect(result.message, contains('outside Sonus Auris automatic retention'));
-      expect(result.message, isNot(contains('/app-private')));
-      expect(result.message, isNot(contains('/user-selected')));
-    });
+        expect(result.status, LocalExportStatus.completed);
+        expect(result.succeeded, isTrue);
+        expect(copiedFrom, '/app-private/segment.wav');
+        expect(copiedTo, '/user-selected/export.wav');
+        expect(copiedName, 'sonus-auris-2026-07-27T12-00-00-000Z.wav');
+        expect(
+          result.message,
+          contains('outside Sonus Auris automatic retention'),
+        );
+        expect(result.message, isNot(contains('/app-private')));
+        expect(result.message, isNot(contains('/user-selected')));
+      },
+    );
 
     test('mobile share success creates a user-controlled copy', () async {
       final service = LocalExportService(
@@ -67,58 +70,67 @@ void main() {
       expect(result.succeeded, isTrue);
     });
 
-    test('mobile share dismissal does not claim an export or move retention', () async {
-      final service = LocalExportService(
-        platform: LocalExportPlatform.mobileShare,
-        fileExists: (_) async => true,
-        shareFile:
-            ({
-              required sourcePath,
-              required suggestedName,
-              required contentType,
-            }) async => ShareResultStatus.dismissed,
-      );
+    test(
+      'mobile share dismissal does not claim an export or move retention',
+      () async {
+        final service = LocalExportService(
+          platform: LocalExportPlatform.mobileShare,
+          fileExists: (_) async => true,
+          shareFile:
+              ({
+                required sourcePath,
+                required suggestedName,
+                required contentType,
+              }) async => ShareResultStatus.dismissed,
+        );
 
-      final result = await service.exportSegment(_segment());
-      expect(result.status, LocalExportStatus.cancelled);
-      expect(result.succeeded, isFalse);
-      expect(result.message, contains('deadline did not change'));
-    });
+        final result = await service.exportSegment(_segment());
+        expect(result.status, LocalExportStatus.cancelled);
+        expect(result.succeeded, isFalse);
+        expect(result.message, contains('deadline did not change'));
+      },
+    );
 
-    test('unreported share result is presented without claiming saved output', () async {
-      final service = LocalExportService(
-        platform: LocalExportPlatform.mobileShare,
-        fileExists: (_) async => true,
-        shareFile:
-            ({
-              required sourcePath,
-              required suggestedName,
-              required contentType,
-            }) async => ShareResultStatus.unavailable,
-      );
+    test(
+      'unreported share result is presented without claiming saved output',
+      () async {
+        final service = LocalExportService(
+          platform: LocalExportPlatform.mobileShare,
+          fileExists: (_) async => true,
+          shareFile:
+              ({
+                required sourcePath,
+                required suggestedName,
+                required contentType,
+              }) async => ShareResultStatus.unavailable,
+        );
 
-      final result = await service.exportSegment(_segment());
-      expect(result.status, LocalExportStatus.presented);
-      expect(result.message, contains('system share sheet opened'));
-      expect(result.message, isNot(contains('Export completed')));
-    });
+        final result = await service.exportSegment(_segment());
+        expect(result.status, LocalExportStatus.presented);
+        expect(result.message, contains('system share sheet opened'));
+        expect(result.message, isNot(contains('Export completed')));
+      },
+    );
 
-    test('missing local source fails before any picker or share action', () async {
-      var invoked = false;
-      final service = LocalExportService(
-        platform: LocalExportPlatform.desktopSave,
-        fileExists: (_) async => false,
-        pickSavePath: ({required suggestedName}) async {
-          invoked = true;
-          return '/should-not-be-used';
-        },
-      );
+    test(
+      'missing local source fails before any picker or share action',
+      () async {
+        var invoked = false;
+        final service = LocalExportService(
+          platform: LocalExportPlatform.desktopSave,
+          fileExists: (_) async => false,
+          pickSavePath: ({required suggestedName}) async {
+            invoked = true;
+            return '/should-not-be-used';
+          },
+        );
 
-      final result = await service.exportSegment(_segment());
-      expect(result.status, LocalExportStatus.sourceMissing);
-      expect(invoked, isFalse);
-      expect(result.message, isNot(contains('/app-private')));
-    });
+        final result = await service.exportSegment(_segment());
+        expect(result.status, LocalExportStatus.sourceMissing);
+        expect(invoked, isFalse);
+        expect(result.message, isNot(contains('/app-private')));
+      },
+    );
 
     test('cancel and copy failure stay sanitized', () async {
       final cancelled = LocalExportService(

@@ -28,20 +28,21 @@ class LocalExportResult {
 }
 
 typedef LocalFileExists = Future<bool> Function(String sourcePath);
-typedef LocalFileSharer = Future<ShareResultStatus> Function({
-  required String sourcePath,
-  required String suggestedName,
-  required String contentType,
-});
-typedef LocalSavePathPicker = Future<String?> Function({
-  required String suggestedName,
-});
-typedef LocalFileCopier = Future<void> Function({
-  required String sourcePath,
-  required String destinationPath,
-  required String contentType,
-  required String suggestedName,
-});
+typedef LocalFileSharer =
+    Future<ShareResultStatus> Function({
+      required String sourcePath,
+      required String suggestedName,
+      required String contentType,
+    });
+typedef LocalSavePathPicker =
+    Future<String?> Function({required String suggestedName});
+typedef LocalFileCopier =
+    Future<void> Function({
+      required String sourcePath,
+      required String destinationPath,
+      required String contentType,
+      required String suggestedName,
+    });
 
 /// Copies one existing local recording into a destination explicitly selected by
 /// the user. The exported copy is outside Sonus Auris automatic retention; this
@@ -112,7 +113,8 @@ class LocalExportService {
               'Local export was cancelled. The app-private deletion deadline did not change.',
             );
           }
-          if (File(destinationPath).absolute.path == File(sourcePath).absolute.path) {
+          if (File(destinationPath).absolute.path ==
+              File(sourcePath).absolute.path) {
             return const LocalExportResult(
               LocalExportStatus.failed,
               'Choose a different destination for the exported copy. The retention deadline did not change.',
@@ -195,10 +197,10 @@ class LocalExportService {
   ).saveTo(destinationPath);
 
   static String _suggestedName(RecordingSegment segment) {
-    final timestamp = segment.endedAtUtc
-        .toUtc()
-        .toIso8601String()
-        .replaceAll(RegExp(r'[:.]'), '-');
+    final timestamp = segment.endedAtUtc.toUtc().toIso8601String().replaceAll(
+      RegExp(r'[:.]'),
+      '-',
+    );
     final extension = segment.fileExtension.trim().isEmpty
         ? 'audio'
         : segment.fileExtension.trim().toLowerCase();
