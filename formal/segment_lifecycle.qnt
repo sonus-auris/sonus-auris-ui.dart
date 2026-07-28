@@ -1,11 +1,5 @@
-// Bounded executable model of the Sonus Auris local-plaintext -> encrypted
-// upload -> verified remote acknowledgement -> crash-safe retention lifecycle.
-//
-// This model deliberately abstracts HTTP, Flutter, Rx, JSON serialization, and
-// filesystem APIs. It keeps the protocol facts that protect privacy and data:
-// encryption before egress, one logical remote object across retries, verified
-// completion before `uploaded`, a fixed 100-hour-equivalent logical deadline,
-// and tombstone-before-delete recovery.
+// Bounded model of local plaintext -> encrypted upload -> verified remote
+// acknowledgement -> crash-safe retention for one Sonus Auris segment.
 module segment_lifecycle {
   type State = {
     now: int,
@@ -51,8 +45,7 @@ module segment_lifecycle {
   pure val REASON_RETENTION = 1
   pure val REASON_FREE_SPACE = 2
 
-  // Four logical ticks stand for the fixed product maximum of 100 hours. The
-  // scale is irrelevant; the important property is that retries cannot move it.
+  // Four logical ticks represent the immutable product maximum of 100 hours.
   pure val RETENTION_DEADLINE = 4
   pure val MAX_TIME = 7
   pure val MAX_GENERATION = 2
@@ -63,23 +56,23 @@ module segment_lifecycle {
 
   var s: State
 
-  pure def valid_mode(mode: int): bool =
-    Set(MODE_NONE, MODE_DIRECT_S3, MODE_BACKEND).contains(mode)
+  pure def valid_mode(candidate: int): bool =
+    Set(MODE_NONE, MODE_DIRECT_S3, MODE_BACKEND).contains(candidate)
 
-  pure def valid_status(status: int): bool =
+  pure def valid_status(candidate: int): bool =
     Set(
       STATUS_PENDING,
       STATUS_UPLOADING,
       STATUS_UPLOADED,
       STATUS_FAILED,
       STATUS_LOCAL_ONLY
-    ).contains(status)
+    ).contains(candidate)
 
-  pure def is_retryable_status(status: int): bool =
-    Set(STATUS_PENDING, STATUS_UPLOADING, STATUS_FAILED).contains(status)
+  pure def retryable(candidate: int): bool =
+    Set(STATUS_PENDING, STATUS_UPLOADING, STATUS_FAILED).contains(candidate)
 
-  pure def is_backed_up(state: State): bool =
-    state.remote_key_present or state.permanent_copy_present
+  pure def backed_up(snapshot: State): bool =
+    snapshot.remote_key_present or snapshot.permanent_copy_present
 
   action init: bool = {
     s' = {
@@ -118,8 +111,8 @@ module segment_lifecycle {
     s' = { ...s, key_available: available },
   }
 
-  // Persisting `uploading` happens before the implementation encrypts and sends.
-  // A restart-visible `uploading` state is therefore intentionally retryable.
+  // `uploading` is persisted before encryption and network I/O, so it remains
+  // retryable after a process restart.
   action begin_upload(upload_mode: int): bool = all {
     UPLOAD_MODES.contains(upload_mode),
     s.audio_present,
@@ -127,7 +120,7 @@ module segment_lifecycle {
     s.tombstone_stage == TOMBSTONE_NONE,
     s.gate_allowed,
     s.active_generation == 0,
-    is_retryable_status(s.status),
+    retryable(s.status),
     s.next_generation <= MAX_GENERATION,
     s' = {
       ...s,
@@ -163,8 +156,8 @@ module segment_lifecycle {
     },
   }
 
-  // The only network-send action requires the active generation to have been
-  // sealed. Every retry addresses the same logical remote object identity.
+  // The only egress transition requires the active generation to be sealed.
+  // Every retry addresses one stable logical remote object.
   action send_audio_ciphertext: bool = all {
     s.active_generation > 0,
     s.sealed_generation == s.active_generation,
@@ -179,9 +172,6 @@ module segment_lifecycle {
     },
   }
 
-  // Direct S3 is complete only after the logical upload (including any required
-  // sidecar) succeeds. A partial audio PUT retains the same object identity but
-  // must not publish the segment as uploaded.
   action direct_upload_complete: bool = all {
     s.mode == MODE_DIRECT_S3,
     s.active_generation > 0,
@@ -199,6 +189,8 @@ module segment_lifecycle {
     },
   }
 
+  // A direct audio PUT whose sidecar fails leaves a partial remote object, but
+  // never publishes the segment as uploaded.
   action direct_sidecar_failure: bool = all {
     s.mode == MODE_DIRECT_S3,
     s.active_generation > 0,
@@ -214,8 +206,7 @@ module segment_lifecycle {
     },
   }
 
-  // Backend PUT success alone is insufficient. Only the completion response
-  // carrying a storage key acknowledges the upload.
+  // Backend PUT success is not acknowledgement; completion must return a key.
   action backend_complete: bool = all {
     s.mode == MODE_BACKEND,
     s.active_generation > 0,
@@ -253,8 +244,7 @@ module segment_lifecycle {
     s' = { ...s, permanent_copy_present: true },
   }
 
-  // Process restart clears only volatile attempt state. Persisted `uploading`,
-  // remote acknowledgement, the fixed deadline, and deletion journal survive.
+  // Restart clears volatile attempt state and preserves persisted protocol state.
   action restart: bool = {
     s' = {
       ...s,
@@ -266,8 +256,6 @@ module segment_lifecycle {
     }
   }
 
-  // Older asynchronous results are observationally ignored once a newer
-  // generation is active or acknowledged.
   action stale_success(generation: int): bool = all {
     generation >= 1,
     generation < s.next_generation,
@@ -290,10 +278,7 @@ module segment_lifecycle {
     s' = s,
   }
 
-  // Logical time may advance freely before the deadline, or after plaintext is
-  // gone. Crossing the deadline with local plaintext atomically persists the
-  // deletion tombstone. Time cannot advance past that boundary until deletion
-  // converges, which represents urgent retention enforcement.
+  // Time advances before the deadline, or after local plaintext is gone.
   action tick_without_retention_boundary: bool = all {
     s.now < MAX_TIME,
     or {
@@ -303,6 +288,8 @@ module segment_lifecycle {
     s' = { ...s, now: s.now + 1 },
   }
 
+  // Crossing the deadline first persists the crash-recovery journal. Logical
+  // time cannot advance beyond this boundary until deletion converges.
   action tick_to_retention_deadline: bool = all {
     s.now < MAX_TIME,
     s.now + 1 >= s.retention_deadline,
@@ -313,17 +300,15 @@ module segment_lifecycle {
       now: s.now + 1,
       tombstone_stage: TOMBSTONE_PERSISTED,
       tombstone_reason: REASON_RETENTION,
-      retention_expired_before_backup: not(is_backed_up(s)),
+      retention_expired_before_backup: not(backed_up(s)),
     },
   }
 
-  // Disk-pressure deletion is allowed only after a verified rolling or
-  // permanent remote copy exists.
   action begin_free_space_deletion: bool = all {
     s.index_local_present,
     s.audio_present,
     s.tombstone_stage == TOMBSTONE_NONE,
-    is_backed_up(s),
+    backed_up(s),
     s' = {
       ...s,
       tombstone_stage: TOMBSTONE_PERSISTED,
@@ -338,11 +323,13 @@ module segment_lifecycle {
     s.derived_artifacts.contains(artifact),
     s' = {
       ...s,
-      derived_artifacts: s.derived_artifacts.filter(item => item != artifact),
+      derived_artifacts: s.derived_artifacts.filter(
+        artifact_id => artifact_id != artifact
+      ),
     },
   }
 
-  // The implementation deliberately deletes the canonical audio artifact last.
+  // Canonical audio is deleted after every derived local artifact.
   action delete_audio_last: bool = all {
     s.tombstone_stage == TOMBSTONE_PERSISTED,
     s.derived_artifacts.size() == 0,
@@ -464,42 +451,40 @@ module segment_lifecycle {
       s.acknowledged_generation > 0,
     }
 
-  val one_logical_remote_object = s.remote_objects.size() <= 1
-
   val deletion_is_crash_consistent = and {
     s.audio_present or s.derived_artifacts.size() == 0,
     s.index_local_present or not(s.audio_present),
-    s.tombstone_stage < TOMBSTONE_ARTIFACTS_DELETED or and {
+    (s.tombstone_stage >= TOMBSTONE_ARTIFACTS_DELETED).implies(and {
       not(s.audio_present),
       s.derived_artifacts.size() == 0,
-    },
-    s.tombstone_stage < TOMBSTONE_INDEX_PERSISTED
-      or not(s.index_local_present),
-    s.tombstone_stage != TOMBSTONE_NONE or and {
+    }),
+    (s.tombstone_stage >= TOMBSTONE_INDEX_PERSISTED).implies(
+      not(s.index_local_present)
+    ),
+    (s.tombstone_stage == TOMBSTONE_NONE).implies(and {
       s.tombstone_reason == REASON_NONE,
-      not(s.index_local_present) implies and {
+      not(s.index_local_present).implies(and {
         not(s.audio_present),
         s.derived_artifacts.size() == 0,
-      },
-    },
-    s.tombstone_stage == TOMBSTONE_NONE
-      or s.tombstone_reason != REASON_NONE,
+      }),
+    }),
+    (s.tombstone_stage != TOMBSTONE_NONE).implies(
+      s.tombstone_reason != REASON_NONE
+    ),
   }
 
   val free_space_deletion_requires_backup =
-    s.tombstone_reason != REASON_FREE_SPACE or is_backed_up(s)
+    (s.tombstone_reason == REASON_FREE_SPACE).implies(backed_up(s))
 
   val expired_unbacked_plaintext_is_recorded =
-    not(and {
+    and {
       s.tombstone_stage >= TOMBSTONE_INDEX_PERSISTED,
       s.retention_expired_before_backup,
-    }) or and {
+    }.implies(and {
       s.status == STATUS_FAILED,
       s.retention_error_recorded,
-    }
+    })
 
-  // The abstract logical clock cannot progress beyond the fixed deadline while
-  // plaintext remains. At the boundary a durable tombstone already exists.
   val hard_retention_ceiling = and {
     s.now <= s.retention_deadline or not(s.audio_present),
     s.now < s.retention_deadline
@@ -518,7 +503,7 @@ module segment_lifecycle {
     no_plaintext_egress,
     uploaded_requires_verified_remote,
     permanent_copy_requires_verified_upload,
-    one_logical_remote_object,
+    s.remote_objects.size() <= 1,
     deletion_is_crash_consistent,
     free_space_deletion_requires_backup,
     expired_unbacked_plaintext_is_recorded,
