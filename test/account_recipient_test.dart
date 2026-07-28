@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:audio_dashcam/src/services/crypto/account_recipient.dart';
@@ -16,18 +17,93 @@ void main() {
   Uint8List sample(int n) =>
       Uint8List.fromList(List<int>.generate(n, (i) => (i * 13 + 7) & 0xFF));
 
-  test('account seal/open round-trips a DEK', () async {
+  test('account seal/open round-trips an exact 92-byte DEK wrapper', () async {
     final account = await recipient.generateKeyPair();
     final dek = sample(32);
     final blob = await recipient.seal(
       publicKey: account.publicKey,
       dekBytes: dek,
     );
+    expect(blob.length, AccountRecipient.sealedDekLength);
     final recovered = await recipient.open(
       privateSeed: account.privateSeed,
       blob: blob,
     );
     expect(recovered, equals(dek));
+  });
+
+  test('account wrapper rejects non-canonical key and blob lengths', () async {
+    final account = await recipient.generateKeyPair();
+
+    expect(
+      () => recipient.seal(
+        publicKey: Uint8List(31),
+        dekBytes: sample(SegmentCipher.dekLength),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => recipient.seal(
+        publicKey: account.publicKey,
+        dekBytes: sample(SegmentCipher.dekLength - 1),
+      ),
+      throwsArgumentError,
+    );
+
+    for (final length in [91, 93]) {
+      expect(
+        () => recipient.open(
+          privateSeed: account.privateSeed,
+          blob: Uint8List(length),
+        ),
+        throwsFormatException,
+      );
+    }
+    expect(
+      () => recipient.open(
+        privateSeed: Uint8List(31),
+        blob: Uint8List(AccountRecipient.sealedDekLength),
+      ),
+      throwsFormatException,
+    );
+  });
+
+  test('non-contributory all-zero X25519 input is rejected before HKDF', () async {
+    final account = await recipient.generateKeyPair();
+    final zeroShared = SecretKey(List<int>.filled(32, 0));
+    final hkdf = Hkdf(
+      hmac: Hmac.sha256(),
+      outputLength: SegmentCipher.dekLength,
+    );
+    final zeroDerivedKey = await hkdf.deriveKey(
+      secretKey: zeroShared,
+      nonce: const [],
+      info: utf8.encode('sonus-auris/account-recipient/v1'),
+    );
+    final box = await aead.encrypt(
+      sample(SegmentCipher.dekLength),
+      secretKey: zeroDerivedKey,
+      nonce: List<int>.filled(SegmentCipher.nonceLength, 0),
+    );
+    final maliciousBlob = BytesBuilder(copy: false)
+      ..add(List<int>.filled(AccountRecipient.publicKeyLength, 0))
+      ..add(box.concatenation());
+
+    expect(
+      () => recipient.open(
+        privateSeed: account.privateSeed,
+        blob: maliciousBlob.toBytes(),
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('non-contributory'),
+        ),
+      ),
+    );
+    zeroDerivedKey.destroy();
+    zeroShared.destroy();
   });
 
   test('a different account key cannot open the sealed DEK', () async {
@@ -44,7 +120,7 @@ void main() {
   });
 
   test(
-    'v2 container: phone reads its own, desktop (account key) reads it too',
+    'v2 container: phone reads its own, authorized peer reads it too',
     () async {
       final phone = KeyManager(store: InMemoryKeyStore());
       final account = await recipient.generateKeyPair();
@@ -63,6 +139,10 @@ void main() {
       final header = SegmentCipher.peekHeader(container);
       expect(header.version, SegmentCipher.versionMultiRecipient);
       expect(header.accountWrappedDek, isNotNull);
+      expect(
+        header.accountWrappedDek,
+        hasLength(SegmentCipher.accountWrappedDekLength),
+      );
 
       // 1) The phone opens it with its own device key.
       final viaPhone = await cipher.open(
@@ -71,7 +151,7 @@ void main() {
       );
       expect(viaPhone, equals(plaintext));
 
-      // 2) The desktop "master" opens the SAME segment via the account private
+      // 2) An authorized peer opens the SAME segment via the account private
       //    key: recover the DEK from the account block, decrypt the content box.
       final dekBytes = await recipient.open(
         privateSeed: account.privateSeed,
@@ -83,11 +163,13 @@ void main() {
         nonceLength: SegmentCipher.nonceLength,
         macLength: SegmentCipher.macLength,
       );
-      final viaDesktop = await aead.decrypt(
-        box,
-        secretKey: SecretKey(dekBytes),
-      );
-      expect(viaDesktop, equals(plaintext));
+      final viaPeerKey = SecretKey(dekBytes);
+      try {
+        final viaPeer = await aead.decrypt(box, secretKey: viaPeerKey);
+        expect(viaPeer, equals(plaintext));
+      } finally {
+        viaPeerKey.destroy();
+      }
     },
   );
 
