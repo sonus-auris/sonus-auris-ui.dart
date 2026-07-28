@@ -8,10 +8,8 @@ import 'package:path_provider/path_provider.dart';
 import '../models/recording_segment.dart';
 
 typedef SegmentBaseDirectoryProvider = Future<Directory> Function();
-typedef RetentionMutationHook = Future<void> Function(
-  RetentionMutationStage stage,
-  String segmentId,
-);
+typedef RetentionMutationHook =
+    Future<void> Function(RetentionMutationStage stage, String segmentId);
 
 enum RetentionMutationStage {
   tombstonePersisted,
@@ -27,12 +25,14 @@ class SegmentIndex {
     RetentionMutationHook? retentionMutationHook,
   }) : _baseDirectoryProvider =
            baseDirectoryProvider ?? getApplicationSupportDirectory,
+       // Preserve the public test-hook parameter name without exposing a private
+       // named argument solely to satisfy the initializing-formal preference.
+       // ignore: prefer_initializing_formals
        _retentionMutationHook = retentionMutationHook;
 
   static const _indexFileName = 'segments.v1.json';
   static const _artifactInventoryFileName = 'segment-artifacts.v1.json';
-  static const retentionTombstoneFileName =
-      'retention-tombstones.v1.json';
+  static const retentionTombstoneFileName = 'retention-tombstones.v1.json';
   static const retentionExpiredErrorPrefix =
       'Local plaintext expired before backup completed';
 
@@ -134,7 +134,9 @@ class SegmentIndex {
     final segments = await loadSegments();
     final segment = segments.where((item) => item.id == segmentId).firstOrNull;
     if (segment == null) {
-      throw StateError('Cannot register an artifact for unknown segment $segmentId');
+      throw StateError(
+        'Cannot register an artifact for unknown segment $segmentId',
+      );
     }
     if (!segment.isLocal) {
       throw StateError(
@@ -143,7 +145,8 @@ class SegmentIndex {
     }
 
     final inventory = await _readArtifactInventory();
-    final paths = <String>{...?inventory[segmentId], normalized}.toList()..sort();
+    final paths = <String>{...?inventory[segmentId], normalized}.toList()
+      ..sort();
     inventory[segmentId] = paths;
     await _saveArtifactInventory(inventory);
   }
@@ -258,7 +261,10 @@ class SegmentIndex {
         );
         continue;
       }
-      await _notifyMutation(RetentionMutationStage.artifactsDeleted, segment.id);
+      await _notifyMutation(
+        RetentionMutationStage.artifactsDeleted,
+        segment.id,
+      );
 
       updated.add(_applyTombstone(segment, tombstone));
       completed.add(tombstone);
@@ -385,7 +391,11 @@ class SegmentIndex {
   Future<String> _validatedArtifactPath(String artifactPath) async {
     final raw = artifactPath.trim();
     if (raw.isEmpty) {
-      throw ArgumentError.value(artifactPath, 'artifactPath', 'must not be empty');
+      throw ArgumentError.value(
+        artifactPath,
+        'artifactPath',
+        'must not be empty',
+      );
     }
     final base = p.normalize((await _baseDirectoryProvider()).absolute.path);
     final normalized = p.normalize(File(raw).absolute.path);
@@ -468,14 +478,13 @@ class SegmentIndex {
     return reconciled;
   }
 
-  Future<void> _putRetentionTombstone(
-    _RetentionTombstone tombstone,
-  ) async {
+  Future<void> _putRetentionTombstone(_RetentionTombstone tombstone) async {
     final tombstones = await _readRetentionTombstones();
-    final updated = tombstones
-        .where((entry) => entry.segmentId != tombstone.segmentId)
-        .toList()
-      ..add(tombstone);
+    final updated =
+        tombstones
+            .where((entry) => entry.segmentId != tombstone.segmentId)
+            .toList()
+          ..add(tombstone);
     await _saveRetentionTombstones(updated);
   }
 
