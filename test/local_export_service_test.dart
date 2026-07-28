@@ -48,6 +48,32 @@ void main() {
       },
     );
 
+    test('rejects a desktop destination inside app-private storage', () async {
+      var copied = false;
+      final service = LocalExportService(
+        platform: LocalExportPlatform.desktopSave,
+        fileExists: (_) async => true,
+        pickSavePath: ({required suggestedName}) async =>
+            '/app-private/export.wav',
+        copyFile:
+            ({
+              required sourcePath,
+              required destinationPath,
+              required contentType,
+              required suggestedName,
+            }) async {
+              copied = true;
+            },
+      );
+
+      final result = await service.exportSegment(_segment());
+      expect(result.status, LocalExportStatus.failed);
+      expect(copied, isFalse);
+      expect(result.message, contains('outside Sonus Auris app storage'));
+      expect(result.message, contains('deadline did not change'));
+      expect(result.message, isNot(contains('/app-private')));
+    });
+
     test('mobile share success creates a user-controlled copy', () async {
       final service = LocalExportService(
         platform: LocalExportPlatform.mobileShare,
