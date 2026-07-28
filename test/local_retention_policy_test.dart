@@ -117,6 +117,49 @@ void main() {
       );
     });
 
+    test('remote key alone is not treated as a verified backup', () {
+      final now = DateTime.utc(2026, 7, 27, 12);
+      final policy = LocalRetentionPolicy(retentionHours: 100);
+      final segment = _segment(
+        id: 'unverified-remote',
+        endedAtUtc: now.subtract(const Duration(hours: 99)),
+        status: SegmentUploadStatus.failed,
+        remoteKey: 'rolling/unverified.wav.enc',
+      );
+
+      expect(
+        policy.warnings(nowUtc: now, segments: [segment])
+            .map((warning) => warning.segmentId),
+        ['unverified-remote'],
+      );
+    });
+
+    test('orders equal deadlines by id and returns an immutable snapshot', () {
+      final now = DateTime.utc(2026, 7, 27, 12);
+      final policy = LocalRetentionPolicy(retentionHours: 100);
+      final warnings = policy.warnings(
+        nowUtc: now,
+        segments: [
+          _segment(
+            id: 'z-last',
+            endedAtUtc: now.subtract(const Duration(hours: 99)),
+            status: SegmentUploadStatus.pending,
+          ),
+          _segment(
+            id: 'a-first',
+            endedAtUtc: now.subtract(const Duration(hours: 99)),
+            status: SegmentUploadStatus.pending,
+          ),
+        ],
+      );
+
+      expect(warnings.map((warning) => warning.segmentId), [
+        'a-first',
+        'z-last',
+      ]);
+      expect(() => warnings.clear(), throwsUnsupportedError);
+    });
+
     test('surfaces overdue plaintext as a sweeper health failure', () {
       final now = DateTime.utc(2026, 7, 27, 12);
       final policy = LocalRetentionPolicy(retentionHours: 100);
