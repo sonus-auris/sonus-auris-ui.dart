@@ -1,0 +1,44 @@
+name: retention warning policy
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/retention-warning-policy.yml
+      - lib/src/models/local_retention_warning.dart
+      - lib/src/retention/local_retention_policy.dart
+      - test/local_retention_policy_test.dart
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/retention-warning-policy.yml
+      - lib/src/models/local_retention_warning.dart
+      - lib/src/retention/local_retention_policy.dart
+      - test/local_retention_policy_test.dart
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retention-warning-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.3
+          cache: true
+      - run: flutter pub get
+      - name: Analyze retention policy
+        run: dart analyze lib/src/models/local_retention_warning.dart lib/src/retention/local_retention_policy.dart test/local_retention_policy_test.dart
+      - name: Test retention policy
+        run: flutter test test/local_retention_policy_test.dart --reporter expanded
