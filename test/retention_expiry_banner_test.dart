@@ -14,6 +14,47 @@ void main() {
     expect(find.text('Retry backup'), findsNothing);
   });
 
+  testWidgets('idle surface enters the warning horizon on its own timer', (
+    tester,
+  ) async {
+    var now = DateTime.utc(2026, 7, 27, 12);
+    final warning = _warning(
+      id: 'segment-a',
+      expiresAtUtc: now.add(const Duration(hours: 1, minutes: 1)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: RetentionExpirySurface(
+            utcNow: () => now,
+            refreshInterval: const Duration(minutes: 1),
+            warningProvider: (atUtc) =>
+                warning.expiresAtUtc.isAfter(
+                  atUtc.toUtc().add(const Duration(hours: 1)),
+                )
+                ? const []
+                : [warning],
+            onRetryBackup: () async {},
+            onExportLocalCopy: (_) async {},
+            onRunCleanup: () async {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Local copy nearing automatic deletion'), findsNothing);
+
+    now = now.add(const Duration(minutes: 2));
+    await tester.pump(const Duration(minutes: 1));
+
+    expect(find.text('Local copy nearing automatic deletion'), findsOneWidget);
+    expect(find.textContaining('2026-07-27T13:01:00.000Z'), findsOneWidget);
+
+    // Dispose the periodic timer explicitly before the test ends.
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('shows earliest exact deadline, count, and safe actions', (
     tester,
   ) async {
