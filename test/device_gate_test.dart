@@ -50,6 +50,23 @@ void main() {
       expect(overLimitDeviceIds(devices, 2), {'stale'});
     });
 
+    test('breaks identical timestamp ties deterministically by device id', () {
+      final devices = [device('z-later-id'), device('a-earlier-id')];
+
+      expect(overLimitDeviceIds(devices, 1), {'z-later-id'});
+      expect(overLimitDeviceIds(devices.reversed.toList(), 1), {'z-later-id'});
+    });
+
+    test('treats empty and malformed timestamps as the oldest activity', () {
+      final devices = [
+        device('valid', lastSeenAt: '2026-07-17T12:00:00Z'),
+        device('empty', lastSeenAt: ''),
+        device('malformed', lastSeenAt: 'not-a-timestamp'),
+      ];
+
+      expect(overLimitDeviceIds(devices, 1), {'empty', 'malformed'});
+    });
+
     test('the console viewer never consumes a recorder slot', () {
       final devices = [
         device('r1'),
