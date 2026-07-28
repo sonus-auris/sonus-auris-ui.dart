@@ -34,12 +34,15 @@ dependencies:
     path: packages/sonus_auris_interfaces
 
   # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   rxdart: ^0.28.0
   record: ^7.0.0
   permission_handler: ^12.0.3
   path_provider: ^2.1.5
+  # Native desktop save dialogs for explicit user-controlled local exports.
+  file_selector: ^1.1.0
+  # Android/iOS/macOS/Windows system share sheets for mobile-friendly exports.
+  share_plus: ^13.3.0
   shared_preferences: ^2.5.5
   flutter_secure_storage: ^10.3.1
   just_audio: ^0.10.5
@@ -110,9 +113,8 @@ dev_dependencies:
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
-  # activated in the `analysis_options.yaml` file located at the root of your
-  # package. See that file for information about deactivating specific lint
-  # rules and activating additional ones.
+  # activated in the `analysis_options.yaml` file located at the root of the
+  # package. This package is only used during development.
   flutter_lints: ^6.0.0
 
 # For information on the generic Dart part of this file, see the
@@ -141,25 +143,10 @@ flutter:
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
 
-  # For details regarding adding assets from package dependencies, see
-  # https://flutter.dev/to/asset-from-package
+  # For details regarding adding assets from package dependencies,
+  # see https://flutter.dev/to/asset-from-package
 
   # To add custom fonts to your application, add a fonts section here,
   # in this "flutter" section. Each entry in this list should have a
-  # "family" key with the font family name, and a "fonts" key with a
-  # list giving the asset and other descriptors for the font. For
-  # example:
-  # fonts:
-  #   - family: Schyler
-  #     fonts:
-  #       - asset: fonts/Schyler-Regular.ttf
-  #       - asset: fonts/Schyler-Italic.ttf
-  #         style: italic
-  #   - family: Trajan Pro
-  #     fonts:
-  #       - asset: fonts/TrajanPro.ttf
-  #       - asset: fonts/TrajanPro_Bold.ttf
-  #         weight: 700
-  #
-  # For details regarding fonts from package dependencies,
-  # see https://flutter.dev/to/font-from-package
+  # "family" key with a "fonts" key with a list giving the asset and
+  # other descriptors for the font.
