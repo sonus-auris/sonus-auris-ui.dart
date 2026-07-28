@@ -168,6 +168,16 @@ def patch_main() -> None:
     )
 
 
+def patch_segment_index_lint() -> None:
+    path = "lib/src/services/segment_index.dart"
+    replace(
+        path,
+        "  }) : _baseDirectoryProvider =\n           baseDirectoryProvider ?? getApplicationSupportDirectory,\n       _retentionMutationHook = retentionMutationHook;",
+        "  }) : _baseDirectoryProvider =\n           baseDirectoryProvider ?? getApplicationSupportDirectory,\n       // Preserve the public test-hook parameter name without exposing a private\n       // named argument solely to satisfy the initializing-formal preference.\n       // ignore: prefer_initializing_formals\n       _retentionMutationHook = retentionMutationHook;",
+    )
+
+
 if __name__ == "__main__":
     patch_controller()
     patch_main()
+    patch_segment_index_lint()
