@@ -14,6 +14,7 @@ void main() {
         final service = LocalExportService(
           platform: LocalExportPlatform.desktopSave,
           fileExists: (_) async => true,
+          canonicalizePath: _identityCanonicalizer,
           pickSavePath: ({required suggestedName}) async {
             expect(suggestedName, 'sonus-auris-2026-07-27T12-00-00-000Z.wav');
             return '/user-selected/export.wav';
@@ -53,6 +54,7 @@ void main() {
       final service = LocalExportService(
         platform: LocalExportPlatform.desktopSave,
         fileExists: (_) async => true,
+        canonicalizePath: _identityCanonicalizer,
         pickSavePath: ({required suggestedName}) async =>
             '/app-private/export.wav',
         copyFile:
@@ -71,6 +73,68 @@ void main() {
       expect(copied, isFalse);
       expect(result.message, contains('outside Sonus Auris app storage'));
       expect(result.message, contains('deadline did not change'));
+      expect(result.message, isNot(contains('/app-private')));
+    });
+
+    test('rejects a sibling destination within the app-private root', () async {
+      var copied = false;
+      final service = LocalExportService(
+        platform: LocalExportPlatform.desktopSave,
+        fileExists: (_) async => true,
+        canonicalizePath: _identityCanonicalizer,
+        pickSavePath: ({required suggestedName}) async =>
+            '/app-private/exports/export.wav',
+        copyFile:
+            ({
+              required sourcePath,
+              required destinationPath,
+              required contentType,
+              required suggestedName,
+            }) async {
+              copied = true;
+            },
+      );
+
+      final result = await service.exportSegment(
+        _segment(localPath: '/app-private/segments/segment.wav'),
+      );
+
+      expect(result.status, LocalExportStatus.failed);
+      expect(copied, isFalse);
+      expect(result.message, contains('outside Sonus Auris app storage'));
+    });
+
+    test('rejects a destination resolving into app-private storage', () async {
+      var copied = false;
+      final service = LocalExportService(
+        platform: LocalExportPlatform.desktopSave,
+        fileExists: (_) async => true,
+        canonicalizePath: (path) async {
+          if (path == '/user-selected/link/export.wav') {
+            return '/app-private/exports/export.wav';
+          }
+          return path;
+        },
+        pickSavePath: ({required suggestedName}) async =>
+            '/user-selected/link/export.wav',
+        copyFile:
+            ({
+              required sourcePath,
+              required destinationPath,
+              required contentType,
+              required suggestedName,
+            }) async {
+              copied = true;
+            },
+      );
+
+      final result = await service.exportSegment(
+        _segment(localPath: '/app-private/segments/segment.wav'),
+      );
+
+      expect(result.status, LocalExportStatus.failed);
+      expect(copied, isFalse);
+      expect(result.message, contains('outside Sonus Auris app storage'));
       expect(result.message, isNot(contains('/app-private')));
     });
 
@@ -145,6 +209,7 @@ void main() {
         final service = LocalExportService(
           platform: LocalExportPlatform.desktopSave,
           fileExists: (_) async => false,
+          canonicalizePath: _identityCanonicalizer,
           pickSavePath: ({required suggestedName}) async {
             invoked = true;
             return '/should-not-be-used';
@@ -162,6 +227,7 @@ void main() {
       final cancelled = LocalExportService(
         platform: LocalExportPlatform.desktopSave,
         fileExists: (_) async => true,
+        canonicalizePath: _identityCanonicalizer,
         pickSavePath: ({required suggestedName}) async => null,
       );
       expect(
@@ -172,6 +238,7 @@ void main() {
       final failed = LocalExportService(
         platform: LocalExportPlatform.desktopSave,
         fileExists: (_) async => true,
+        canonicalizePath: _identityCanonicalizer,
         pickSavePath: ({required suggestedName}) async => '/target/export.wav',
         copyFile:
             ({
@@ -204,12 +271,15 @@ void main() {
   });
 }
 
-RecordingSegment _segment() => RecordingSegment(
-  id: 'segment-a',
-  startedAtUtc: DateTime.utc(2026, 7, 27, 11, 59),
-  endedAtUtc: DateTime.utc(2026, 7, 27, 12),
-  localPath: '/app-private/segment.wav',
-  byteSize: 1920000,
-  uploadStatus: SegmentUploadStatus.failed,
-  container: 'wav',
-);
+Future<String> _identityCanonicalizer(String path) async => path;
+
+RecordingSegment _segment({String localPath = '/app-private/segment.wav'}) =>
+    RecordingSegment(
+      id: 'segment-a',
+      startedAtUtc: DateTime.utc(2026, 7, 27, 11, 59),
+      endedAtUtc: DateTime.utc(2026, 7, 27, 12),
+      localPath: localPath,
+      byteSize: 1920000,
+      uploadStatus: SegmentUploadStatus.failed,
+      container: 'wav',
+    );

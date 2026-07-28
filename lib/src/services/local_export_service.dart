@@ -39,6 +39,7 @@ typedef LocalFileSharer =
     });
 typedef LocalSavePathPicker =
     Future<String?> Function({required String suggestedName});
+typedef LocalPathCanonicalizer = Future<String> Function(String path);
 typedef LocalFileCopier =
     Future<void> Function({
       required String sourcePath,
@@ -61,17 +62,20 @@ class LocalExportService {
     LocalFileExists? fileExists,
     LocalFileSharer? shareFile,
     LocalSavePathPicker? pickSavePath,
+    LocalPathCanonicalizer? canonicalizePath,
     LocalFileCopier? copyFile,
   }) : platform = platform ?? _detectPlatform(),
        _fileExists = fileExists ?? _defaultFileExists,
        _shareFile = shareFile ?? _defaultShareFile,
        _pickSavePath = pickSavePath ?? _defaultPickSavePath,
+       _canonicalizePath = canonicalizePath ?? _defaultCanonicalizePath,
        _copyFile = copyFile ?? _defaultCopyFile;
 
   final LocalExportPlatform platform;
   final LocalFileExists _fileExists;
   final LocalFileSharer _shareFile;
   final LocalSavePathPicker _pickSavePath;
+  final LocalPathCanonicalizer _canonicalizePath;
   final LocalFileCopier _copyFile;
 
   Future<LocalExportResult> exportSegment(RecordingSegment segment) async {
@@ -116,7 +120,7 @@ class LocalExportService {
               'Local export was cancelled. The app-private deletion deadline did not change.',
             );
           }
-          if (_isAppPrivateDestination(
+          if (await _isAppPrivateDestination(
             sourcePath: sourcePath,
             destinationPath: destinationPath,
           )) {
@@ -219,18 +223,19 @@ class LocalExportService {
     name: suggestedName,
   ).saveTo(destinationPath);
 
-  static bool _isAppPrivateDestination({
+  Future<bool> _isAppPrivateDestination({
     required String sourcePath,
     required String destinationPath,
-  }) {
-    final source = p.normalize(File(sourcePath).absolute.path);
-    final destination = p.normalize(File(destinationPath).absolute.path);
+  }) async {
+    final source = p.normalize(await _canonicalizePath(sourcePath));
+    final destination = p.normalize(await _canonicalizePath(destinationPath));
     if (p.equals(source, destination)) {
       return true;
     }
 
     final sourceParent = p.dirname(source);
-    if (p.isWithin(sourceParent, destination)) {
+    if (p.equals(sourceParent, destination) ||
+        p.isWithin(sourceParent, destination)) {
       return true;
     }
 
@@ -240,12 +245,25 @@ class LocalExportService {
     );
     if (segmentsIndex >= 0) {
       final segmentsRoot = p.joinAll(sourceParts.take(segmentsIndex + 1));
-      if (p.equals(segmentsRoot, destination) ||
-          p.isWithin(segmentsRoot, destination)) {
+      final appPrivateRoot = p.dirname(segmentsRoot);
+      if (p.equals(appPrivateRoot, destination) ||
+          p.isWithin(appPrivateRoot, destination)) {
         return true;
       }
     }
     return false;
+  }
+
+  static Future<String> _defaultCanonicalizePath(String rawPath) async {
+    final absolutePath = File(rawPath).absolute.path;
+    try {
+      return p.normalize(await File(absolutePath).resolveSymbolicLinks());
+    } on FileSystemException {
+      final resolvedParent = await Directory(
+        p.dirname(absolutePath),
+      ).resolveSymbolicLinks();
+      return p.normalize(p.join(resolvedParent, p.basename(absolutePath)));
+    }
   }
 
   static String _suggestedName(RecordingSegment segment) {
