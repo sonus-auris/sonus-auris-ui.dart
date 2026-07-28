@@ -4,11 +4,13 @@ import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
 import '../models/context_trigger.dart';
 import '../models/cloud_provider.dart';
+import '../models/local_retention_warning.dart';
 import '../models/playback_snapshot.dart';
 import '../models/recorder_snapshot.dart';
 import '../models/recording_segment.dart';
 import '../models/storage_estimate.dart';
 import '../models/transfer_gate_status.dart';
+import '../retention/local_retention_policy.dart';
 
 class AppViewModel {
   const AppViewModel({
@@ -134,6 +136,40 @@ class AppViewModel {
   int get failedUploads => segments
       .where((segment) => segment.uploadStatus == SegmentUploadStatus.failed)
       .length;
+
+  /// Safe retention policy for UI projection. Older persisted values above the
+  /// current product ceiling are reduced to 100 hours rather than allowing a
+  /// stale configuration to extend plaintext lifetime or crash the dashboard.
+  LocalRetentionPolicy get localRetentionPolicy => LocalRetentionPolicy(
+    retentionHours: config.deviceRetentionHours
+        .clamp(1, LocalRetentionPolicy.maxPlaintextRetentionHours)
+        .toInt(),
+  );
+
+  List<LocalRetentionWarning> localRetentionWarnings({
+    required DateTime nowUtc,
+    Duration? horizon,
+    bool includeOverdue = true,
+  }) => localRetentionPolicy.warnings(
+    segments: segments,
+    nowUtc: nowUtc,
+    horizon: horizon,
+    includeOverdue: includeOverdue,
+  );
+
+  LocalRetentionWarning? earliestLocalRetentionWarning({
+    required DateTime nowUtc,
+    Duration? horizon,
+    bool includeOverdue = true,
+  }) => localRetentionPolicy.earliestWarning(
+    segments: segments,
+    nowUtc: nowUtc,
+    horizon: horizon,
+    includeOverdue: includeOverdue,
+  );
+
+  int overdueLocalRetentionCount(DateTime nowUtc) =>
+      localRetentionPolicy.overdueCount(segments: segments, nowUtc: nowUtc);
 
   int get uploadedSegments =>
       segments.where((segment) => segment.isUploaded).length;
