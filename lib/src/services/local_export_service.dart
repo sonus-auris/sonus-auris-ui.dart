@@ -1,6 +1,9 @@
 import 'dart:io';
+import 'dart:ui' show Rect;
 
 import 'package:file_selector/file_selector.dart' show getSaveLocation;
+import 'package:flutter/widgets.dart' show WidgetsBinding;
+import 'package:path/path.dart' as p;
 import 'package:share_plus/share_plus.dart';
 
 import '../models/recording_segment.dart';
@@ -113,11 +116,13 @@ class LocalExportService {
               'Local export was cancelled. The app-private deletion deadline did not change.',
             );
           }
-          if (File(destinationPath).absolute.path ==
-              File(sourcePath).absolute.path) {
+          if (_isAppPrivateDestination(
+            sourcePath: sourcePath,
+            destinationPath: destinationPath,
+          )) {
             return const LocalExportResult(
               LocalExportStatus.failed,
-              'Choose a different destination for the exported copy. The retention deadline did not change.',
+              'Choose a destination outside Sonus Auris app storage. The retention deadline did not change.',
             );
           }
           await _copyFile(
@@ -169,9 +174,27 @@ class LocalExportService {
             'This exported copy is controlled by you and is outside Sonus Auris automatic retention.',
         files: [XFile(sourcePath, mimeType: contentType, name: suggestedName)],
         fileNameOverrides: [suggestedName],
+        // iPad requires a non-empty popover origin. Computing it from the active
+        // logical view avoids passing widget geometry into the controller layer.
+        sharePositionOrigin: _defaultSharePositionOrigin(),
       ),
     );
     return result.status;
+  }
+
+  static Rect? _defaultSharePositionOrigin() {
+    if (!Platform.isIOS) {
+      return null;
+    }
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    if (views.isEmpty) {
+      return const Rect.fromLTWH(0, 0, 1, 1);
+    }
+    final view = views.first;
+    final ratio = view.devicePixelRatio == 0 ? 1.0 : view.devicePixelRatio;
+    final width = view.physicalSize.width / ratio;
+    final height = view.physicalSize.height / ratio;
+    return Rect.fromLTWH(width / 2, height / 2, 1, 1);
   }
 
   static Future<String?> _defaultPickSavePath({
@@ -195,6 +218,35 @@ class LocalExportService {
     mimeType: contentType,
     name: suggestedName,
   ).saveTo(destinationPath);
+
+  static bool _isAppPrivateDestination({
+    required String sourcePath,
+    required String destinationPath,
+  }) {
+    final source = p.normalize(File(sourcePath).absolute.path);
+    final destination = p.normalize(File(destinationPath).absolute.path);
+    if (p.equals(source, destination)) {
+      return true;
+    }
+
+    final sourceParent = p.dirname(source);
+    if (p.isWithin(sourceParent, destination)) {
+      return true;
+    }
+
+    final sourceParts = p.split(source);
+    final segmentsIndex = sourceParts.lastIndexWhere(
+      (part) => part.toLowerCase() == 'segments',
+    );
+    if (segmentsIndex >= 0) {
+      final segmentsRoot = p.joinAll(sourceParts.take(segmentsIndex + 1));
+      if (p.equals(segmentsRoot, destination) ||
+          p.isWithin(segmentsRoot, destination)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   static String _suggestedName(RecordingSegment segment) {
     final timestamp = segment.endedAtUtc.toUtc().toIso8601String().replaceAll(
