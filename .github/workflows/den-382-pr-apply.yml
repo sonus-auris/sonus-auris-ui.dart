@@ -49,8 +49,27 @@ jobs:
             test/local_export_service_test.dart \
             test/retention_expiry_banner_test.dart
 
-      - name: Analyze
-        run: flutter analyze
+      - name: Capture analyzer output
+        id: analyze
+        shell: bash
+        run: |
+          set +e
+          flutter analyze > "$RUNNER_TEMP/analyze.log" 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          tail -n 160 "$RUNNER_TEMP/analyze.log"
+          exit 0
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: den-382-analyze-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/analyze.log
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Require clean analysis
+        run: test '${{ steps.analyze.outputs.exit_code }}' = 0
 
       - name: Run focused export, banner, and retention tests
         run: |
