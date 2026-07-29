@@ -9,6 +9,7 @@ import '../models/playback_snapshot.dart';
 import '../models/recorder_snapshot.dart';
 import '../models/recording_segment.dart';
 import '../models/storage_estimate.dart';
+import '../models/supabase_session.dart';
 import '../models/transfer_gate_status.dart';
 import '../retention/local_retention_policy.dart';
 
@@ -61,8 +62,15 @@ class AppViewModel {
   bool get isUploadGatePaused =>
       config.uploadEnabled && transferStatus.isPaused && pendingUploads > 0;
 
-  /// Whether a Supabase session (access or refresh token) is held.
-  bool get isSignedIn => secrets.hasSupabaseSession;
+  /// Whether cloud account access is authorized: the passwordless first factor
+  /// plus a verified second factor represented by an `aal2` access token.
+  bool get isSignedIn =>
+      secrets.hasSupabaseToken &&
+      supabaseJwtAal(secrets.supabaseAccessToken) == 'aal2';
+
+  /// A first-factor session may exist while mandatory MFA is being enrolled or
+  /// challenged. It must not be treated as signed in.
+  bool get hasFirstFactorSession => secrets.hasSupabaseSession;
 
   /// Email of the signed-in user, or null when signed out / unknown.
   String? get signedInEmail => secrets.supabaseEmail.trim().isEmpty

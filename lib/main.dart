@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart' show FlutterExceptionHandler;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -29,6 +30,7 @@ import 'src/services/voice_id/voice_profile_service.dart';
 import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
 import 'src/widgets/supabase_auth_form.dart';
+import 'src/widgets/supabase_mfa_gate.dart';
 import 'src/widgets/retention_expiry_banner.dart';
 
 const String _privacyPolicyUrl = 'https://sonusauris.app/privacy/';
@@ -77,6 +79,10 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
   Timer? _controllerBootstrapTimer;
   AppController? _controller;
   Future<void>? _initFuture;
+  late final AppLinks _appLinks;
+  StreamSubscription<Uri>? _authLinkSubscription;
+  Uri? _pendingAuthLink;
+  bool _controllerReady = false;
   Object? _startupError;
   FlutterExceptionHandler? _previousFlutterOnError;
   ui.ErrorCallback? _previousPlatformOnError;
@@ -85,6 +91,12 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _appLinks = AppLinks();
+    unawaited(_captureInitialAuthLink());
+    _authLinkSubscription = _appLinks.uriLinkStream.listen(
+      _handleAuthLink,
+      onError: (_) {},
+    );
     // Build and submit the branded loading frame before constructing plugin-
     // backed services. A zero-delay event from a post-frame callback guarantees
     // this frame can leave the Dart UI isolate first, even when Android is still
@@ -108,7 +120,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
       final controller = widget.controllerFactory?.call() ?? AppController();
       _controller = controller;
       _installTelemetryErrorHooks(controller);
-      final initFuture = controller.init();
+      final initFuture = _initializeController(controller);
       if (!mounted) {
         unawaited(controller.dispose());
         return;
@@ -123,6 +135,36 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
         });
       }
     }
+  }
+
+  Future<void> _captureInitialAuthLink() async {
+    try {
+      final link = await _appLinks.getInitialLink();
+      if (link != null) {
+        _handleAuthLink(link);
+      }
+    } catch (_) {
+      // Deep-link support is unavailable in some test/preview environments.
+    }
+  }
+
+  Future<void> _initializeController(AppController controller) async {
+    await controller.init();
+    _controllerReady = true;
+    final pending = _pendingAuthLink;
+    _pendingAuthLink = null;
+    if (pending != null) {
+      await controller.consumeSupabaseMagicLink(pending);
+    }
+  }
+
+  void _handleAuthLink(Uri link) {
+    final controller = _controller;
+    if (controller == null || !_controllerReady) {
+      _pendingAuthLink = link;
+      return;
+    }
+    unawaited(controller.consumeSupabaseMagicLink(link));
   }
 
   void _installTelemetryErrorHooks(AppController controller) {
@@ -146,6 +188,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _controllerBootstrapTimer?.cancel();
+    _authLinkSubscription?.cancel();
     if (_previousFlutterOnError != null) {
       FlutterError.onError = _previousFlutterOnError;
     }
@@ -437,6 +480,20 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         ],
       );
     }
+    if (vm?.hasFirstFactorSession ?? false) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 8),
+          SupabaseMfaGate(controller: widget.controller),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: _busy ? null : widget.controller.signOutSupabase,
+            child: const Text('Use a different account'),
+          ),
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -622,13 +679,11 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
               onPressed: _busy ? null : () => setState(() => _step -= 1),
               child: const Text('Back'),
             ),
-          if (onAccountStep && !(vm?.isSignedIn ?? false))
-            TextButton(
-              onPressed: _busy ? null : () => setState(() => _step += 1),
-              child: const Text('Skip for now'),
-            ),
           FilledButton(
-            onPressed: _busy || (_step == 2 && !_requiredAccepted)
+            onPressed:
+                _busy ||
+                    (_step == 2 && !_requiredAccepted) ||
+                    (onAccountStep && !(vm?.isSignedIn ?? false))
                 ? null
                 : () {
                     if (isLast) {
@@ -959,7 +1014,9 @@ class _SettingsPageState extends State<SettingsPage> {
           child: _ConfigureView(
             viewModel: viewModel,
             accountSection: _AccountSection(
+              controller: widget.controller,
               isSignedIn: viewModel.isSignedIn,
+              hasFirstFactorSession: viewModel.hasFirstFactorSession,
               signedInEmail: viewModel.signedInEmail,
               isDeviceRegistered: viewModel.isDeviceRegistered,
               isAwaitingDeviceRegistration:
@@ -2247,7 +2304,9 @@ class _ConfigureActionBar extends StatelessWidget {
 /// verified account. The one-time code is held only transiently in a local field.
 class _AccountSection extends StatefulWidget {
   const _AccountSection({
+    required this.controller,
     required this.isSignedIn,
+    required this.hasFirstFactorSession,
     required this.signedInEmail,
     required this.isDeviceRegistered,
     required this.isAwaitingDeviceRegistration,
@@ -2259,7 +2318,9 @@ class _AccountSection extends StatefulWidget {
     required this.onDeleteAccount,
   });
 
+  final AppController controller;
   final bool isSignedIn;
+  final bool hasFirstFactorSession;
   final String? signedInEmail;
   final bool isDeviceRegistered;
   final bool isAwaitingDeviceRegistration;
@@ -2410,6 +2471,25 @@ class _AccountSectionState extends State<_AccountSection> {
             ),
             const SizedBox(height: 8),
             _legalLinks(),
+          ],
+        ),
+      );
+    }
+    if (widget.hasFirstFactorSession) {
+      return _Section(
+        title: 'Account security',
+        icon: Icons.security,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SupabaseMfaGate(controller: widget.controller),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: _busy
+                  ? null
+                  : () => _runAccountAction(widget.onSignOut),
+              child: const Text('Cancel and sign out'),
+            ),
           ],
         ),
       );

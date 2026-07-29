@@ -13,6 +13,7 @@ import '../models/client_telemetry_event.dart';
 import '../models/cloud_secrets.dart';
 import '../models/cloud_provider.dart';
 import '../models/consent.dart';
+import '../models/supabase_session.dart';
 import 'supabase_key_policy.dart';
 
 /// Thin PostgREST client for writing user data into Supabase. Only the signed-in
@@ -248,7 +249,8 @@ class SupabaseRestClient {
   bool canInsert(AppConfig config, CloudSecrets secrets) {
     return config.supabaseUrl.trim().isNotEmpty &&
         config.supabaseAnonKey.trim().isNotEmpty &&
-        secrets.hasSupabaseToken;
+        secrets.hasSupabaseToken &&
+        supabaseJwtAal(secrets.supabaseAccessToken) == 'aal2';
   }
 
   /// Batch-inserts acoustic detections. Returns an error string on failure, or

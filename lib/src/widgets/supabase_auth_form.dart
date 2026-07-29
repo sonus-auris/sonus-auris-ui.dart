@@ -118,7 +118,7 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
               ? _spinner
               : const Icon(Icons.mark_email_read_outlined),
           label: Text(
-            _busy == _Busy.request ? 'Sending…' : 'Email me a sign-in link',
+            _busy == _Busy.request ? 'Sending…' : 'Email me a 6-digit code',
           ),
         ),
       ),
@@ -133,10 +133,10 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
       const SizedBox(height: 4),
       Text(
         email.isEmpty
-            ? 'We emailed you a sign-in link and a 6-digit code. Enter the code '
-                  'to continue.'
-            : 'We emailed a sign-in link and a 6-digit code to $email. Enter the '
-                  'code to continue.',
+            ? 'We emailed you a 6-digit sign-in code. Enter it to continue; '
+                  'the link is available as a fallback.'
+            : 'We emailed a 6-digit sign-in code to $email. Enter it to '
+                  'continue; the link is available as a fallback.',
         style: theme.textTheme.bodySmall,
       ),
       const SizedBox(height: 16),

@@ -9,6 +9,11 @@ import '../models/supabase_mfa.dart';
 import '../models/supabase_session.dart';
 import 'supabase_key_policy.dart';
 
+const String kSupabaseAuthRedirectUrl = String.fromEnvironment(
+  'SONUS_AUTH_REDIRECT_URL',
+  defaultValue: 'sonusauris://auth/callback',
+);
+
 /// Thin client for Supabase's GoTrue REST auth API. Implemented over plain
 /// `http` (no native plugin) so it is fully testable and adds no dependency.
 ///
@@ -31,7 +36,11 @@ class SupabaseAuthClient {
     required String email,
   }) async {
     _validateEmail(email);
-    final uri = _authUri(config, 'otp');
+    final uri = _authUri(
+      config,
+      'otp',
+      query: {'redirect_to': _authRedirectUri.toString()},
+    );
     await _post(config, uri, {
       'email': email.trim(),
       'create_user': true,
@@ -55,6 +64,59 @@ class SupabaseAuthClient {
       'email': email.trim(),
       'token': trimmedCode,
     }, 'That code was not accepted. Request a fresh one and try again.');
+  }
+
+  /// Adopts a Supabase magic-link callback only when it targets this build's
+  /// exact application URI. The callback itself must never be logged or stored.
+  Future<SupabaseSession> consumeMagicLink({
+    required AppConfig config,
+    required Uri callback,
+  }) async {
+    final expected = _authRedirectUri;
+    if (callback.scheme != expected.scheme ||
+        callback.host != expected.host ||
+        callback.port != expected.port ||
+        callback.path != expected.path) {
+      throw const FormatException('That sign-in link targets another app.');
+    }
+
+    final parameters = <String, String>{
+      ...callback.queryParameters,
+      ...Uri.splitQueryString(
+        callback.fragment,
+        encoding: const Utf8Codec(allowMalformed: false),
+      ),
+    };
+    final callbackError =
+        parameters['error_description'] ?? parameters['error'];
+    if ((callbackError ?? '').trim().isNotEmpty) {
+      throw StateError(callbackError!.trim());
+    }
+
+    final accessToken = (parameters['access_token'] ?? '').trim();
+    if (accessToken.isNotEmpty) {
+      final refreshToken = (parameters['refresh_token'] ?? '').trim();
+      final expiresIn = int.tryParse(parameters['expires_in'] ?? '');
+      return SupabaseSession.fromJson({
+        'access_token': accessToken,
+        'refresh_token': refreshToken,
+        'expires_in': ?expiresIn,
+      });
+    }
+
+    final tokenHash = (parameters['token_hash'] ?? '').trim();
+    if (tokenHash.isNotEmpty) {
+      final uri = _authUri(config, 'verify');
+      return _session(
+        config,
+        uri,
+        {'type': 'magiclink', 'token_hash': tokenHash},
+        'That magic link was not accepted. Request a fresh one and try again.',
+      );
+    }
+    throw const FormatException(
+      'The sign-in link contained no usable Supabase session.',
+    );
   }
 
   // --- Multi-factor auth (Bearer = the user's current access token) ---------
@@ -83,11 +145,17 @@ class SupabaseAuthClient {
     String? friendlyName,
   }) async {
     final uri = _authUri(config, 'factors');
-    final decoded = await _post(config, uri, {
-      'factor_type': 'totp',
-      if ((friendlyName ?? '').trim().isNotEmpty)
-        'friendly_name': friendlyName!.trim(),
-    }, 'Could not start authenticator enrollment.', accessToken: accessToken);
+    final decoded = await _post(
+      config,
+      uri,
+      {
+        'factor_type': 'totp',
+        if ((friendlyName ?? '').trim().isNotEmpty)
+          'friendly_name': friendlyName!.trim(),
+      },
+      'Could not start authenticator enrollment.',
+      accessToken: accessToken,
+    );
     final factorId = (decoded['id'] as String? ?? '').trim();
     if (factorId.isEmpty) {
       throw StateError('Authenticator enrollment returned no factor id.');
@@ -117,12 +185,18 @@ class SupabaseAuthClient {
       throw const FormatException('Enter the phone number to enroll.');
     }
     final uri = _authUri(config, 'factors');
-    final decoded = await _post(config, uri, {
-      'factor_type': 'phone',
-      'phone': trimmedPhone,
-      if ((friendlyName ?? '').trim().isNotEmpty)
-        'friendly_name': friendlyName!.trim(),
-    }, 'Could not start SMS enrollment.', accessToken: accessToken);
+    final decoded = await _post(
+      config,
+      uri,
+      {
+        'factor_type': 'phone',
+        'phone': trimmedPhone,
+        if ((friendlyName ?? '').trim().isNotEmpty)
+          'friendly_name': friendlyName!.trim(),
+      },
+      'Could not start SMS enrollment.',
+      accessToken: accessToken,
+    );
     final factorId = (decoded['id'] as String? ?? '').trim();
     if (factorId.isEmpty) {
       throw StateError('SMS enrollment returned no factor id.');
@@ -377,6 +451,16 @@ class SupabaseAuthClient {
       queryParameters: query,
       fragment: '',
     );
+  }
+
+  Uri get _authRedirectUri {
+    final uri = Uri.parse(kSupabaseAuthRedirectUrl.trim());
+    if (!uri.hasScheme || uri.host.isEmpty) {
+      throw const FormatException(
+        'The auth redirect URL must include a scheme and host.',
+      );
+    }
+    return uri;
   }
 
   Map<String, String> _headers(AppConfig config, {String? accessToken}) {

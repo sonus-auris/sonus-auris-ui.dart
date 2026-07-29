@@ -26,6 +26,10 @@ void main() {
 
     expect(captured.method, 'POST');
     expect(captured.url.path, '/auth/v1/otp');
+    expect(
+      captured.url.queryParameters['redirect_to'],
+      'sonusauris://auth/callback',
+    );
     // The anon key, never the service key, authorizes the request.
     expect(captured.headers['apikey'], 'anon-key-123');
     expect(captured.headers['authorization'], 'Bearer anon-key-123');
@@ -77,6 +81,30 @@ void main() {
       expect(session.expiresAtUtc.isAfter(DateTime.now().toUtc()), isTrue);
     },
   );
+
+  test('consumeMagicLink accepts only the configured app callback', () async {
+    final client = SupabaseAuthClient(
+      httpClient: MockClient((_) async => http.Response('{}', 500)),
+    );
+    final callback = Uri.parse(
+      'sonusauris://auth/callback'
+      '#access_token=access-1&refresh_token=refresh-1&expires_in=3600',
+    );
+
+    final session = await client.consumeMagicLink(
+      config: config,
+      callback: callback,
+    );
+    expect(session.accessToken, 'access-1');
+    expect(session.refreshToken, 'refresh-1');
+    expect(
+      () => client.consumeMagicLink(
+        config: config,
+        callback: callback.replace(host: 'another-app'),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
 
   test('refreshSession uses the refresh_token grant', () async {
     late http.Request captured;

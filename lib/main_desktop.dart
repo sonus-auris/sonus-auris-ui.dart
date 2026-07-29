@@ -20,6 +20,7 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 
+import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart'
     show FlutterExceptionHandler, TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
@@ -29,6 +30,7 @@ import 'src/app/app_view_model.dart';
 import 'src/models/consent.dart';
 import 'src/platform/desktop_autostart.dart';
 import 'src/widgets/supabase_auth_form.dart';
+import 'src/widgets/supabase_mfa_gate.dart';
 
 const _green = Color(0xFF1FAA6C);
 const _greenBright = Color(0xFF34C585);
@@ -53,6 +55,10 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
     with WidgetsBindingObserver {
   late final AppController _controller;
   late final Future<void> _ready;
+  late final AppLinks _appLinks;
+  StreamSubscription<Uri>? _authLinkSubscription;
+  Uri? _pendingAuthLink;
+  bool _controllerReady = false;
   FlutterExceptionHandler? _previousFlutterOnError;
   ui.ErrorCallback? _previousPlatformOnError;
 
@@ -62,15 +68,46 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
     WidgetsBinding.instance.addObserver(this);
     DesktopAutostart.setup();
     _controller = AppController();
+    _appLinks = AppLinks();
+    unawaited(_captureInitialAuthLink());
+    _authLinkSubscription = _appLinks.uriLinkStream.listen(
+      _handleAuthLink,
+      onError: (_) {},
+    );
     _installTelemetryErrorHooks(_controller);
     // On desktop, behave like an always-on recorder only after the user has
     // accepted the current recording disclosure. The controller independently
     // enforces the same rule for every manual/scheduled start.
     _ready = _controller.init().then((_) async {
+      _controllerReady = true;
+      final pending = _pendingAuthLink;
+      _pendingAuthLink = null;
+      if (pending != null) {
+        await _controller.consumeSupabaseMagicLink(pending);
+      }
       if (_controller.hasValidRecordingConsent) {
         await _startAlwaysOnRecorder();
       }
     });
+  }
+
+  Future<void> _captureInitialAuthLink() async {
+    try {
+      final link = await _appLinks.getInitialLink();
+      if (link != null) {
+        _handleAuthLink(link);
+      }
+    } catch (_) {
+      // Deep-link support is unavailable in some test/preview environments.
+    }
+  }
+
+  void _handleAuthLink(Uri link) {
+    if (!_controllerReady) {
+      _pendingAuthLink = link;
+      return;
+    }
+    unawaited(_controller.consumeSupabaseMagicLink(link));
   }
 
   Future<void> _startAlwaysOnRecorder() async {
@@ -109,6 +146,7 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _authLinkSubscription?.cancel();
     FlutterError.onError = _previousFlutterOnError;
     ui.PlatformDispatcher.instance.onError = _previousPlatformOnError;
     unawaited(_controller.dispose());
@@ -223,13 +261,30 @@ class _DesktopRootState extends State<_DesktopRoot> {
         title: const Text('Sign in'),
         content: SizedBox(
           width: 440,
-          child: SupabaseAuthForm(
-            emailController: email,
-            codeController: code,
-            onRequestCode: (email) =>
-                widget.controller.requestSupabaseEmailOtp(email: email),
-            onSubmitCode: (email, code) => widget.controller
-                .confirmSupabaseEmailOtp(email: email, code: code),
+          child: StreamBuilder(
+            stream: widget.controller.accountStatus,
+            initialData: widget.controller.accountStatusValue,
+            builder: (context, snapshot) {
+              final status = snapshot.data;
+              final needsMfa =
+                  status?.mfaEnrollmentRequired == true ||
+                  status?.mfaRequired == true ||
+                  status?.mfaCheckFailed == true;
+              if (needsMfa) {
+                return SupabaseMfaGate(
+                  controller: widget.controller,
+                  onAuthorized: () => Navigator.pop(ctx),
+                );
+              }
+              return SupabaseAuthForm(
+                emailController: email,
+                codeController: code,
+                onRequestCode: (email) =>
+                    widget.controller.requestSupabaseEmailOtp(email: email),
+                onSubmitCode: (email, code) => widget.controller
+                    .confirmSupabaseEmailOtp(email: email, code: code),
+              );
+            },
           ),
         ),
         actions: [
