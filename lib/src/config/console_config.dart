@@ -17,6 +17,7 @@ class ConsoleConfig {
     required this.supabaseUrl,
     required this.supabaseAnonKey,
     this.stripePaymentLink = '',
+    this.authRedirectUrl = 'sonusauris-console://auth/callback',
   });
 
   /// Reads the compile-time environment.
@@ -25,6 +26,10 @@ class ConsoleConfig {
       supabaseAnonKey = const String.fromEnvironment('SONUS_SUPABASE_ANON_KEY'),
       stripePaymentLink = const String.fromEnvironment(
         'SONUS_STRIPE_PAYMENT_LINK',
+      ),
+      authRedirectUrl = const String.fromEnvironment(
+        'SONUS_AUTH_REDIRECT_URL',
+        defaultValue: 'sonusauris-console://auth/callback',
       );
 
   /// Supabase project URL, e.g. `https://abc.supabase.co`.
@@ -39,6 +44,20 @@ class ConsoleConfig {
   /// configured").
   final String stripePaymentLink;
 
+  /// Exact application URI registered with Supabase and the operating system
+  /// for passwordless magic-link callbacks.
+  final String authRedirectUrl;
+
   bool get isConfigured =>
       supabaseUrl.trim().isNotEmpty && supabaseAnonKey.trim().isNotEmpty;
+
+  Uri get authRedirectUri {
+    final uri = Uri.parse(authRedirectUrl.trim());
+    if (!uri.hasScheme || uri.host.isEmpty) {
+      throw const FormatException(
+        'The auth redirect URL must include a scheme and host.',
+      );
+    }
+    return uri;
+  }
 }

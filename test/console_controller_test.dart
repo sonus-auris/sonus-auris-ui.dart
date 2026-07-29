@@ -28,7 +28,8 @@ class FakeTokenStore implements TokenStore {
   Future<SupabaseSession?> readSession() async => _session;
 
   @override
-  Future<void> writeSession(SupabaseSession session) async => _session = session;
+  Future<void> writeSession(SupabaseSession session) async =>
+      _session = session;
 
   @override
   Future<void> clearSession() async => _session = null;
@@ -41,11 +42,11 @@ String token({String aal = 'aal1'}) {
 }
 
 String sessionJson({String aal = 'aal1'}) => jsonEncode({
-      'access_token': token(aal: aal),
-      'refresh_token': 'r',
-      'expires_in': 3600,
-      'user': {'id': 'user-1', 'email': 'a@example.test'},
-    });
+  'access_token': token(aal: aal),
+  'refresh_token': 'r',
+  'expires_in': 3600,
+  'user': {'id': 'user-1', 'email': 'a@example.test'},
+});
 
 /// A mock GoTrue + PostgREST backend routed by path. [factors] controls whether
 /// the account has a verified MFA factor.
@@ -61,7 +62,10 @@ ConsoleController controllerWith({
     if (path == '/auth/v1/verify') return http.Response(sessionJson(), 200);
     if (path == '/auth/v1/token') return http.Response(sessionJson(), 200);
     if (path == '/auth/v1/user') {
-      return http.Response(jsonEncode({'id': 'user-1', 'factors': factors}), 200);
+      return http.Response(
+        jsonEncode({'id': 'user-1', 'factors': factors}),
+        200,
+      );
     }
     if (path.startsWith('/auth/v1/factors/') && path.endsWith('/challenge')) {
       return http.Response(jsonEncode({'id': 'challenge-1'}), 200);
@@ -85,7 +89,10 @@ ConsoleController controllerWith({
     tokenStore: store ?? FakeTokenStore(),
     authClient: AuthClient(config: _config, httpClient: client),
     deviceService: DeviceService(config: _config, httpClient: client),
-    entitlementsService: EntitlementsService(config: _config, httpClient: client),
+    entitlementsService: EntitlementsService(
+      config: _config,
+      httpClient: client,
+    ),
     eventsService: EventsService(config: _config, httpClient: client),
   );
 }
@@ -105,28 +112,31 @@ void main() {
     expect(controller.pendingEmail, 'a@example.test');
   });
 
-  test('verifying a code with no MFA signs straight in and loads devices', () async {
-    final controller = controllerWith(
-      devices: [
-        {
-          'user_id': 'user-1',
-          'device_id': 'phone-1',
-          'display_name': 'Pixel',
-          'platform': 'android',
-          'role': 'recorder',
-          'last_seen_at': '2026-07-17T00:00:00Z',
-          'created_at': '2026-07-01T00:00:00Z',
-        },
-      ],
-    );
-    await controller.bootstrap();
-    await controller.sendEmailCode('a@example.test');
-    await controller.verifyEmailCode('123456');
-    expect(controller.phase, AuthPhase.signedIn);
-    expect(controller.isSignedIn, isTrue);
-    expect(controller.activeRecorderCount, 1);
-    expect(controller.entitlement.deviceLimit, 2); // free default, no row
-  });
+  test(
+    'verifying a code with no MFA requires enrollment and loads no data',
+    () async {
+      final controller = controllerWith(
+        devices: [
+          {
+            'user_id': 'user-1',
+            'device_id': 'phone-1',
+            'display_name': 'Pixel',
+            'platform': 'android',
+            'role': 'recorder',
+            'last_seen_at': '2026-07-17T00:00:00Z',
+            'created_at': '2026-07-01T00:00:00Z',
+          },
+        ],
+      );
+      await controller.bootstrap();
+      await controller.sendEmailCode('a@example.test');
+      await controller.verifyEmailCode('123456');
+      expect(controller.phase, AuthPhase.mfaEnrollmentRequired);
+      expect(controller.isSignedIn, isFalse);
+      expect(controller.activeRecorderCount, 0);
+      expect(controller.entitlement.deviceLimit, 2); // free default, no row
+    },
+  );
 
   test('a verified factor forces the MFA challenge before entering', () async {
     final controller = controllerWith(
@@ -158,6 +168,9 @@ void main() {
 
   test('over-limit recorders are locked at the free tier of 2', () async {
     final controller = controllerWith(
+      factors: [
+        {'id': 'f1', 'factor_type': 'totp', 'status': 'verified'},
+      ],
       devices: [
         for (var i = 0; i < 3; i++)
           {
@@ -174,6 +187,8 @@ void main() {
     await controller.bootstrap();
     await controller.sendEmailCode('a@example.test');
     await controller.verifyEmailCode('123456');
+    await controller.beginMfaChallenge('f1');
+    await controller.submitMfaChallenge('123456');
     expect(controller.activeRecorderCount, 3);
     expect(controller.lockedDeviceIds, hasLength(1)); // 1 over the limit of 2
   });

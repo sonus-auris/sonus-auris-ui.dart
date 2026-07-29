@@ -7,6 +7,115 @@ import '../models/mfa.dart';
 import '../services/console_controller.dart';
 import 'console_home.dart';
 
+/// Mandatory enrollment gate shown after the passwordless first factor for an
+/// account that has no verified second factor yet.
+class MfaEnrollmentStep extends StatelessWidget {
+  const MfaEnrollmentStep({super.key, required this.controller});
+
+  final ConsoleController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Secure your account',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Magic links replace passwords, so a verified second factor is '
+          'required before Sonus Auris data can be opened.',
+        ),
+        const SizedBox(height: 20),
+        FilledButton.icon(
+          onPressed: controller.busy ? null : () => _enrollTotp(context),
+          icon: const Icon(Icons.qr_code_2),
+          label: const Text('Use an authenticator app'),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: controller.busy ? null : () => _enrollPhone(context),
+          icon: const Icon(Icons.sms_outlined),
+          label: const Text('Use a verified phone'),
+        ),
+        const SizedBox(height: 8),
+        TextButton(
+          onPressed: controller.busy ? null : controller.signOut,
+          child: const Text('Cancel and sign out'),
+        ),
+        if (controller.message != null && controller.message!.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(controller.message!),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _enrollTotp(BuildContext context) async {
+    final enrollment = await controller.enrollTotp(name: 'Authenticator');
+    if (enrollment == null || !context.mounted) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) =>
+          _TotpEnrollDialog(controller: controller, enrollment: enrollment),
+    );
+  }
+
+  Future<void> _enrollPhone(BuildContext context) async {
+    final phone = await _promptRequiredPhone(context);
+    if (phone == null || phone.trim().isEmpty || !context.mounted) {
+      return;
+    }
+    final enrollment = await controller.enrollPhone(
+      phone.trim(),
+      name: 'Phone',
+    );
+    if (enrollment == null || !context.mounted) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) =>
+          _PhoneVerifyDialog(controller: controller, enrollment: enrollment),
+    );
+  }
+
+  Future<String?> _promptRequiredPhone(BuildContext context) {
+    final field = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Verify a phone number'),
+        content: TextField(
+          controller: field,
+          autofocus: true,
+          keyboardType: TextInputType.phone,
+          decoration: const InputDecoration(
+            labelText: 'Phone (E.164, e.g. +15551234567)',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, field.text),
+            child: const Text('Send code'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class AccountScreen extends StatelessWidget {
   const AccountScreen({super.key, required this.controller});
 
@@ -23,13 +132,17 @@ class AccountScreen extends StatelessWidget {
           Card(
             child: ListTile(
               leading: const Icon(Icons.person_outline),
-              title: Text(controller.email.isEmpty ? 'Signed in' : controller.email),
+              title: Text(
+                controller.email.isEmpty ? 'Signed in' : controller.email,
+              ),
               subtitle: const Text('Signed in with a one-time email code'),
             ),
           ),
           const SizedBox(height: 16),
-          Text('Two-factor authentication',
-              style: Theme.of(context).textTheme.titleMedium),
+          Text(
+            'Two-factor authentication',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
           const SizedBox(height: 4),
           const Text(
             'Add a second factor so a stolen inbox is not enough to sign in.',
@@ -90,10 +203,8 @@ class AccountScreen extends StatelessWidget {
     }
     await showDialog<void>(
       context: context,
-      builder: (context) => _TotpEnrollDialog(
-        controller: controller,
-        enrollment: enrollment,
-      ),
+      builder: (context) =>
+          _TotpEnrollDialog(controller: controller, enrollment: enrollment),
     );
     await controller.refreshFactors();
   }
@@ -103,16 +214,17 @@ class AccountScreen extends StatelessWidget {
     if (phone == null || phone.trim().isEmpty) {
       return;
     }
-    final enrollment = await controller.enrollPhone(phone.trim(), name: 'Phone');
+    final enrollment = await controller.enrollPhone(
+      phone.trim(),
+      name: 'Phone',
+    );
     if (enrollment == null || !context.mounted) {
       return;
     }
     await showDialog<void>(
       context: context,
-      builder: (context) => _PhoneVerifyDialog(
-        controller: controller,
-        enrollment: enrollment,
-      ),
+      builder: (context) =>
+          _PhoneVerifyDialog(controller: controller, enrollment: enrollment),
     );
     await controller.refreshFactors();
   }
@@ -156,7 +268,11 @@ class _FactorTile extends StatelessWidget {
     return Card(
       child: ListTile(
         leading: Icon(factor.isPhone ? Icons.sms_outlined : Icons.qr_code_2),
-        title: Text(factor.friendlyName.isNotEmpty ? factor.friendlyName : factor.typeLabel),
+        title: Text(
+          factor.friendlyName.isNotEmpty
+              ? factor.friendlyName
+              : factor.typeLabel,
+        ),
         subtitle: Text(
           '${factor.typeLabel}'
           '${factor.isPhone && factor.phone.isNotEmpty ? ' · ${factor.phone}' : ''}'
@@ -226,8 +342,10 @@ class _TotpEnrollDialogState extends State<_TotpEnrollDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('Scan this with your authenticator app, then enter the '
-                '6-digit code it shows.'),
+            const Text(
+              'Scan this with your authenticator app, then enter the '
+              '6-digit code it shows.',
+            ),
             const SizedBox(height: 16),
             if (e.uri.isNotEmpty)
               Center(
@@ -250,7 +368,8 @@ class _TotpEnrollDialogState extends State<_TotpEnrollDialog> {
                   IconButton(
                     tooltip: 'Copy secret',
                     icon: const Icon(Icons.copy, size: 18),
-                    onPressed: () => Clipboard.setData(ClipboardData(text: e.secret)),
+                    onPressed: () =>
+                        Clipboard.setData(ClipboardData(text: e.secret)),
                   ),
                 ],
               ),
@@ -264,8 +383,10 @@ class _TotpEnrollDialogState extends State<_TotpEnrollDialog> {
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Text(_error!,
-                    style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
               ),
           ],
         ),
@@ -279,7 +400,10 @@ class _TotpEnrollDialogState extends State<_TotpEnrollDialog> {
           onPressed: _busy ? null : _verify,
           child: _busy
               ? const SizedBox(
-                  height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('Verify'),
         ),
       ],
@@ -291,7 +415,9 @@ class _TotpEnrollDialogState extends State<_TotpEnrollDialog> {
       _busy = true;
       _error = null;
     });
-    _challengeId ??= await widget.controller.startFactorChallenge(widget.enrollment.factorId);
+    _challengeId ??= await widget.controller.startFactorChallenge(
+      widget.enrollment.factorId,
+    );
     final challengeId = _challengeId;
     if (challengeId == null) {
       setState(() {
@@ -318,7 +444,10 @@ class _TotpEnrollDialogState extends State<_TotpEnrollDialog> {
 }
 
 class _PhoneVerifyDialog extends StatefulWidget {
-  const _PhoneVerifyDialog({required this.controller, required this.enrollment});
+  const _PhoneVerifyDialog({
+    required this.controller,
+    required this.enrollment,
+  });
   final ConsoleController controller;
   final PhoneEnrollment enrollment;
 
@@ -345,7 +474,9 @@ class _PhoneVerifyDialogState extends State<_PhoneVerifyDialog> {
   }
 
   Future<void> _sendCode() async {
-    _challengeId = await widget.controller.startFactorChallenge(widget.enrollment.factorId);
+    _challengeId = await widget.controller.startFactorChallenge(
+      widget.enrollment.factorId,
+    );
     if (mounted) setState(() {});
   }
 
@@ -369,8 +500,10 @@ class _PhoneVerifyDialogState extends State<_PhoneVerifyDialog> {
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text(_error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              child: Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ),
         ],
       ),
@@ -383,7 +516,10 @@ class _PhoneVerifyDialogState extends State<_PhoneVerifyDialog> {
           onPressed: _busy ? null : _verify,
           child: _busy
               ? const SizedBox(
-                  height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('Verify'),
         ),
       ],
@@ -393,7 +529,9 @@ class _PhoneVerifyDialogState extends State<_PhoneVerifyDialog> {
   Future<void> _verify() async {
     final challengeId = _challengeId;
     if (challengeId == null) {
-      setState(() => _error = 'Still sending the code — try again in a moment.');
+      setState(
+        () => _error = 'Still sending the code — try again in a moment.',
+      );
       return;
     }
     setState(() {
