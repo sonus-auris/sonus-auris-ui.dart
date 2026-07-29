@@ -93,6 +93,8 @@ const String kConsentVersion = 'audio-dashcam-consent-v2';
 const String kDefaultSupabaseUrl = AppConfig.defaultSupabaseUrl;
 const String kDefaultSupabaseAnonKey = AppConfig.defaultSupabaseAnonKey;
 
+enum _MfaGateDecision { enroll, challenge, authorized }
+
 class AppController {
   factory AppController({
     SettingsStore? settingsStore,
@@ -1184,6 +1186,7 @@ class AppController {
     _pendingTelemetry.clear();
     await _persistPendingTelemetry();
     await _persistSecrets(cleared);
+    _accountStatus.add(const AccountStatus());
     _message.add('Signed out.');
   }
 
@@ -1232,12 +1235,28 @@ class AppController {
         code: code,
       );
       await _applySupabaseSession(session);
-      final mfaPending = await _refreshMfaChallengeState();
-      if (mfaPending) {
-        _message.add('Enter your two-factor code to finish signing in.');
-        return true;
-      }
-      await _onSignedIn(successMessage: 'Signed in.');
+      await _routeFirstFactorSession();
+      return true;
+    } catch (error) {
+      _message.add(_describeError(error));
+      return false;
+    }
+  }
+
+  /// Completes passwordless sign-in from a verified operating-system deep link.
+  /// The callback is never logged or persisted; only the resulting session is.
+  Future<bool> consumeSupabaseMagicLink(Uri callback) async {
+    if (!_config.hasValue || !_config.value.hasSupabaseAuthConfig) {
+      _message.add('Set the Supabase URL and anon key before signing in.');
+      return false;
+    }
+    try {
+      final session = await _authClient.consumeMagicLink(
+        config: _config.value,
+        callback: callback,
+      );
+      await _applySupabaseSession(session);
+      await _routeFirstFactorSession();
       return true;
     } catch (error) {
       _message.add(_describeError(error));
@@ -1250,9 +1269,13 @@ class AppController {
   /// Lists the signed-in user's MFA factors (for the challenge step and the
   /// Account management screen), refreshing [accountStatus].
   Future<List<MfaFactor>> refreshMfaFactors() async {
-    final factors = await _listMfaFactorsOrEmpty();
-    _accountStatus.add(_accountStatus.value.copyWith(mfaFactors: factors));
-    return factors;
+    try {
+      await _refreshMfaChallengeState();
+      return _accountStatus.value.mfaFactors;
+    } catch (error) {
+      _markMfaCheckFailed(error);
+      return const [];
+    }
   }
 
   /// Begins enrolling an authenticator app; the returned secret/URI must be
@@ -1337,10 +1360,12 @@ class AppController {
         code: code,
       );
       await _applySupabaseSession(session);
-      final factors = await _listMfaFactorsOrEmpty();
-      _accountStatus.add(
-        _accountStatus.value.copyWith(mfaRequired: false, mfaFactors: factors),
-      );
+      final decision = await _refreshMfaChallengeState();
+      if (decision != _MfaGateDecision.authorized) {
+        throw StateError(
+          'Supabase did not issue an AAL2 session after verification.',
+        );
+      }
       if (completesSignIn) {
         await _onSignedIn(successMessage: 'Signed in.');
       } else {
@@ -1360,6 +1385,13 @@ class AppController {
       return false;
     }
     try {
+      final verified = _accountStatus.value.verifiedMfaFactors;
+      if (verified.length <= 1 &&
+          verified.any((factor) => factor.id == factorId)) {
+        throw StateError(
+          'Add and verify another two-factor method before removing this one.',
+        );
+      }
       await _authClient.unenrollFactor(
         config: _config.value,
         accessToken: token,
@@ -1389,7 +1421,34 @@ class AppController {
 
   // --- Shared post-sign-in + MFA/entitlements helpers -----------------------
 
+  Future<void> _routeFirstFactorSession() async {
+    final decision = await _refreshMfaChallengeState();
+    switch (decision) {
+      case _MfaGateDecision.enroll:
+        _message.add(
+          'Set up an authenticator app or verified phone to finish signing in.',
+        );
+        return;
+      case _MfaGateDecision.challenge:
+        _message.add('Enter your two-factor code to finish signing in.');
+        return;
+      case _MfaGateDecision.authorized:
+        await _onSignedIn(successMessage: 'Signed in.');
+        return;
+    }
+  }
+
   Future<void> _onSignedIn({required String successMessage}) async {
+    final secrets = _secrets.valueOrNull;
+    if (secrets == null ||
+        decodeSupabaseAal(secrets.supabaseAccessToken) != 'aal2' ||
+        _accountStatus.value.mfaEnrollmentRequired ||
+        _accountStatus.value.mfaRequired ||
+        _accountStatus.value.mfaCheckFailed) {
+      throw StateError(
+        'A verified second factor and an AAL2 session are required.',
+      );
+    }
     await _syncPortableSettingsFromSupabase();
     await _ensureDeviceRegistered();
     await _syncSupabaseDeviceAndEntitlements();
@@ -1398,36 +1457,55 @@ class AppController {
     requestUploadDrain();
   }
 
-  Future<List<MfaFactor>> _listMfaFactorsOrEmpty() async {
+  Future<List<MfaFactor>> _listMfaFactors() async {
     final token = await _freshAccessToken();
     if (token == null) {
-      return const [];
+      throw StateError('The Supabase access token is missing.');
     }
-    try {
-      return await _authClient.listFactors(
-        config: _config.value,
-        accessToken: token,
-      );
-    } catch (error) {
-      _diagnostics.add('Reading MFA factors failed: ${_describeError(error)}');
-      return const [];
-    }
+    return _authClient.listFactors(config: _config.value, accessToken: token);
   }
 
-  /// Sets [AccountStatus.mfaRequired] when the session is still aal1 while the
-  /// account has verified factors. Returns whether a challenge is pending.
-  Future<bool> _refreshMfaChallengeState() async {
-    final factors = await _listMfaFactorsOrEmpty();
+  /// Resolves the only safe state after the passwordless first factor.
+  Future<_MfaGateDecision> _refreshMfaChallengeState() async {
+    final factors = await _listMfaFactors();
     final hasVerified = factors.any((factor) => factor.isVerified);
     final secrets = _secrets.valueOrNull;
     final aal = secrets == null
         ? null
         : decodeSupabaseAal(secrets.supabaseAccessToken);
+    final enrollmentRequired = !hasVerified;
     final pending = hasVerified && aal != 'aal2';
     _accountStatus.add(
-      _accountStatus.value.copyWith(mfaRequired: pending, mfaFactors: factors),
+      _accountStatus.value.copyWith(
+        mfaEnrollmentRequired: enrollmentRequired,
+        mfaRequired: pending,
+        mfaCheckFailed: false,
+        mfaFactors: factors,
+      ),
     );
-    return pending;
+    if (enrollmentRequired) {
+      return _MfaGateDecision.enroll;
+    }
+    if (pending) {
+      return _MfaGateDecision.challenge;
+    }
+    return _MfaGateDecision.authorized;
+  }
+
+  void _markMfaCheckFailed(Object error) {
+    _diagnostics.add('Reading MFA factors failed: ${_describeError(error)}');
+    _accountStatus.add(
+      _accountStatus.value.copyWith(
+        mfaEnrollmentRequired: false,
+        mfaRequired: false,
+        mfaCheckFailed: true,
+        mfaFactors: const [],
+      ),
+    );
+    _message.add(
+      'Could not verify two-factor security. Account access remains locked; '
+      'check your connection and retry.',
+    );
   }
 
   Future<String?> _freshAccessToken() async {
@@ -1571,7 +1649,19 @@ class AppController {
       await _persistPendingTelemetry();
     }
     await _persistSecrets(next);
-    _connectTelemetryRealtime();
+    if (decodeSupabaseAal(session.accessToken) == 'aal2') {
+      _connectTelemetryRealtime();
+    } else {
+      _telemetryRealtimeClient.close();
+      final hasVerified = _accountStatus.value.verifiedMfaFactors.isNotEmpty;
+      _accountStatus.add(
+        _accountStatus.value.copyWith(
+          mfaEnrollmentRequired: !hasVerified,
+          mfaRequired: hasVerified,
+          mfaCheckFailed: false,
+        ),
+      );
+    }
     _scheduleSupabaseTokenRefresh();
     _diagnostics.add(
       'Supabase telemetry streaming started.',
@@ -1634,6 +1724,7 @@ class AppController {
         secrets == null ||
         !config.hasSupabaseAuthConfig ||
         !secrets.hasSupabaseToken ||
+        decodeSupabaseAal(secrets.supabaseAccessToken) != 'aal2' ||
         secrets.supabaseUserId.trim().isEmpty) {
       return;
     }
@@ -1808,6 +1899,19 @@ class AppController {
 
   Future<void> _ensureSupabaseReady() async {
     await _ensureFreshSupabaseToken();
+    final secrets = _secrets.valueOrNull;
+    if (secrets == null || !secrets.hasSupabaseToken) {
+      return;
+    }
+    try {
+      final decision = await _refreshMfaChallengeState();
+      if (decision != _MfaGateDecision.authorized) {
+        return;
+      }
+    } catch (error) {
+      _markMfaCheckFailed(error);
+      return;
+    }
     await _ensureDeviceRegistered();
     await _syncSupabaseDeviceAndEntitlements();
   }
@@ -1948,7 +2052,12 @@ class AppController {
   }
 
   Future<void> refreshSupabaseSessionForAppResume() async {
-    await _ensureFreshSupabaseToken();
+    await _ensureSupabaseReady();
+    if (accountStatusValue.mfaEnrollmentRequired ||
+        accountStatusValue.mfaRequired ||
+        accountStatusValue.mfaCheckFailed) {
+      return;
+    }
     _connectTelemetryRealtime();
     _scheduleSupabaseTokenRefresh();
   }

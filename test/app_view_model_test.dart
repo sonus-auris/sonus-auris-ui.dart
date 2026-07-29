@@ -90,6 +90,23 @@ void main() {
     expect(viewModel.permanentSegmentCount, 1);
     expect(viewModel.permanentBytes, 4);
   });
+
+  test('treats AAL1 as a pending first factor, not a signed-in account', () {
+    const header = 'eyJhbGciOiJub25lIn0';
+    const aal1 = '$header.eyJhYWwiOiJhYWwxIn0.signature';
+    const aal2 = '$header.eyJhYWwiOiJhYWwyIn0.signature';
+
+    final pending = _viewModel(
+      secrets: const CloudSecrets(supabaseAccessToken: aal1),
+    );
+    final authorized = _viewModel(
+      secrets: const CloudSecrets(supabaseAccessToken: aal2),
+    );
+
+    expect(pending.hasFirstFactorSession, isTrue);
+    expect(pending.isSignedIn, isFalse);
+    expect(authorized.isSignedIn, isTrue);
+  });
 }
 
 AppViewModel _viewModel({

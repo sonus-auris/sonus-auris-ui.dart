@@ -15,7 +15,8 @@ void main() {
     supabaseUrl: 'https://proj.supabase.co',
     supabaseAnonKey: 'anon-key',
   );
-  const secrets = CloudSecrets(supabaseAccessToken: 'user-jwt');
+  const aal2Token = 'eyJhbGciOiJub25lIn0.eyJhYWwiOiJhYWwyIn0.signature';
+  const secrets = CloudSecrets(supabaseAccessToken: aal2Token);
 
   final detection = AcousticDetection(
     kind: AcousticDetectionKind.snore,
@@ -44,7 +45,7 @@ void main() {
       'https://proj.supabase.co/rest/v1/acoustic_events',
     );
     expect(captured.headers['apikey'], 'anon-key');
-    expect(captured.headers['authorization'], 'Bearer user-jwt');
+    expect(captured.headers['authorization'], 'Bearer $aal2Token');
     expect(captured.headers['prefer'], 'return=minimal');
     final body = jsonDecode(captured.body) as List;
     expect(body, hasLength(1));
@@ -207,7 +208,7 @@ void main() {
       'https://proj.supabase.co/rest/v1/rpc/ingest_sonus_log_entries',
     );
     expect(captured.headers['apikey'], 'anon-key');
-    expect(captured.headers['authorization'], 'Bearer user-jwt');
+    expect(captured.headers['authorization'], 'Bearer $aal2Token');
     final body = jsonDecode(captured.body) as Map<String, dynamic>;
     final rows = body['entries'] as List;
     expect(rows, hasLength(1));
@@ -418,7 +419,7 @@ void main() {
     );
     expect(error, isNull);
     expect(updateRequest.url.queryParameters['on_conflict'], 'user_id');
-    expect(updateRequest.headers['authorization'], 'Bearer user-jwt');
+    expect(updateRequest.headers['authorization'], 'Bearer $aal2Token');
     expect(updateRequest.headers['prefer'], contains('merge-duplicates'));
     final body = jsonDecode(updateRequest.body) as List;
     final payload = body.single as Map<String, dynamic>;

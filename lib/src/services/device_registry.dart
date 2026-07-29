@@ -9,6 +9,7 @@ import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
 
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
+import '../models/supabase_session.dart';
 import 'supabase_key_policy.dart';
 
 /// Client app version reported on device rows, injected at build time with
@@ -84,7 +85,10 @@ Set<String> selectDeviceIdsOverLimit(
 }
 
 /// Result of a registry read/write: the row (when known) and a short error.
-typedef DeviceRegistryResult = ({interfaces.DeviceRecord? device, String? error});
+typedef DeviceRegistryResult = ({
+  interfaces.DeviceRecord? device,
+  String? error,
+});
 
 /// PostgREST client for the owner-scoped `devices` table.
 ///
@@ -104,7 +108,8 @@ class DeviceRegistry {
   bool canUse(AppConfig config, CloudSecrets secrets) {
     return config.supabaseUrl.trim().isNotEmpty &&
         config.supabaseAnonKey.trim().isNotEmpty &&
-        secrets.hasSupabaseToken;
+        secrets.hasSupabaseToken &&
+        supabaseJwtAal(secrets.supabaseAccessToken) == 'aal2';
   }
 
   /// Loads this install's own row, or null when it was never registered.
@@ -184,9 +189,9 @@ class DeviceRegistry {
   ) async {
     final Uri uri;
     try {
-      uri = _restUri(config).replace(
-        queryParameters: const {'on_conflict': 'user_id,device_id'},
-      );
+      uri = _restUri(
+        config,
+      ).replace(queryParameters: const {'on_conflict': 'user_id,device_id'});
     } on FormatException catch (error) {
       return (device: null, error: error.message);
     }
@@ -227,9 +232,9 @@ class DeviceRegistry {
   ) async {
     final Uri uri;
     try {
-      uri = _restUri(config).replace(
-        queryParameters: {'device_id': 'eq.${config.deviceId}'},
-      );
+      uri = _restUri(
+        config,
+      ).replace(queryParameters: {'device_id': 'eq.${config.deviceId}'});
     } on FormatException catch (error) {
       return (device: current, error: error.message);
     }

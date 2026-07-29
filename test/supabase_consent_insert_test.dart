@@ -14,7 +14,8 @@ void main() {
     supabaseUrl: 'https://proj.supabase.co',
     supabaseAnonKey: 'anon-key',
   );
-  const secrets = CloudSecrets(supabaseAccessToken: 'user-jwt');
+  const aal2Token = 'eyJhbGciOiJub25lIn0.eyJhYWwiOiJhYWwyIn0.signature';
+  const secrets = CloudSecrets(supabaseAccessToken: aal2Token);
 
   final record = ConsentRecord(
     consentVersion: 'audio-dashcam-consent-v1',
@@ -42,7 +43,7 @@ void main() {
       'https://proj.supabase.co/rest/v1/user_consents',
     );
     expect(captured.headers['apikey'], 'anon-key');
-    expect(captured.headers['authorization'], 'Bearer user-jwt');
+    expect(captured.headers['authorization'], 'Bearer $aal2Token');
     final body = jsonDecode(captured.body) as List;
     final row = body.single as Map<String, dynamic>;
     expect(row['device_id'], 'device-xyz');

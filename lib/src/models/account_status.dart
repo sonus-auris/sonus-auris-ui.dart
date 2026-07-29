@@ -4,7 +4,9 @@ import 'supabase_mfa.dart';
 
 class AccountStatus {
   const AccountStatus({
+    this.mfaEnrollmentRequired = false,
     this.mfaRequired = false,
+    this.mfaCheckFailed = false,
     this.mfaFactors = const <MfaFactor>[],
     this.deviceRevoked = false,
     this.activeRecorderDeviceCount = 0,
@@ -14,10 +16,18 @@ class AccountStatus {
     this.features = const <String, Object?>{},
   });
 
+  /// The passwordless first factor succeeded, but no verified second factor
+  /// exists. The app must remain behind the enrollment gate.
+  final bool mfaEnrollmentRequired;
+
   /// The first factor succeeded but the account has verified MFA factors and
   /// the session is still `aal1` — the UI must run a factor challenge before
   /// treating the user as signed in.
   final bool mfaRequired;
+
+  /// The first-factor session exists but the factor list could not be verified.
+  /// Cloud account access remains closed until a retry succeeds.
+  final bool mfaCheckFailed;
 
   /// Factors known for the signed-in user (verified and pending), for both the
   /// challenge step and the Account management list.
@@ -51,7 +61,9 @@ class AccountStatus {
       mfaFactors.where((factor) => factor.isVerified).toList(growable: false);
 
   AccountStatus copyWith({
+    bool? mfaEnrollmentRequired,
     bool? mfaRequired,
+    bool? mfaCheckFailed,
     List<MfaFactor>? mfaFactors,
     bool? deviceRevoked,
     int? activeRecorderDeviceCount,
@@ -61,7 +73,10 @@ class AccountStatus {
     Map<String, Object?>? features,
   }) {
     return AccountStatus(
+      mfaEnrollmentRequired:
+          mfaEnrollmentRequired ?? this.mfaEnrollmentRequired,
       mfaRequired: mfaRequired ?? this.mfaRequired,
+      mfaCheckFailed: mfaCheckFailed ?? this.mfaCheckFailed,
       mfaFactors: mfaFactors ?? this.mfaFactors,
       deviceRevoked: deviceRevoked ?? this.deviceRevoked,
       activeRecorderDeviceCount:
