@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../models/mfa.dart';
 import '../services/console_controller.dart';
 import '../theme/console_theme.dart';
+import 'account_screen.dart';
 
 class SignInScreen extends StatelessWidget {
   const SignInScreen({super.key, required this.controller});
@@ -36,6 +37,8 @@ class SignInScreen extends StatelessWidget {
     switch (controller.phase) {
       case AuthPhase.codeSent:
         return _CodeStep(controller: controller);
+      case AuthPhase.mfaEnrollmentRequired:
+        return MfaEnrollmentStep(controller: controller);
       case AuthPhase.mfaRequired:
         return _MfaStep(controller: controller);
       case AuthPhase.loading:
@@ -60,10 +63,12 @@ class _Header extends StatelessWidget {
           children: [
             const Icon(Icons.graphic_eq, color: sonusTeal, size: 28),
             const SizedBox(width: 8),
-            Text('Sonus Auris',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    )),
+            Text(
+              'Sonus Auris',
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
           ],
         ),
         const SizedBox(height: 20),
@@ -116,7 +121,8 @@ class _EmailStepState extends State<_EmailStep> {
       children: [
         const _Header(
           title: 'Sign in',
-          subtitle: 'Enter your email and we\'ll send a one-time code. No '
+          subtitle:
+              'Enter your email and we\'ll send a one-time code. No '
               'password needed — new accounts are created automatically.',
         ),
         TextField(
@@ -172,7 +178,8 @@ class _CodeStepState extends State<_CodeStep> {
       children: [
         _Header(
           title: 'Check your email',
-          subtitle: 'Enter the 6-digit code we sent to ${controller.pendingEmail}, '
+          subtitle:
+              'Enter the 6-digit code we sent to ${controller.pendingEmail}, '
               'or tap the magic link in the email.',
         ),
         TextField(

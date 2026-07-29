@@ -12,9 +12,13 @@ const _config = ConsoleConfig(
 );
 
 String sessionBody({String aal = 'aal1'}) {
-  final header = base64Url.encode(utf8.encode('{"alg":"HS256"}')).replaceAll('=', '');
+  final header = base64Url
+      .encode(utf8.encode('{"alg":"HS256"}'))
+      .replaceAll('=', '');
   final payload = base64Url
-      .encode(utf8.encode('{"sub":"user-1","email":"a@example.test","aal":"$aal"}'))
+      .encode(
+        utf8.encode('{"sub":"user-1","email":"a@example.test","aal":"$aal"}'),
+      )
       .replaceAll('=', '');
   final token = '$header.$payload.sig';
   return jsonEncode({
@@ -26,22 +30,29 @@ String sessionBody({String aal = 'aal1'}) {
 }
 
 void main() {
-  test('sendEmailOtp posts to /auth/v1/otp with create_user and the anon key', () async {
-    late http.Request captured;
-    final client = AuthClient(
-      config: _config,
-      httpClient: MockClient((req) async {
-        captured = req;
-        return http.Response('{}', 200);
-      }),
-    );
-    await client.sendEmailOtp('a@example.test');
-    expect(captured.url.path, '/auth/v1/otp');
-    expect(captured.headers['apikey'], 'sb_publishable_test');
-    final body = jsonDecode(captured.body) as Map<String, Object?>;
-    expect(body['email'], 'a@example.test');
-    expect(body['create_user'], true);
-  });
+  test(
+    'sendEmailOtp posts to /auth/v1/otp with create_user and the anon key',
+    () async {
+      late http.Request captured;
+      final client = AuthClient(
+        config: _config,
+        httpClient: MockClient((req) async {
+          captured = req;
+          return http.Response('{}', 200);
+        }),
+      );
+      await client.sendEmailOtp('a@example.test');
+      expect(captured.url.path, '/auth/v1/otp');
+      expect(
+        captured.url.queryParameters['redirect_to'],
+        'sonusauris-console://auth/callback',
+      );
+      expect(captured.headers['apikey'], 'sb_publishable_test');
+      final body = jsonDecode(captured.body) as Map<String, Object?>;
+      expect(body['email'], 'a@example.test');
+      expect(body['create_user'], true);
+    },
+  );
 
   test('verifyEmailOtp exchanges a code for a session', () async {
     final client = AuthClient(
@@ -54,11 +65,36 @@ void main() {
         return http.Response(sessionBody(), 200);
       }),
     );
-    final session = await client.verifyEmailOtp(email: 'a@example.test', code: '123456');
+    final session = await client.verifyEmailOtp(
+      email: 'a@example.test',
+      code: '123456',
+    );
     expect(session.userId, 'user-1');
     expect(session.email, 'a@example.test');
     expect(session.aal, 'aal1');
     expect(session.refreshToken, 'refresh-1');
+  });
+
+  test('consumeMagicLink accepts only the configured callback URI', () async {
+    final encoded = jsonDecode(sessionBody()) as Map<String, Object?>;
+    final callback = Uri.parse(
+      'sonusauris-console://auth/callback'
+      '#access_token=${encoded['access_token']}'
+      '&refresh_token=${encoded['refresh_token']}'
+      '&expires_in=3600',
+    );
+    final client = AuthClient(
+      config: _config,
+      httpClient: MockClient((_) async => http.Response('{}', 500)),
+    );
+
+    final session = await client.consumeMagicLink(callback);
+    expect(session.userId, 'user-1');
+    expect(session.refreshToken, 'refresh-1');
+    expect(
+      () => client.consumeMagicLink(callback.replace(scheme: 'another-app')),
+      throwsA(isA<FormatException>()),
+    );
   });
 
   test('refreshSession uses the refresh_token grant', () async {
@@ -83,31 +119,47 @@ void main() {
     );
     expect(
       () => client.verifyEmailOtp(email: 'a@example.test', code: '000000'),
-      throwsA(isA<StateError>().having((e) => e.message, 'message', contains('expired'))),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('expired'),
+        ),
+      ),
     );
   });
 
-  test('MFA: enrollTotp returns the shared secret and challenge id flows', () async {
-    final client = AuthClient(
-      config: _config,
-      httpClient: MockClient((req) async {
-        if (req.url.path == '/auth/v1/factors') {
-          return http.Response(
-            jsonEncode({
-              'id': 'factor-1',
-              'totp': {'secret': 'BASE32SECRET', 'uri': 'otpauth://totp/x', 'qr_code': '<svg/>'},
-            }),
-            200,
-          );
-        }
-        return http.Response('{}', 404);
-      }),
-    );
-    final enrollment = await client.enrollTotp('token', friendlyName: 'Authy');
-    expect(enrollment.factorId, 'factor-1');
-    expect(enrollment.secret, 'BASE32SECRET');
-    expect(enrollment.uri, 'otpauth://totp/x');
-  });
+  test(
+    'MFA: enrollTotp returns the shared secret and challenge id flows',
+    () async {
+      final client = AuthClient(
+        config: _config,
+        httpClient: MockClient((req) async {
+          if (req.url.path == '/auth/v1/factors') {
+            return http.Response(
+              jsonEncode({
+                'id': 'factor-1',
+                'totp': {
+                  'secret': 'BASE32SECRET',
+                  'uri': 'otpauth://totp/x',
+                  'qr_code': '<svg/>',
+                },
+              }),
+              200,
+            );
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      final enrollment = await client.enrollTotp(
+        'token',
+        friendlyName: 'Authy',
+      );
+      expect(enrollment.factorId, 'factor-1');
+      expect(enrollment.secret, 'BASE32SECRET');
+      expect(enrollment.uri, 'otpauth://totp/x');
+    },
+  );
 
   test('challengeFactor returns the challenge id', () async {
     final client = AuthClient(

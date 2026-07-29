@@ -33,6 +33,7 @@ class AuthClient {
       'otp',
       {'email': email.trim(), 'create_user': true},
       'Sending the sign-in code failed.',
+      query: {'redirect_to': config.authRedirectUri.toString()},
     );
   }
 
@@ -45,12 +46,62 @@ class AuthClient {
     if (code.trim().isEmpty) {
       throw const FormatException('Enter the code from the email.');
     }
-    final json = await _post(
-      'verify',
-      {'type': 'email', 'email': email.trim(), 'token': code.trim()},
-      'That code was not accepted. Request a fresh one and try again.',
-    );
+    final json = await _post('verify', {
+      'type': 'email',
+      'email': email.trim(),
+      'token': code.trim(),
+    }, 'That code was not accepted. Request a fresh one and try again.');
     return SupabaseSession.fromJson(json);
+  }
+
+  /// Adopts a Supabase magic-link callback after verifying that it targets the
+  /// exact application URI configured for this build. Supabase may return an
+  /// implicit session in the fragment or a token hash in the query string.
+  Future<SupabaseSession> consumeMagicLink(Uri callback) async {
+    final expected = config.authRedirectUri;
+    if (callback.scheme != expected.scheme ||
+        callback.host != expected.host ||
+        callback.port != expected.port ||
+        callback.path != expected.path) {
+      throw const FormatException('That sign-in link targets another app.');
+    }
+
+    final parameters = <String, String>{
+      ...callback.queryParameters,
+      ...Uri.splitQueryString(
+        callback.fragment,
+        encoding: const Utf8Codec(allowMalformed: false),
+      ),
+    };
+    final callbackError =
+        parameters['error_description'] ?? parameters['error'];
+    if ((callbackError ?? '').trim().isNotEmpty) {
+      throw StateError(callbackError!.trim());
+    }
+
+    final accessToken = (parameters['access_token'] ?? '').trim();
+    if (accessToken.isNotEmpty) {
+      final refreshToken = (parameters['refresh_token'] ?? '').trim();
+      final expiresIn = int.tryParse(parameters['expires_in'] ?? '');
+      return SupabaseSession.fromJson({
+        'access_token': accessToken,
+        'refresh_token': refreshToken,
+        'expires_in': ?expiresIn,
+      });
+    }
+
+    final tokenHash = (parameters['token_hash'] ?? '').trim();
+    if (tokenHash.isNotEmpty) {
+      final json = await _post(
+        'verify',
+        {'type': 'magiclink', 'token_hash': tokenHash},
+        'That magic link was not accepted. Request a fresh one and try again.',
+      );
+      return SupabaseSession.fromJson(json);
+    }
+    throw const FormatException(
+      'The sign-in link contained no usable Supabase session.',
+    );
   }
 
   /// Exchanges a refresh token for a new session.
@@ -86,7 +137,11 @@ class AuthClient {
   // --- MFA ------------------------------------------------------------------
 
   Future<List<MfaFactor>> listFactors(String accessToken) async {
-    final json = await _get('user', accessToken, 'Reading MFA settings failed.');
+    final json = await _get(
+      'user',
+      accessToken,
+      'Reading MFA settings failed.',
+    );
     return MfaFactor.listFromUserJson(json);
   }
 
@@ -202,7 +257,11 @@ class AuthClient {
     final http.Response response;
     try {
       response = await _http
-          .post(uri, headers: _headers(accessToken: accessToken), body: jsonEncode(body))
+          .post(
+            uri,
+            headers: _headers(accessToken: accessToken),
+            body: jsonEncode(body),
+          )
           .timeout(requestTimeout);
     } on TimeoutException {
       throw StateError('Supabase did not respond in time. Try again.');
@@ -300,7 +359,8 @@ class AuthClient {
     try {
       final decoded = jsonDecode(response.body);
       if (decoded is Map) {
-        final msg = decoded['msg'] ??
+        final msg =
+            decoded['msg'] ??
             decoded['error_description'] ??
             decoded['error'] ??
             decoded['message'];
