@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Headless permission smoke-test for Sonus Auris on an Android emulator.
+# Headless permission, lifecycle, and reinstall smoke-test for Sonus Auris on an
+# Android emulator.
 #
 # Installs the app, launches it, exercises every runtime permission the way a
 # store reviewer would (verify the OTP-first account screen; grant the
 # mic/notification path; confirm the sensitive context permissions — location /
-# Bluetooth / nearby-Wi-Fi — default to DENIED, i.e. opt-in), and fails if the
-# app crashes. Runs identically:
+# Bluetooth / nearby-Wi-Fi — default to DENIED, i.e. opt-in), force-stops and
+# cold-relaunches the process, reinstalls the same APK as an update, and fails if
+# the app crashes or loses its essential microphone grant.
+#
+# Runs identically:
 #   - locally against a booted emulator,
 #   - inside ci/android-emulator/Dockerfile,
 #   - in GitHub Actions (reactivecircus/android-emulator-runner).
@@ -50,7 +54,11 @@ adb_ shell dumpsys package "$PKG" | awk '
 
 echo "== launch =="
 adb_ logcat -c
-adb_ shell am start -W -n "$ACTIVITY" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER
+first_launch="$(adb_ shell am start -W -n "$ACTIVITY" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER 2>&1 || true)"
+printf '%s\n' "$first_launch"
+if [[ -n "$EVIDENCE_DIR" ]]; then
+  printf '%s\n' "$first_launch" > "$EVIDENCE_DIR/first-launch.txt"
+fi
 
 # Give the Flutter engine time to draw the first frame.
 sleep 8
@@ -119,6 +127,23 @@ wait_for_ui_text() {
   return 1
 }
 
+wait_for_any_ui_text() {
+  local timeout_seconds="$1"
+  shift
+  local deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < deadline )); do
+    ui_xml="$(dump_ui 2>/dev/null || true)"
+    for label in "$@"; do
+      if grep -Fq "$label" <<< "$ui_xml"; then
+        ready_label="$label"
+        return 0
+      fi
+    done
+    sleep 2
+  done
+  return 1
+}
+
 capture_failure_evidence() {
   if [[ -n "${SMOKE_SCREENSHOT:-}" ]]; then
     adb_ exec-out screencap -p > "$SMOKE_SCREENSHOT" 2>/dev/null || true
@@ -150,8 +175,40 @@ require_ui_text() {
   fi
 }
 
+has_fatal_crash() {
+  adb_ logcat -d 2>/dev/null | grep -m1 -E "FATAL EXCEPTION|E AndroidRuntime.*$PKG"
+}
+
+launch_and_wait_after_restart() {
+  local evidence_name="$1"
+  local launch_output
+  launch_output="$(adb_ shell am start -W -n "$ACTIVITY" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER 2>&1 || true)"
+  printf '%s\n' "$launch_output"
+  if [[ -n "$EVIDENCE_DIR" ]]; then
+    printf '%s\n' "$launch_output" > "$EVIDENCE_DIR/$evidence_name"
+  fi
+  if ! wait_for_any_ui_text 40 "Welcome to Sonus Auris" "Create your account"; then
+    echo "  ✗ app UI did not recover after process/package restart"
+    capture_failure_evidence
+    return 1
+  fi
+  echo "  ✓ recovered UI: $ready_label"
+  if has_fatal_crash; then
+    echo "  ✗ app crashed during process/package restart"
+    capture_failure_evidence
+    return 1
+  fi
+  if [[ -z "$(adb_ shell pidof "$PKG" | tr -d '\r')" ]]; then
+    echo "  ✗ app process is not alive after restart"
+    capture_failure_evidence
+    return 1
+  fi
+  return 0
+}
+
 echo "== account UI smoke-test =="
 ui_xml=""
+ready_label=""
 if ! wait_for_ui_text "Welcome to Sonus Auris" 40; then
   echo "  ✗ welcome screen did not become ready within 40 seconds"
   capture_failure_evidence
@@ -205,7 +262,7 @@ done
 sleep 3
 
 echo "== crash check =="
-if adb_ logcat -d 2>/dev/null | grep -m1 -E "FATAL EXCEPTION|E AndroidRuntime.*$PKG"; then
+if has_fatal_crash; then
   echo "  ✗ app crashed after permission grants"
   fail=1
 else
@@ -220,6 +277,36 @@ else
   fail=1
 fi
 
+echo "== force-stop + cold relaunch =="
+adb_ shell am force-stop "$PKG"
+sleep 1
+if [[ -n "$(adb_ shell pidof "$PKG" | tr -d '\r')" ]]; then
+  echo "  ✗ force-stop did not terminate the process"
+  fail=1
+else
+  echo "  ✓ force-stop terminated the process"
+fi
+adb_ logcat -c
+if ! launch_and_wait_after_restart "cold-relaunch.txt"; then
+  fail=1
+fi
+
+echo "== in-place APK reinstall/update =="
+adb_ install -r "$APK"
+adb_ logcat -c
+if ! launch_and_wait_after_restart "post-reinstall-launch.txt"; then
+  fail=1
+fi
+mic_line="$(adb_ shell dumpsys package "$PKG" | awk '
+  /android.permission.RECORD_AUDIO:/ { print; exit }
+' | tr -d '\r')"
+if grep -q 'granted=true' <<< "$mic_line"; then
+  echo "  ✓ microphone grant survived the in-place APK update"
+else
+  echo "  ✗ microphone grant was lost during the in-place APK update: $mic_line"
+  fail=1
+fi
+
 # Best-effort evidence screenshot (ignored if the harness has nowhere to put it).
 if [[ -n "${SMOKE_SCREENSHOT:-}" ]]; then
   adb_ exec-out screencap -p > "$SMOKE_SCREENSHOT" 2>/dev/null && echo "  screenshot -> $SMOKE_SCREENSHOT"
@@ -227,7 +314,7 @@ fi
 
 if [[ "$fail" -ne 0 ]]; then
   capture_failure_evidence
-  echo "PERMISSION SMOKE TEST FAILED"
+  echo "PERMISSION/LIFECYCLE SMOKE TEST FAILED"
   exit 1
 fi
-echo "PERMISSION SMOKE TEST PASSED"
+echo "PERMISSION/LIFECYCLE SMOKE TEST PASSED"
