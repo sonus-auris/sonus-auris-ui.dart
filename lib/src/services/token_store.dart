@@ -1,10 +1,10 @@
 // Persistence for the session + this install's device id.
 //
-// Web-safe by construction: an abstract [TokenStore] with two implementations
-// chosen at runtime by [kIsWeb]. Native desktop uses the OS keychain via
-// flutter_secure_storage; web uses shared_preferences (browser storage — not a
-// secret vault, but it only ever holds a short-lived GoTrue session that the
-// server revalidates on every call, never a long-lived credential).
+// Web-safe by construction: native desktop uses the OS keychain via
+// flutter_secure_storage. Web sessions stay in memory because a Supabase
+// refresh token is a long-lived bearer credential and browser preferences are
+// readable by injected script. Only the non-secret install id is persisted on
+// web.
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -60,13 +60,14 @@ SupabaseSession? _sessionFromParts({
 /// OS-keychain-backed store for native desktop builds.
 class SecureTokenStore implements TokenStore {
   SecureTokenStore({FlutterSecureStorage? storage, Uuid? uuid})
-      : _storage = storage ??
-            const FlutterSecureStorage(
-              iOptions: IOSOptions(
-                accessibility: KeychainAccessibility.first_unlock_this_device,
-              ),
+    : _storage =
+          storage ??
+          const FlutterSecureStorage(
+            iOptions: IOSOptions(
+              accessibility: KeychainAccessibility.first_unlock_this_device,
             ),
-        _uuid = uuid ?? const Uuid();
+          ),
+      _uuid = uuid ?? const Uuid();
 
   final FlutterSecureStorage _storage;
   final Uuid _uuid;
@@ -96,7 +97,13 @@ class SecureTokenStore implements TokenStore {
 
   @override
   Future<void> clearSession() async {
-    for (final key in [_kAccessToken, _kRefreshToken, _kExpiresAt, _kUserId, _kEmail]) {
+    for (final key in [
+      _kAccessToken,
+      _kRefreshToken,
+      _kExpiresAt,
+      _kUserId,
+      _kEmail,
+    ]) {
       await _storage.delete(key: key);
     }
   }
@@ -119,41 +126,45 @@ class PrefsTokenStore implements TokenStore {
 
   final Uuid _uuid;
   SharedPreferences? _prefs;
+  SupabaseSession? _session;
+  bool _legacySessionPurged = false;
 
   Future<SharedPreferences> get _p async =>
       _prefs ??= await SharedPreferences.getInstance();
 
+  Future<void> _purgeLegacyBrowserSession() async {
+    if (_legacySessionPurged) {
+      return;
+    }
+    final prefs = await _p;
+    for (final key in [
+      _kAccessToken,
+      _kRefreshToken,
+      _kExpiresAt,
+      _kUserId,
+      _kEmail,
+    ]) {
+      await prefs.remove(key);
+    }
+    _legacySessionPurged = true;
+  }
+
   @override
   Future<void> writeSession(SupabaseSession session) async {
-    final prefs = await _p;
-    await prefs.setString(_kAccessToken, session.accessToken);
-    await prefs.setString(_kRefreshToken, session.refreshToken);
-    await prefs.setString(
-      _kExpiresAt,
-      session.expiresAtUtc.toUtc().toIso8601String(),
-    );
-    await prefs.setString(_kUserId, session.userId);
-    await prefs.setString(_kEmail, session.email);
+    await _purgeLegacyBrowserSession();
+    _session = session;
   }
 
   @override
   Future<SupabaseSession?> readSession() async {
-    final prefs = await _p;
-    return _sessionFromParts(
-      accessToken: prefs.getString(_kAccessToken),
-      refreshToken: prefs.getString(_kRefreshToken),
-      expiresAt: prefs.getString(_kExpiresAt),
-      userId: prefs.getString(_kUserId),
-      email: prefs.getString(_kEmail),
-    );
+    await _purgeLegacyBrowserSession();
+    return _session;
   }
 
   @override
   Future<void> clearSession() async {
-    final prefs = await _p;
-    for (final key in [_kAccessToken, _kRefreshToken, _kExpiresAt, _kUserId, _kEmail]) {
-      await prefs.remove(key);
-    }
+    await _purgeLegacyBrowserSession();
+    _session = null;
   }
 
   @override

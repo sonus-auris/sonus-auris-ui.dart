@@ -16,10 +16,70 @@ void main() {
       expect(aalFromJwt(jwt({'aal': 'aal2'})), 'aal2');
     });
 
-    test('defaults to aal1 (fail toward requiring MFA) when absent/garbage', () {
-      expect(aalFromJwt(jwt({'sub': 'u1'})), 'aal1');
-      expect(aalFromJwt('not-a-jwt'), 'aal1');
-      expect(aalFromJwt(''), 'aal1');
+    test(
+      'defaults to aal1 (fail toward requiring MFA) when absent/garbage',
+      () {
+        expect(aalFromJwt(jwt({'sub': 'u1'})), 'aal1');
+        expect(aalFromJwt('not-a-jwt'), 'aal1');
+        expect(aalFromJwt(''), 'aal1');
+      },
+    );
+  });
+
+  group('passwordlessAal2FromJwt', () {
+    test('accepts an OTP first factor followed by MFA', () {
+      expect(
+        passwordlessFirstFactorFromJwt(
+          jwt({
+            'aal': 'aal1',
+            'amr': [
+              {'method': 'otp'},
+            ],
+          }),
+        ),
+        isTrue,
+      );
+      expect(
+        passwordlessAal2FromJwt(
+          jwt({
+            'aal': 'aal2',
+            'amr': [
+              {'method': 'otp'},
+              {'method': 'totp'},
+            ],
+          }),
+        ),
+        isTrue,
+      );
+    });
+
+    test('rejects password-backed, missing-AMR, and malformed sessions', () {
+      expect(
+        passwordlessAal2FromJwt(
+          jwt({
+            'aal': 'aal2',
+            'amr': [
+              {'method': 'password'},
+              {'method': 'totp'},
+            ],
+          }),
+        ),
+        isFalse,
+      );
+      expect(passwordlessAal2FromJwt(jwt({'aal': 'aal2'})), isFalse);
+      expect(passwordlessAal2FromJwt('not-a-jwt'), isFalse);
+      expect(
+        passwordlessFirstFactorFromJwt(
+          jwt({
+            'aal': 'aal2',
+            'amr': [
+              {'method': 'password'},
+              {'method': 'totp'},
+            ],
+          }),
+        ),
+        isFalse,
+      );
     });
   });
 

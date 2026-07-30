@@ -9,10 +9,21 @@ String tokenWith(Map<String, Object?> claims) {
   return '${seg({'alg': 'HS256'})}.${seg(claims)}.sig';
 }
 
+int futureExpiry() =>
+    DateTime.now()
+        .toUtc()
+        .add(const Duration(hours: 2))
+        .millisecondsSinceEpoch ~/
+    1000;
+
 void main() {
   test('parses a verify/token response with an absolute expiry', () {
     final session = SupabaseSession.fromJson({
-      'access_token': tokenWith({'sub': 's', 'aal': 'aal1'}),
+      'access_token': tokenWith({
+        'sub': 'user-9',
+        'aal': 'aal1',
+        'exp': 2100000000,
+      }),
       'refresh_token': 'r',
       'expires_at': 2000000000,
       'user': {'id': 'user-9', 'email': 'z@example.test'},
@@ -20,7 +31,10 @@ void main() {
     expect(session.userId, 'user-9');
     expect(session.email, 'z@example.test');
     expect(session.refreshToken, 'r');
-    expect(session.expiresAtUtc, DateTime.fromMillisecondsSinceEpoch(2000000000 * 1000, isUtc: true));
+    expect(
+      session.expiresAtUtc,
+      DateTime.fromMillisecondsSinceEpoch(2000000000 * 1000, isUtc: true),
+    );
     expect(session.aal, 'aal1');
     expect(session.isEmpty, isFalse);
   });
@@ -28,15 +42,22 @@ void main() {
   test('falls back to expires_in seconds from now', () {
     final before = DateTime.now().toUtc();
     final session = SupabaseSession.fromJson({
-      'access_token': tokenWith({'sub': 's'}),
+      'access_token': tokenWith({'sub': 's', 'exp': futureExpiry()}),
       'expires_in': 3600,
     });
-    expect(session.expiresAtUtc.isAfter(before.add(const Duration(minutes: 59))), isTrue);
+    expect(
+      session.expiresAtUtc.isAfter(before.add(const Duration(minutes: 59))),
+      isTrue,
+    );
   });
 
   test('reads identity from JWT claims when the user object is absent', () {
     final session = SupabaseSession.fromJson({
-      'access_token': tokenWith({'sub': 'from-claim', 'email': 'c@example.test'}),
+      'access_token': tokenWith({
+        'sub': 'from-claim',
+        'email': 'c@example.test',
+        'exp': futureExpiry(),
+      }),
       'expires_in': 3600,
     });
     expect(session.userId, 'from-claim');
@@ -48,6 +69,53 @@ void main() {
       () => SupabaseSession.fromJson(const {'refresh_token': 'r'}),
       throwsA(isA<FormatException>()),
     );
+  });
+
+  test('requires a decodable subject and an unexpired token', () {
+    final expired =
+        DateTime.now()
+            .toUtc()
+            .subtract(const Duration(minutes: 1))
+            .millisecondsSinceEpoch ~/
+        1000;
+    for (final response in [
+      {'access_token': 'not-a-jwt', 'expires_in': 3600},
+      {
+        'access_token': tokenWith({'email': 'a@example.test'}),
+        'expires_in': 3600,
+      },
+      {
+        'access_token': tokenWith({'sub': 's', 'exp': expired}),
+      },
+      {
+        'access_token': tokenWith({'sub': 'user-1', 'exp': futureExpiry()}),
+        'expires_in': 3600,
+        'user': {'id': 'user-2'},
+      },
+    ]) {
+      expect(
+        () => SupabaseSession.fromJson(response),
+        throwsA(isA<FormatException>()),
+      );
+    }
+  });
+
+  test('proves passwordless AAL2 and rejects password-backed MFA', () {
+    SupabaseSession sessionFor(List<String> methods) =>
+        SupabaseSession.fromJson({
+          'access_token': tokenWith({
+            'sub': 's',
+            'aal': 'aal2',
+            'exp': futureExpiry(),
+            'amr': [
+              for (final method in methods) {'method': method},
+            ],
+          }),
+          'expires_in': 3600,
+        });
+
+    expect(sessionFor(['otp', 'totp']).isPasswordlessAal2, isTrue);
+    expect(sessionFor(['password', 'totp']).isPasswordlessAal2, isFalse);
   });
 
   test('needsRefresh trips within the skew window', () {

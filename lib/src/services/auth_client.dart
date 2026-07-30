@@ -43,13 +43,11 @@ class AuthClient {
     required String code,
   }) async {
     _requireEmail(email);
-    if (code.trim().isEmpty) {
-      throw const FormatException('Enter the code from the email.');
-    }
+    final normalizedCode = _requireSixDigitCode(code);
     final json = await _post('verify', {
       'type': 'email',
       'email': email.trim(),
-      'token': code.trim(),
+      'token': normalizedCode,
     }, 'That code was not accepted. Request a fresh one and try again.');
     return SupabaseSession.fromJson(json);
   }
@@ -80,8 +78,19 @@ class AuthClient {
     }
 
     final accessToken = (parameters['access_token'] ?? '').trim();
+    final tokenHash = (parameters['token_hash'] ?? '').trim();
+    if (accessToken.isNotEmpty && tokenHash.isNotEmpty) {
+      throw const FormatException(
+        'The sign-in callback contained conflicting credentials.',
+      );
+    }
     if (accessToken.isNotEmpty) {
       final refreshToken = (parameters['refresh_token'] ?? '').trim();
+      if (refreshToken.isEmpty) {
+        throw const FormatException(
+          'The sign-in callback contained no refresh token.',
+        );
+      }
       final expiresIn = int.tryParse(parameters['expires_in'] ?? '');
       return SupabaseSession.fromJson({
         'access_token': accessToken,
@@ -90,7 +99,6 @@ class AuthClient {
       });
     }
 
-    final tokenHash = (parameters['token_hash'] ?? '').trim();
     if (tokenHash.isNotEmpty) {
       final json = await _post(
         'verify',
@@ -178,14 +186,17 @@ class AuthClient {
     required String phone,
     String? friendlyName,
   }) async {
-    if (phone.trim().isEmpty) {
-      throw const FormatException('Enter the phone number to enroll.');
+    final normalizedPhone = phone.trim();
+    if (!RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(normalizedPhone)) {
+      throw const FormatException(
+        'Enter a phone number in E.164 form, such as +15551234567.',
+      );
     }
     final json = await _post(
       'factors',
       {
         'factor_type': 'phone',
-        'phone': phone.trim(),
+        'phone': normalizedPhone,
         if ((friendlyName ?? '').trim().isNotEmpty)
           'friendly_name': friendlyName!.trim(),
       },
@@ -196,7 +207,7 @@ class AuthClient {
     if (id.isEmpty) {
       throw const FormatException('SMS enrollment returned no id.');
     }
-    return PhoneEnrollment(factorId: id, phone: phone.trim());
+    return PhoneEnrollment(factorId: id, phone: normalizedPhone);
   }
 
   /// Starts a challenge (sends the SMS for phone factors); returns its id.
@@ -221,12 +232,11 @@ class AuthClient {
     required String challengeId,
     required String code,
   }) async {
-    if (code.trim().isEmpty) {
-      throw const FormatException('Enter the 6-digit code.');
-    }
+    final normalizedChallenge = _requireId(challengeId);
+    final normalizedCode = _requireSixDigitCode(code);
     final json = await _post(
       'factors/${_requireId(factorId)}/verify',
-      {'challenge_id': challengeId.trim(), 'code': code.trim()},
+      {'challenge_id': normalizedChallenge, 'code': normalizedCode},
       'That code was not accepted.',
       accessToken: accessToken,
     );
@@ -323,6 +333,11 @@ class AuthClient {
         'Supabase URL must use HTTPS except localhost development.',
       );
     }
+    if (base.userInfo.isNotEmpty || base.hasQuery || base.hasFragment) {
+      throw const FormatException(
+        'Supabase URL must not contain credentials, a query, or a fragment.',
+      );
+    }
     final baseSegments = base.pathSegments.where((p) => p.isNotEmpty);
     return base.replace(
       pathSegments: [...baseSegments, 'auth', 'v1', ...path.split('/')],
@@ -349,10 +364,21 @@ class AuthClient {
 
   String _requireId(String factorId) {
     final trimmed = factorId.trim();
-    if (trimmed.isEmpty) {
+    if (trimmed.isEmpty ||
+        trimmed.contains('/') ||
+        trimmed.contains('?') ||
+        trimmed.contains('#')) {
       throw const FormatException('A factor id is required.');
     }
     return trimmed;
+  }
+
+  String _requireSixDigitCode(String code) {
+    final normalized = code.trim();
+    if (!RegExp(r'^[0-9]{6}$').hasMatch(normalized)) {
+      throw const FormatException('Enter the 6-digit verification code.');
+    }
+    return normalized;
   }
 
   String _describe(http.Response response, String fallback) {
