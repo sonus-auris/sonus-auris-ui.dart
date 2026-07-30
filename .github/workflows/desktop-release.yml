@@ -99,7 +99,7 @@ jobs:
           dpkg-deb --root-owner-group --build "$root" dist/sonus-auris-linux-x86_64.deb
           dpkg-deb --info dist/sonus-auris-linux-x86_64.deb
           sha256sum dist/sonus-auris-linux-x86_64.deb
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonus-auris-linux-installer
           path: dist/sonus-auris-linux-x86_64.deb
@@ -203,7 +203,7 @@ jobs:
         if: always()
         shell: pwsh
         run: Remove-Item -Force "$env:RUNNER_TEMP/sonus-auris-signing.pfx" -ErrorAction SilentlyContinue
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonus-auris-windows-installer
           path: dist/sonus-auris-windows-x64.exe
@@ -294,7 +294,7 @@ jobs:
           [[ -z "${SIGNING_KEYCHAIN_PATH:-}" ]] || security delete-keychain "$SIGNING_KEYCHAIN_PATH" || true
           [[ -z "${SIGNING_P12_PATH:-}" ]] || rm -f "$SIGNING_P12_PATH"
           [[ -z "${NOTARY_KEY_PATH:-}" ]] || rm -f "$NOTARY_KEY_PATH"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonus-auris-macos-installer
           path: dist/sonus-auris-macos-universal.dmg
@@ -312,7 +312,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: sonus-auris-*-installer
           path: dist
@@ -362,7 +362,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: python3 scripts/release/publish_desktop_r2.py --version "$RELEASE_VERSION" --dist dist
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonus-auris-desktop-release-${{ inputs.version }}
           path: |
