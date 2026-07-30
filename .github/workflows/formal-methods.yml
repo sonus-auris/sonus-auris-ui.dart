@@ -47,6 +47,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check retention journal procedure and crash recovery
+        run: python3 formal/retention_journal_model.py
+
+      - name: Replay crash-after-delete JSON-lines witness
+        run: |
+          printf '%s\n' \
+            '{"op":"replay","backed_up":false,"events":["tombstone","delete","crash","recover"]}' \
+            | python3 formal/retention_journal_model.py --json-stdin
+
       - name: Install Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -140,7 +149,9 @@ jobs:
             sha256sum \
               formal/fm.toml \
               formal/segment_lifecycle.qnt \
-              formal/segment_lifecycle_test.qnt
+              formal/segment_lifecycle_test.qnt \
+              formal/retention_journal_model.py \
+              formal/RETENTION_PROCEDURE.md
           } > .formal-artifacts/provenance.txt
 
       - name: Upload traces and provenance
