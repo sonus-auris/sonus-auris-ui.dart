@@ -94,13 +94,17 @@ void main() {
   test('treats AAL1 as a pending first factor, not a signed-in account', () {
     const header = 'eyJhbGciOiJub25lIn0';
     const aal1 = '$header.eyJhYWwiOiJhYWwxIn0.signature';
-    const aal2 = '$header.eyJhYWwiOiJhYWwyIn0.signature';
+    const aal2 =
+        '$header.eyJhYWwiOiJhYWwyIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAifSx7Im1ldGhvZCI6InRvdHAifV19.signature';
 
     final pending = _viewModel(
       secrets: const CloudSecrets(supabaseAccessToken: aal1),
     );
     final authorized = _viewModel(
-      secrets: const CloudSecrets(supabaseAccessToken: aal2),
+      secrets: const CloudSecrets(
+        supabaseAccessToken: aal2,
+        supabaseAccessTokenExpiresAt: '2099-01-01T00:00:00Z',
+      ),
     );
 
     expect(pending.hasFirstFactorSession, isTrue);

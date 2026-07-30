@@ -1,12 +1,15 @@
 import 'dart:convert';
 
 import 'package:audio_dashcam/src/models/app_config.dart';
+import 'package:audio_dashcam/src/models/supabase_session.dart';
 import 'package:audio_dashcam/src/services/supabase_auth_client.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  final access1 = _accessToken(subject: 'user-1');
+  final access2 = _accessToken(subject: 'user-1');
   const config = AppConfig(
     deviceId: 'device-a',
     supabaseUrl: 'https://project.supabase.co',
@@ -49,7 +52,7 @@ void main() {
           captured = request;
           return http.Response(
             jsonEncode({
-              'access_token': 'access-1',
+              'access_token': access1,
               'refresh_token': 'refresh-1',
               'expires_in': 3600,
               'user': {'id': 'user-1', 'email': 'user@example.com'},
@@ -74,7 +77,7 @@ void main() {
       expect(body['type'], 'email');
       expect(body['email'], 'user@example.com');
       expect(body['token'], '123456');
-      expect(session.accessToken, 'access-1');
+      expect(session.accessToken, access1);
       expect(session.refreshToken, 'refresh-1');
       expect(session.email, 'user@example.com');
       expect(session.userId, 'user-1');
@@ -88,14 +91,14 @@ void main() {
     );
     final callback = Uri.parse(
       'sonusauris://auth/callback'
-      '#access_token=access-1&refresh_token=refresh-1&expires_in=3600',
+      '#access_token=$access1&refresh_token=refresh-1&expires_in=3600',
     );
 
     final session = await client.consumeMagicLink(
       config: config,
       callback: callback,
     );
-    expect(session.accessToken, 'access-1');
+    expect(session.accessToken, access1);
     expect(session.refreshToken, 'refresh-1');
     expect(
       () => client.consumeMagicLink(
@@ -113,7 +116,7 @@ void main() {
         captured = request;
         return http.Response(
           jsonEncode({
-            'access_token': 'access-2',
+            'access_token': access2,
             'refresh_token': 'refresh-2',
             'expires_in': 3600,
           }),
@@ -130,29 +133,90 @@ void main() {
 
     expect(captured.url.queryParameters['grant_type'], 'refresh_token');
     expect(jsonDecode(captured.body)['refresh_token'], 'refresh-1');
-    expect(session.accessToken, 'access-2');
+    expect(session.accessToken, access2);
     expect(session.refreshToken, 'refresh-2');
   });
 
-  test('verifyEmailOtp rejects an empty code before making a request', () async {
-    var called = false;
-    final client = SupabaseAuthClient(
-      httpClient: MockClient((request) async {
-        called = true;
-        return http.Response('{}', 200);
-      }),
-    );
+  test(
+    'verifyEmailOtp requires exactly six digits before making a request',
+    () async {
+      var called = false;
+      final client = SupabaseAuthClient(
+        httpClient: MockClient((request) async {
+          called = true;
+          return http.Response('{}', 200);
+        }),
+      );
 
-    await expectLater(
-      client.verifyEmailOtp(
-        config: config,
-        email: 'user@example.com',
-        code: '   ',
+      for (final invalidCode in ['   ', '12345', '1234567', '12x456']) {
+        await expectLater(
+          client.verifyEmailOtp(
+            config: config,
+            email: 'user@example.com',
+            code: invalidCode,
+          ),
+          throwsA(isA<FormatException>()),
+        );
+      }
+      expect(called, isFalse);
+    },
+  );
+
+  test('rejects malformed, subjectless, and expired access tokens', () async {
+    for (final token in [
+      'not-a-jwt',
+      _accessToken(subject: ''),
+      _accessToken(subject: 'user-1', includeExpiry: false),
+      _accessToken(
+        subject: 'user-1',
+        expiresAt: DateTime.now().toUtc().subtract(const Duration(minutes: 1)),
       ),
-      throwsA(isA<FormatException>()),
-    );
-    expect(called, isFalse);
+    ]) {
+      final client = SupabaseAuthClient(
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode({'access_token': token, 'refresh_token': 'refresh-1'}),
+            200,
+          ),
+        ),
+      );
+      await expectLater(
+        client.verifyEmailOtp(
+          config: config,
+          email: 'user@example.com',
+          code: '123456',
+        ),
+        throwsA(isA<StateError>()),
+      );
+    }
   });
+
+  test(
+    'rejects a response identity that disagrees with the JWT subject',
+    () async {
+      final client = SupabaseAuthClient(
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'access_token': _accessToken(subject: 'user-1'),
+              'refresh_token': 'refresh-1',
+              'user': {'id': 'user-2'},
+            }),
+            200,
+          ),
+        ),
+      );
+
+      await expectLater(
+        client.verifyEmailOtp(
+          config: config,
+          email: 'user@example.com',
+          code: '123456',
+        ),
+        throwsA(isA<StateError>()),
+      );
+    },
+  );
 
   test('surfaces GoTrue error descriptions', () async {
     final client = SupabaseAuthClient(
@@ -204,7 +268,8 @@ void main() {
     );
 
     expect(
-      () => client.sendEmailOtp(config: unconfigured, email: 'user@example.com'),
+      () =>
+          client.sendEmailOtp(config: unconfigured, email: 'user@example.com'),
       throwsA(isA<FormatException>()),
     );
   });
@@ -303,4 +368,51 @@ void main() {
       ),
     );
   });
+
+  test('recognizes passwordless AAL2 and rejects password-backed MFA', () {
+    final firstFactor = _accessToken(subject: 'user-1');
+    final passwordless = _accessToken(
+      subject: 'user-1',
+      aal: 'aal2',
+      methods: const ['otp', 'totp'],
+    );
+    final passwordBacked = _accessToken(
+      subject: 'user-1',
+      aal: 'aal2',
+      methods: const ['password', 'totp'],
+    );
+
+    expect(supabaseJwtHasPasswordlessFirstFactor(firstFactor), isTrue);
+    expect(supabaseJwtIsPasswordlessAal2(firstFactor), isFalse);
+    expect(supabaseJwtIsPasswordlessAal2(passwordless), isTrue);
+    expect(supabaseJwtHasPasswordlessFirstFactor(passwordBacked), isFalse);
+    expect(supabaseJwtIsPasswordlessAal2(passwordBacked), isFalse);
+    expect(supabaseJwtIsPasswordlessAal2('not-a-jwt'), isFalse);
+  });
+}
+
+String _accessToken({
+  required String subject,
+  DateTime? expiresAt,
+  String aal = 'aal1',
+  List<String> methods = const ['otp'],
+  bool includeExpiry = true,
+}) {
+  final header = base64Url.encode(utf8.encode('{"alg":"none","typ":"JWT"}'));
+  final expiry =
+      (expiresAt ?? DateTime.now().toUtc().add(const Duration(hours: 1)))
+          .millisecondsSinceEpoch ~/
+      1000;
+  final payload = base64Url.encode(
+    utf8.encode(
+      jsonEncode({
+        'sub': subject,
+        'email': 'user@example.com',
+        'aal': aal,
+        'amr': methods.map((method) => {'method': method}).toList(),
+        if (includeExpiry) 'exp': expiry,
+      }),
+    ),
+  );
+  return '$header.$payload.signature';
 }

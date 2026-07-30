@@ -9,6 +9,15 @@ void main() {
     expect(secrets.supabaseTokenNeedsRefresh(now: now), isTrue);
   });
 
+  test('needs refresh when access-token expiry is unknown', () {
+    const secrets = CloudSecrets(
+      supabaseAccessToken: 'access',
+      supabaseRefreshToken: 'refresh',
+    );
+    expect(secrets.supabaseTokenNeedsRefresh(now: now), isTrue);
+    expect(secrets.hasFreshSupabaseToken(now: now), isFalse);
+  });
+
   test('does not need refresh well before expiry', () {
     final secrets = CloudSecrets(
       supabaseAccessToken: 'access',
@@ -18,6 +27,7 @@ void main() {
           .toIso8601String(),
     );
     expect(secrets.supabaseTokenNeedsRefresh(now: now), isFalse);
+    expect(secrets.hasFreshSupabaseToken(now: now), isTrue);
   });
 
   test('needs refresh within the skew window of expiry', () {
@@ -29,6 +39,10 @@ void main() {
           .toIso8601String(),
     );
     expect(secrets.supabaseTokenNeedsRefresh(now: now), isTrue);
+    expect(
+      secrets.hasFreshSupabaseToken(now: now.add(const Duration(minutes: 1))),
+      isFalse,
+    );
   });
 
   test('no session means nothing to refresh', () {

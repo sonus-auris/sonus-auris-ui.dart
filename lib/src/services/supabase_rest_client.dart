@@ -249,8 +249,8 @@ class SupabaseRestClient {
   bool canInsert(AppConfig config, CloudSecrets secrets) {
     return config.supabaseUrl.trim().isNotEmpty &&
         config.supabaseAnonKey.trim().isNotEmpty &&
-        secrets.hasSupabaseToken &&
-        supabaseJwtAal(secrets.supabaseAccessToken) == 'aal2';
+        secrets.hasFreshSupabaseToken() &&
+        supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken);
   }
 
   /// Batch-inserts acoustic detections. Returns an error string on failure, or
