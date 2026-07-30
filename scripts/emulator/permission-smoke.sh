@@ -2,9 +2,10 @@
 # Headless permission smoke-test for Sonus Auris on an Android emulator.
 #
 # Installs the app, launches it, exercises every runtime permission the way a
-# store reviewer would (grant the mic/notification path; confirm the sensitive
-# context permissions — location / Bluetooth / nearby-Wi-Fi — default to DENIED,
-# i.e. opt-in), and fails if the app crashes. Runs identically:
+# store reviewer would (verify the OTP-first account screen; grant the
+# mic/notification path; confirm the sensitive context permissions — location /
+# Bluetooth / nearby-Wi-Fi — default to DENIED, i.e. opt-in), and fails if the
+# app crashes. Runs identically:
 #   - locally against a booted emulator,
 #   - inside ci/android-emulator/Dockerfile,
 #   - in GitHub Actions (reactivecircus/android-emulator-runner).
@@ -167,7 +168,7 @@ fi
 require_ui_text "Create your account"
 require_ui_text "Email"
 require_ui_text "New here? Signing in creates your account automatically."
-require_ui_text "Email me a sign-in link"
+require_ui_text "Email me a 6-digit code"
 if adb_ logcat -d 2>/dev/null | grep -m1 -F "A RenderFlex overflowed"; then
   echo "  ✗ Flutter reported a visible layout overflow"
   capture_failure_evidence
