@@ -70,3 +70,21 @@ status = "planned"
 [adapters.typescript]
 strategy = "json-lines-itf-driver"
 status = "planned-for-shared-client-protocols"
+
+[procedures.retention_journal]
+schema_version = 1
+id = "sonus-retention-journal-v1"
+model = "formal/retention_journal_model.py"
+runner = "python3"
+adapter_protocol = "json-stdin/v1"
+claim = "finite-crash-interleaving-abstraction"
+transition_depth = 7
+invariants = [
+  "journal-before-delete",
+  "no-journal-no-stale-local-index",
+  "unbacked-expiry-visible",
+  "recovery-converges",
+  "terminal-idempotence",
+]
+production_symbols = ["SegmentIndex", "RetentionMutationStage", "loadSegments", "enforceDeviceRetention"]
+refinement_status = "required"
