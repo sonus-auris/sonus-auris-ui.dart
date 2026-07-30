@@ -108,8 +108,8 @@ class DeviceRegistry {
   bool canUse(AppConfig config, CloudSecrets secrets) {
     return config.supabaseUrl.trim().isNotEmpty &&
         config.supabaseAnonKey.trim().isNotEmpty &&
-        secrets.hasSupabaseToken &&
-        supabaseJwtAal(secrets.supabaseAccessToken) == 'aal2';
+        secrets.hasFreshSupabaseToken() &&
+        supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken);
   }
 
   /// Loads this install's own row, or null when it was never registered.

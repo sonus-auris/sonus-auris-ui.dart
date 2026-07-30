@@ -1190,6 +1190,23 @@ class AppController {
     _message.add('Signed out.');
   }
 
+  Future<void> _invalidateSupabaseSession({required String message}) async {
+    final secrets = _secrets.valueOrNull ?? const CloudSecrets();
+    final cleared = secrets.withoutSupabaseSession().copyWith(
+      backendDeviceToken: '',
+    );
+    _backendSession = null;
+    _backendSessionKey = null;
+    _supabaseRefreshTimer?.cancel();
+    _supabaseRefreshTimer = null;
+    _telemetryRealtimeClient.close();
+    _pendingTelemetry.clear();
+    await _persistPendingTelemetry();
+    await _persistSecrets(cleared);
+    _accountStatus.add(const AccountStatus());
+    _message.add(message);
+  }
+
   // --- Passwordless sign-in (email magic link / one-time code) --------------
 
   /// Emails a one-time sign-in code (and magic link). Same call for sign-in and
@@ -1441,7 +1458,7 @@ class AppController {
   Future<void> _onSignedIn({required String successMessage}) async {
     final secrets = _secrets.valueOrNull;
     if (secrets == null ||
-        decodeSupabaseAal(secrets.supabaseAccessToken) != 'aal2' ||
+        !supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken) ||
         _accountStatus.value.mfaEnrollmentRequired ||
         _accountStatus.value.mfaRequired ||
         _accountStatus.value.mfaCheckFailed) {
@@ -1470,11 +1487,11 @@ class AppController {
     final factors = await _listMfaFactors();
     final hasVerified = factors.any((factor) => factor.isVerified);
     final secrets = _secrets.valueOrNull;
-    final aal = secrets == null
-        ? null
-        : decodeSupabaseAal(secrets.supabaseAccessToken);
+    final passwordlessAal2 =
+        secrets != null &&
+        supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken);
     final enrollmentRequired = !hasVerified;
-    final pending = hasVerified && aal != 'aal2';
+    final pending = hasVerified && !passwordlessAal2;
     _accountStatus.add(
       _accountStatus.value.copyWith(
         mfaEnrollmentRequired: enrollmentRequired,
@@ -1516,6 +1533,13 @@ class AppController {
     final secrets = _secrets.valueOrNull;
     if (secrets == null || !secrets.hasSupabaseToken) {
       _message.add('Sign in first.');
+      return null;
+    }
+    final expiry = secrets.supabaseTokenExpiresAtUtc;
+    if (expiry == null || !expiry.isAfter(DateTime.now().toUtc())) {
+      await _invalidateSupabaseSession(
+        message: 'Your secure session expired. Sign in again.',
+      );
       return null;
     }
     return secrets.supabaseAccessToken.trim();
@@ -1606,6 +1630,11 @@ class AppController {
   }
 
   Future<void> _applySupabaseSession(SupabaseSession session) async {
+    if (!session.hasPasswordlessFirstFactor) {
+      throw StateError(
+        'Supabase did not return a passwordless session. Sign in again.',
+      );
+    }
     final current = _secrets.valueOrNull ?? const CloudSecrets();
     // A refresh response often omits the user object; keep the known email then.
     final email = session.email.trim().isEmpty
@@ -1649,8 +1678,12 @@ class AppController {
       await _persistPendingTelemetry();
     }
     await _persistSecrets(next);
-    if (decodeSupabaseAal(session.accessToken) == 'aal2') {
+    if (session.isPasswordlessAal2) {
       _connectTelemetryRealtime();
+      _diagnostics.add(
+        'Supabase telemetry streaming started.',
+        event: 'telemetry.streaming_started',
+      );
     } else {
       _telemetryRealtimeClient.close();
       final hasVerified = _accountStatus.value.verifiedMfaFactors.isNotEmpty;
@@ -1663,10 +1696,6 @@ class AppController {
       );
     }
     _scheduleSupabaseTokenRefresh();
-    _diagnostics.add(
-      'Supabase telemetry streaming started.',
-      event: 'telemetry.streaming_started',
-    );
     _scheduleTelemetryFlush();
   }
 
@@ -1724,7 +1753,7 @@ class AppController {
         secrets == null ||
         !config.hasSupabaseAuthConfig ||
         !secrets.hasSupabaseToken ||
-        decodeSupabaseAal(secrets.supabaseAccessToken) != 'aal2' ||
+        !supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken) ||
         secrets.supabaseUserId.trim().isEmpty) {
       return;
     }
@@ -1972,9 +2001,17 @@ class AppController {
     final config = _config.value;
     final secrets = _secrets.valueOrNull;
     if (secrets == null ||
-        !secrets.hasSupabaseRefreshToken ||
         !secrets.supabaseTokenNeedsRefresh() ||
         !config.hasSupabaseAuthConfig) {
+      return;
+    }
+    if (!secrets.hasSupabaseRefreshToken) {
+      final expiry = secrets.supabaseTokenExpiresAtUtc;
+      if (expiry == null || !expiry.isAfter(DateTime.now().toUtc())) {
+        await _invalidateSupabaseSession(
+          message: 'Your secure session expired. Sign in again.',
+        );
+      }
       return;
     }
     final inFlight = _supabaseRefreshInFlight;
@@ -2000,6 +2037,29 @@ class AppController {
         config: config,
         refreshToken: refreshToken,
       );
+      final expectedUserId = (_secrets.valueOrNull?.supabaseUserId ?? '')
+          .trim();
+      if (expectedUserId.isNotEmpty &&
+          session.userId.trim() != expectedUserId) {
+        await _invalidateSupabaseSession(
+          message:
+              'Supabase returned a session for another account. Sign in again.',
+        );
+        _diagnostics.add(
+          'Supabase refresh identity mismatch; the local session was cleared.',
+        );
+        return;
+      }
+      if (!session.hasPasswordlessFirstFactor) {
+        await _invalidateSupabaseSession(
+          message:
+              'Supabase did not preserve passwordless sign-in. Sign in again.',
+        );
+        _diagnostics.add(
+          'Supabase refresh lost passwordless AMR; the local session was cleared.',
+        );
+        return;
+      }
       await _applySupabaseSession(session);
       _supabaseRefreshFailureCount = 0;
       _diagnostics.add('Supabase access token refreshed.');
@@ -2007,7 +2067,15 @@ class AppController {
       _diagnostics.add(
         'Supabase token refresh failed: ${_describeError(error)}',
       );
-      _scheduleSupabaseTokenRefresh(failed: true);
+      final current = _secrets.valueOrNull;
+      final expiry = current?.supabaseTokenExpiresAtUtc;
+      if (expiry == null || !expiry.isAfter(DateTime.now().toUtc())) {
+        await _invalidateSupabaseSession(
+          message: 'Your secure session expired. Sign in again.',
+        );
+      } else {
+        _scheduleSupabaseTokenRefresh(failed: true);
+      }
     }
   }
 
@@ -2034,9 +2102,7 @@ class AppController {
         ? target.difference(now)
         : const Duration(seconds: 5);
     _supabaseRefreshTimer = Timer(delay, () {
-      unawaited(
-        _refreshSupabaseToken(_config.value, secrets.supabaseRefreshToken),
-      );
+      unawaited(_ensureFreshSupabaseToken());
     });
   }
 

@@ -54,10 +54,7 @@ class SupabaseAuthClient {
     required String code,
   }) async {
     _validateEmail(email);
-    final trimmedCode = code.trim();
-    if (trimmedCode.isEmpty) {
-      throw const FormatException('Enter the code from the email.');
-    }
+    final trimmedCode = _requireSixDigitCode(code);
     final uri = _authUri(config, 'verify');
     return _session(config, uri, {
       'type': 'email',
@@ -94,8 +91,19 @@ class SupabaseAuthClient {
     }
 
     final accessToken = (parameters['access_token'] ?? '').trim();
+    final tokenHash = (parameters['token_hash'] ?? '').trim();
+    if (accessToken.isNotEmpty && tokenHash.isNotEmpty) {
+      throw const FormatException(
+        'The sign-in callback contained conflicting credentials.',
+      );
+    }
     if (accessToken.isNotEmpty) {
       final refreshToken = (parameters['refresh_token'] ?? '').trim();
+      if (refreshToken.isEmpty) {
+        throw const FormatException(
+          'The sign-in callback contained no refresh token.',
+        );
+      }
       final expiresIn = int.tryParse(parameters['expires_in'] ?? '');
       return SupabaseSession.fromJson({
         'access_token': accessToken,
@@ -104,7 +112,6 @@ class SupabaseAuthClient {
       });
     }
 
-    final tokenHash = (parameters['token_hash'] ?? '').trim();
     if (tokenHash.isNotEmpty) {
       final uri = _authUri(config, 'verify');
       return _session(
@@ -181,8 +188,10 @@ class SupabaseAuthClient {
     String? friendlyName,
   }) async {
     final trimmedPhone = phone.trim();
-    if (trimmedPhone.isEmpty) {
-      throw const FormatException('Enter the phone number to enroll.');
+    if (!RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(trimmedPhone)) {
+      throw const FormatException(
+        'Enter a phone number in E.164 form, such as +15551234567.',
+      );
     }
     final uri = _authUri(config, 'factors');
     final decoded = await _post(
@@ -248,10 +257,7 @@ class SupabaseAuthClient {
     if (trimmedChallenge.isEmpty) {
       throw const FormatException('The verification challenge is missing.');
     }
-    final trimmedCode = code.trim();
-    if (trimmedCode.isEmpty) {
-      throw const FormatException('Enter the 6-digit code.');
-    }
+    final trimmedCode = _requireSixDigitCode(code);
     final uri = _authUri(config, 'factors/$id/verify');
     return _session(
       config,
@@ -438,6 +444,11 @@ class SupabaseAuthClient {
         'Supabase URL must not contain embedded credentials.',
       );
     }
+    if (base.hasQuery || base.hasFragment) {
+      throw const FormatException(
+        'Supabase URL must not contain a query or fragment.',
+      );
+    }
     final baseSegments = base.pathSegments.where((part) => part.isNotEmpty);
     return base.replace(
       pathSegments: [
@@ -458,6 +469,11 @@ class SupabaseAuthClient {
     if (!uri.hasScheme || uri.host.isEmpty) {
       throw const FormatException(
         'The auth redirect URL must include a scheme and host.',
+      );
+    }
+    if (uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment) {
+      throw const FormatException(
+        'The auth redirect URL must not contain credentials, a query, or a fragment.',
       );
     }
     return uri;
@@ -503,6 +519,14 @@ class SupabaseAuthClient {
         normalized.contains(' ')) {
       throw const FormatException('Enter a valid email address.');
     }
+  }
+
+  String _requireSixDigitCode(String code) {
+    final normalized = code.trim();
+    if (!RegExp(r'^[0-9]{6}$').hasMatch(normalized)) {
+      throw const FormatException('Enter the 6-digit verification code.');
+    }
+    return normalized;
   }
 
   void close() {

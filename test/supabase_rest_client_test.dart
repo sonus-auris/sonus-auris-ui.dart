@@ -15,8 +15,12 @@ void main() {
     supabaseUrl: 'https://proj.supabase.co',
     supabaseAnonKey: 'anon-key',
   );
-  const aal2Token = 'eyJhbGciOiJub25lIn0.eyJhYWwiOiJhYWwyIn0.signature';
-  const secrets = CloudSecrets(supabaseAccessToken: aal2Token);
+  const aal2Token =
+      'eyJhbGciOiJub25lIn0.eyJhYWwiOiJhYWwyIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAifSx7Im1ldGhvZCI6InRvdHAifV19.signature';
+  const secrets = CloudSecrets(
+    supabaseAccessToken: aal2Token,
+    supabaseAccessTokenExpiresAt: '2099-01-01T00:00:00Z',
+  );
 
   final detection = AcousticDetection(
     kind: AcousticDetectionKind.snore,

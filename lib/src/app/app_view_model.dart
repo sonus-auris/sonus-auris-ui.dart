@@ -65,8 +65,8 @@ class AppViewModel {
   /// Whether cloud account access is authorized: the passwordless first factor
   /// plus a verified second factor represented by an `aal2` access token.
   bool get isSignedIn =>
-      secrets.hasSupabaseToken &&
-      supabaseJwtAal(secrets.supabaseAccessToken) == 'aal2';
+      secrets.hasFreshSupabaseToken() &&
+      supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken);
 
   /// A first-factor session may exist while mandatory MFA is being enrolled or
   /// challenged. It must not be treated as signed in.
