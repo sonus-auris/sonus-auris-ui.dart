@@ -23,11 +23,20 @@ class SupabaseSession {
   /// or `aal2` (a second factor has been verified this session).
   String get aal => aalFromJwt(accessToken);
 
+  /// Whether the JWT proves both a passwordless first factor and MFA.
+  bool get isPasswordlessAal2 => passwordlessAal2FromJwt(accessToken);
+
+  bool get hasPasswordlessFirstFactor =>
+      passwordlessFirstFactorFromJwt(accessToken);
+
   bool get isEmpty => accessToken.trim().isEmpty;
 
   /// True within [skew] of expiry, so the console refreshes proactively rather
   /// than letting a request fail.
-  bool needsRefresh({DateTime? now, Duration skew = const Duration(minutes: 2)}) {
+  bool needsRefresh({
+    DateTime? now,
+    Duration skew = const Duration(minutes: 2),
+  }) {
     final reference = (now ?? DateTime.now()).toUtc();
     return reference.isAfter(expiresAtUtc.subtract(skew));
   }
@@ -35,46 +44,79 @@ class SupabaseSession {
   factory SupabaseSession.fromJson(Map<String, Object?> json) {
     final accessToken = (json['access_token'] as String? ?? '').trim();
     if (accessToken.isEmpty) {
-      throw const FormatException('Sign-in response contained no access token.');
+      throw const FormatException(
+        'Sign-in response contained no access token.',
+      );
     }
     final claims = decodeJwtClaims(accessToken);
+    if (claims.isEmpty) {
+      throw const FormatException(
+        'Sign-in response contained a malformed access token.',
+      );
+    }
     final user = json['user'];
     final userMap = user is Map ? user.cast<String, Object?>() : const {};
+    final userId = (claims['sub']?.toString() ?? '').trim();
+    if (userId.isEmpty) {
+      throw const FormatException('Sign-in access token contained no subject.');
+    }
+    final responseUserId = (userMap['id'] as String? ?? '').trim();
+    if (responseUserId.isNotEmpty && responseUserId != userId) {
+      throw const FormatException(
+        'Sign-in response identity did not match its access token.',
+      );
+    }
+    final nowUtc = DateTime.now().toUtc();
+    final expiresAtUtc = _expiry(json, claims, nowUtc);
+    if (!expiresAtUtc.isAfter(nowUtc)) {
+      throw const FormatException(
+        'Sign-in response contained an expired access token.',
+      );
+    }
     return SupabaseSession(
       accessToken: accessToken,
       refreshToken: (json['refresh_token'] as String? ?? '').trim(),
-      expiresAtUtc: _expiry(json, claims),
-      userId:
-          (userMap['id'] as String? ?? claims['sub']?.toString() ?? '').trim(),
-      email:
-          (userMap['email'] as String? ?? claims['email']?.toString() ?? '')
-              .trim(),
+      expiresAtUtc: expiresAtUtc,
+      userId: userId,
+      email: (userMap['email'] as String? ?? claims['email']?.toString() ?? '')
+          .trim(),
     );
   }
 
-  /// Prefers an absolute `expires_at` (epoch seconds); falls back to
-  /// `expires_in` (seconds from now), then the token's own `exp` claim, then a
-  /// conservative one-hour default.
-  static DateTime _expiry(Map<String, Object?> json, Map<String, Object?> claims) {
+  /// Requires the token's signed `exp` claim, then chooses the earliest of that
+  /// and any response-level expiry fields. Inconsistent metadata can only
+  /// shorten a session, never extend it beyond the JWT.
+  static DateTime _expiry(
+    Map<String, Object?> json,
+    Map<String, Object?> claims,
+    DateTime nowUtc,
+  ) {
+    final exp = claims['exp'];
+    if (exp is! num) {
+      throw const FormatException('Sign-in access token contained no expiry.');
+    }
+    var earliest = DateTime.fromMillisecondsSinceEpoch(
+      (exp * 1000).round(),
+      isUtc: true,
+    );
     final expiresAt = json['expires_at'];
     if (expiresAt is num) {
-      return DateTime.fromMillisecondsSinceEpoch(
+      final responseExpiry = DateTime.fromMillisecondsSinceEpoch(
         (expiresAt * 1000).round(),
         isUtc: true,
       );
+      if (responseExpiry.isBefore(earliest)) {
+        earliest = responseExpiry;
+      }
     }
     final expiresIn = json['expires_in'];
-    if (expiresIn is num) {
-      return DateTime.now().toUtc().add(Duration(seconds: expiresIn.round()));
+    if (expiresIn is num && expiresIn > 0) {
+      final responseExpiry = nowUtc.add(Duration(seconds: expiresIn.round()));
+      if (responseExpiry.isBefore(earliest)) {
+        earliest = responseExpiry;
+      }
     }
-    final exp = claims['exp'];
-    if (exp is num) {
-      return DateTime.fromMillisecondsSinceEpoch(
-        (exp * 1000).round(),
-        isUtc: true,
-      );
-    }
-    return DateTime.now().toUtc().add(const Duration(hours: 1));
+    return earliest;
   }
 
   SupabaseSession copyWith({

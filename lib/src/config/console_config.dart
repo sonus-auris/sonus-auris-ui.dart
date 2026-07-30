@@ -58,6 +58,11 @@ class ConsoleConfig {
         'The auth redirect URL must include a scheme and host.',
       );
     }
+    if (uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment) {
+      throw const FormatException(
+        'The auth redirect URL must not contain credentials, a query, or a fragment.',
+      );
+    }
     return uri;
   }
 }
