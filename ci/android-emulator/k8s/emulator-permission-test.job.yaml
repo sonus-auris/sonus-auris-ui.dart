@@ -35,6 +35,11 @@ spec:
         app.kubernetes.io/name: sonus-emulator-permission-test
     spec:
       restartPolicy: Never
+      # This pod drives browsers/emulators and runs `npm install`, so it
+      # executes third-party code; it never calls the Kubernetes API. Without
+      # this, it would still get a mounted ServiceAccount token that a
+      # compromised dependency could use against the cluster.
+      automountServiceAccountToken: false
       nodeSelector:
         sonus-auris.dev/kvm: "true"
       containers:
