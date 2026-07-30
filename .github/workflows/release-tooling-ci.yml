@@ -36,11 +36,13 @@ jobs:
         run: |
           bash -n \
             scripts/release/android-build-aab.sh \
+            scripts/release/android-build-apk.sh \
             scripts/release/ios-build-ipa.sh \
             scripts/release/upload_app_store.sh
           if command -v shellcheck >/dev/null; then
             shellcheck \
               scripts/release/android-build-aab.sh \
+              scripts/release/android-build-apk.sh \
               scripts/release/ios-build-ipa.sh \
               scripts/release/upload_app_store.sh
           fi

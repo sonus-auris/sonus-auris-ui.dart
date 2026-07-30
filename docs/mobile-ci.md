@@ -1,12 +1,12 @@
 # Mobile and desktop CI/release plan
 
-Last reviewed: July 27, 2026.
+Last reviewed: July 30, 2026.
 
 ## Runner matrix
 
 | Target | Runner | Automatic evidence | Protected release path |
 |---|---|---|---|
-| Android | GitHub Linux plus the Kubernetes build server | analyze, unit tests, emulator tests, debug APK | signed AAB, optional Play Developer API commit |
+| Android | GitHub Linux plus the Kubernetes build server | analyze, unit tests, emulator tests, debug APK build | signed AAB for Play, signature-verified signed APK for physical-device acceptance, optional Play Developer API commit |
 | iOS | GitHub-hosted macOS 15 | unsigned release compile using the current Xcode/iOS SDK | signed IPA, optional App Store Connect upload |
 | Linux desktop | GitHub Linux plus an on-cluster fixed build profile | release bundle from `lib/main_desktop.dart` | `.deb` installer |
 | macOS desktop | GitHub-hosted macOS 15 | unsigned `.app` from `lib/main_desktop.dart` | Developer ID signed, notarized, stapled `.dmg` |
@@ -54,6 +54,18 @@ environment. Android defaults to the internal track. The iOS upload only sends a
 build to App Store Connect for processing/TestFlight; it does not submit an app
 version for review or release it to customers.
 
+The Android artifact includes both formats with one checksum manifest:
+
+- `app-release.aab` — publish through Google Play; do not present it as a
+  tappable physical-device installer.
+- `app-release.apk` — controlled direct-install acceptance build, signed with
+  the upload certificate and verified by `apksigner` before artifact upload.
+
+If Play App Signing uses a different app-signing certificate, a device cannot
+update between the sideloaded upload-key APK and the Play-served app. Uninstall
+the acceptance build before installing from Play; first export any intentionally
+kept app-private data because uninstall removes it.
+
 ## Protected desktop release inputs
 
 Create a second `desktop-production` environment, also reviewer-gated and
@@ -99,11 +111,13 @@ metadata or an HTTP redirect, but it must not proxy public installer bytes.
    iOS, desktop, and release-tooling jobs.
 2. Confirm the Argo-managed Kubernetes backend is ready and production Supabase
    passes auth/RLS isolation smoke tests.
-3. Dispatch Android with `publish_to_play=false`, install the signed AAB through
-   local/internal tooling, and test a physical Android device across Wi-Fi loss,
-   reboot, background recording, permissions, purchase restore, and deletion.
-4. Re-dispatch the accepted build number with `publish_to_play=true` and the
-   `internal` track. Promote beyond internal only after the cohort passes.
+3. Dispatch Android with `publish_to_play=false`. Download the complete protected
+   artifact, verify `SHA256SUMS`, install `app-release.apk` on physical Android
+   devices, and test Wi-Fi loss, reboot, background recording, permissions,
+   purchase restore, encrypted sync, retention deletion, and account deletion.
+4. Dispatch or upload the accepted `app-release.aab` with
+   `publish_to_play=true` on the `internal` track. Promote beyond internal only
+   after the cohort passes. Do not upload the APK as the Play artifact.
 5. Dispatch iOS with `signed_ipa=true` and `upload_to_app_store=false`; install
    and validate on a physical iPhone. Then upload the same accepted version/build
    to App Store Connect for TestFlight processing.
