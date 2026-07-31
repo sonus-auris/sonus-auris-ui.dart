@@ -42,18 +42,16 @@ object is encrypted on-device with a fresh per-object key before upload. The
 object key is wrapped only for authorized device/account recipients. Purpose:
 backup, restoration, and access from your authorized devices.
 
-<<<<<<< HEAD
-**Optional audio analysis** — OFF by default. Core sleep/snore, music-pattern,
-speech-pattern, and loud-event detectors run locally on your device. If you
-separately enable and configure an external speech-to-text, song-recognition, or
-similar service, the audio excerpt needed for that request is sent to that
-provider under its terms. Sonus Auris discloses this before the feature is
-enabled; recognition is not required for recording.
-=======
 **Optional location** — OFF by default. If you enable geotagging, approximate or
 precise location at capture time can be attached to a clip. Purpose: app
 functionality you opt into.
->>>>>>> origin/main
+
+**Optional external audio analysis** — OFF by default. Core sleep/snore,
+music-pattern, speech-pattern, and loud-event detectors run locally on your
+device. If you separately enable and configure an external speech-to-text,
+song-recognition, or similar service, the audio excerpt needed for that request
+is sent to that provider under its terms. Sonus Auris discloses this before the
+feature is enabled; recognition is not required for recording.
 
 **Optional local audio analysis** — configurable analysis can identify music,
 produce meeting notes, detect non-diagnostic sleep/snore patterns, mark loud or
