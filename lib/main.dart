@@ -2624,21 +2624,13 @@ class _AccountSectionState extends State<_AccountSection> {
           const SizedBox(height: 12),
           SupabaseAuthForm(
             emailController: _emailController,
-<<<<<<< HEAD
-=======
             codeController: _codeController,
->>>>>>> origin/main
             supabaseUrlController: widget.supabaseUrlController,
             supabaseAnonKeyController: widget.supabaseAnonKeyController,
             showProjectConfiguration: !hasBundledSupabaseConfig,
             enabled: !_busy,
-<<<<<<< HEAD
-            onSendMagicLink: widget.onSendMagicLink,
-            onVerifyCode: widget.onVerifyCode,
-=======
             onRequestCode: widget.onRequestCode,
             onSubmitCode: widget.onSubmitCode,
->>>>>>> origin/main
           ),
           const SizedBox(height: 8),
           _legalLinks(),
