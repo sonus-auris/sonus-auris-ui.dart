@@ -8,30 +8,22 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
-<<<<<<< HEAD
   const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
   const challenge = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
-=======
   final access1 = _accessToken(subject: 'user-1');
   final access2 = _accessToken(subject: 'user-1');
->>>>>>> origin/main
   const config = AppConfig(
     deviceId: 'device-a',
     supabaseUrl: 'https://project.supabase.co',
     supabaseAnonKey: 'anon-key-123',
   );
 
-<<<<<<< HEAD
-  test('sendEmailOtp requests one magic link for sign-up or sign-in', () async {
-=======
   test('sendEmailOtp posts to GoTrue otp and enables sign-up', () async {
->>>>>>> origin/main
     late http.Request captured;
     final client = SupabaseAuthClient(
       httpClient: MockClient((request) async {
         captured = request;
         return http.Response('{}', 200);
-<<<<<<< HEAD
       }),
     );
 
@@ -48,8 +40,11 @@ void main() {
       captured.url.queryParameters['redirect_to'],
       'sonusauris://auth/callback',
     );
+    // The anon key, never the service key, authorizes the request.
     expect(captured.headers['apikey'], 'anon-key-123');
     expect(captured.headers['authorization'], 'Bearer anon-key-123');
+    // create_user makes the same call the sign-up path: an unknown address is
+    // created the moment its first code is verified.
     expect(jsonDecode(captured.body), {
       'email': 'user@example.com',
       'create_user': true,
@@ -68,58 +63,6 @@ void main() {
       expect(candidate.length, inInclusiveRange(43, 128));
       expect(candidate, matches(RegExp(r'^[A-Za-z0-9._~-]+$')));
     }
-  });
-
-  test('verifyEmailOtp redeems a one-time code for a session', () async {
-    final client = SupabaseAuthClient(
-      httpClient: MockClient((request) async {
-        expect(request.url.path, '/auth/v1/verify');
-        expect(jsonDecode(request.body), {
-          'type': 'email',
-          'email': 'user@example.com',
-          'token': '123456',
-        });
-        return http.Response(
-          jsonEncode({
-            'access_token': 'access-1',
-            'refresh_token': 'refresh-1',
-            'expires_in': 3600,
-            'user': {'id': 'user-1', 'email': 'user@example.com'},
-          }),
-          200,
-        );
-      }),
-    );
-
-    final session = await client.verifyEmailOtp(
-      config: config,
-      email: 'user@example.com',
-      code: '123456',
-    );
-
-    expect(session.accessToken, 'access-1');
-    expect(session.refreshToken, 'refresh-1');
-    expect(session.userId, 'user-1');
-=======
-      }),
-    );
-
-    await client.sendEmailOtp(config: config, email: '  user@example.com ');
-
-    expect(captured.method, 'POST');
-    expect(captured.url.path, '/auth/v1/otp');
-    expect(
-      captured.url.queryParameters['redirect_to'],
-      'sonusauris://auth/callback',
-    );
-    // The anon key, never the service key, authorizes the request.
-    expect(captured.headers['apikey'], 'anon-key-123');
-    expect(captured.headers['authorization'], 'Bearer anon-key-123');
-    final body = jsonDecode(captured.body) as Map<String, dynamic>;
-    expect(body['email'], 'user@example.com');
-    // create_user makes the same call the sign-up path: an unknown address is
-    // created the moment its first code is verified.
-    expect(body['create_user'], true);
   });
 
   test(
@@ -186,40 +129,20 @@ void main() {
       ),
       throwsA(isA<FormatException>()),
     );
->>>>>>> origin/main
-  });
-
-  test('verifyEmailOtp rejects malformed codes before any request', () async {
-    var called = false;
-    final client = SupabaseAuthClient(
-      httpClient: MockClient((request) async {
-        called = true;
-        return http.Response('{}', 200);
-      }),
-    );
-
-    await expectLater(
-      client.verifyEmailOtp(
-        config: config,
-        email: 'user@example.com',
-        code: '12345a',
-      ),
-      throwsA(isA<FormatException>()),
-    );
-    expect(called, isFalse);
   });
 
   test('magic-link PKCE code is exchanged without URL bearer tokens', () async {
+    final accessOther = _accessToken(subject: 'user-2');
     late http.Request captured;
     final client = SupabaseAuthClient(
       httpClient: MockClient((request) async {
         captured = request;
         return http.Response(
           jsonEncode({
-            'access_token': access2,
+            'access_token': accessOther,
             'refresh_token': 'refresh-2',
             'expires_in': 1800,
-            'user': {'id': 'user-2', 'email': 'listener@example.com'},
+            'user': {'id': 'user-2', 'email': 'user@example.com'},
           }),
           200,
         );
@@ -245,7 +168,7 @@ void main() {
       'auth_code': 'authorization-code',
       'code_verifier': verifier,
     });
-    expect(session.accessToken, 'access-2');
+    expect(session.accessToken, accessOther);
     expect(session.refreshToken, 'refresh-2');
     expect(session.userId, 'user-2');
   });
@@ -403,71 +326,22 @@ void main() {
         captured = request;
         return http.Response(
           jsonEncode({
-            'access_token': 'access-3',
-            'refresh_token': 'refresh-3',
+            'access_token': access2,
+            'refresh_token': 'refresh-2',
             'expires_in': 3600,
           }),
           200,
+          headers: {'content-type': 'application/json'},
         );
       }),
     );
 
     final session = await client.refreshSession(
       config: config,
-      refreshToken: 'refresh-2',
+      refreshToken: 'refresh-1',
     );
 
     expect(captured.url.queryParameters['grant_type'], 'refresh_token');
-<<<<<<< HEAD
-    expect(jsonDecode(captured.body)['refresh_token'], 'refresh-2');
-    expect(session.accessToken, 'access-3');
-  });
-
-  test('rejects unsafe client keys and redirect URLs', () async {
-    var calls = 0;
-    final client = SupabaseAuthClient(
-      httpClient: MockClient((_) async {
-        calls++;
-        return http.Response('{}', 200);
-      }),
-    );
-
-    for (final unsafeConfig in [
-      config.copyWith(supabaseUrl: 'https://user:secret@project.supabase.co'),
-      config.copyWith(supabaseUrl: 'https://project.supabase.co?tenant=other'),
-      config.copyWith(supabaseUrl: 'https://project.supabase.co#other'),
-      config.copyWith(supabaseUrl: 'http://project.supabase.co'),
-      config.copyWith(supabaseAnonKey: 'sb_secret_never-ship'),
-    ]) {
-      await expectLater(
-        client.sendEmailOtp(
-          config: unsafeConfig,
-          email: 'user@example.com',
-          codeVerifier: verifier,
-          redirectTo: 'sonusauris://auth/callback',
-        ),
-        throwsA(isA<FormatException>()),
-      );
-    }
-    for (final redirect in [
-      'http://attacker.example/callback',
-      'https://user:secret@console.example/auth/callback',
-      'https://console.example/auth/callback?next=attacker',
-      'https://console.example/auth/callback#token',
-      'sonusauris://auth/callback/extra',
-    ]) {
-      await expectLater(
-        client.sendEmailOtp(
-          config: config,
-          email: 'user@example.com',
-          codeVerifier: verifier,
-          redirectTo: redirect,
-        ),
-        throwsA(isA<FormatException>()),
-      );
-    }
-    expect(calls, 0);
-=======
     expect(jsonDecode(captured.body)['refresh_token'], 'refresh-1');
     expect(session.accessToken, access2);
     expect(session.refreshToken, 'refresh-2');
@@ -484,7 +358,7 @@ void main() {
         }),
       );
 
-      for (final invalidCode in ['   ', '12345', '1234567', '12x456']) {
+      for (final invalidCode in ['   ', '12345', '1234567', '12x456', '12345a']) {
         await expectLater(
           client.verifyEmailOtp(
             config: config,
@@ -592,7 +466,12 @@ void main() {
     );
 
     expect(
-      () => client.sendEmailOtp(config: insecure, email: 'user@example.com'),
+      () => client.sendEmailOtp(
+        config: insecure,
+        email: 'user@example.com',
+        codeVerifier: verifier,
+        redirectTo: 'sonusauris://auth/callback',
+      ),
       throwsA(isA<FormatException>()),
     );
   });
@@ -604,8 +483,12 @@ void main() {
     );
 
     expect(
-      () =>
-          client.sendEmailOtp(config: unconfigured, email: 'user@example.com'),
+      () => client.sendEmailOtp(
+        config: unconfigured,
+        email: 'user@example.com',
+        codeVerifier: verifier,
+        redirectTo: 'sonusauris://auth/callback',
+      ),
       throwsA(isA<FormatException>()),
     );
   });
@@ -620,7 +503,12 @@ void main() {
     );
 
     await expectLater(
-      client.sendEmailOtp(config: config, email: 'not-an-email'),
+      client.sendEmailOtp(
+        config: config,
+        email: 'not-an-email',
+        codeVerifier: verifier,
+        redirectTo: 'sonusauris://auth/callback',
+      ),
       throwsA(isA<FormatException>()),
     );
     await expectLater(
@@ -632,6 +520,52 @@ void main() {
       throwsA(isA<FormatException>()),
     );
     expect(called, isFalse);
+  });
+
+  test('rejects unsafe client keys and redirect URLs', () async {
+    var calls = 0;
+    final client = SupabaseAuthClient(
+      httpClient: MockClient((_) async {
+        calls++;
+        return http.Response('{}', 200);
+      }),
+    );
+
+    for (final unsafeConfig in [
+      config.copyWith(supabaseUrl: 'https://user:secret@project.supabase.co'),
+      config.copyWith(supabaseUrl: 'https://project.supabase.co?tenant=other'),
+      config.copyWith(supabaseUrl: 'https://project.supabase.co#other'),
+      config.copyWith(supabaseUrl: 'http://project.supabase.co'),
+      config.copyWith(supabaseAnonKey: 'sb_secret_never-ship'),
+    ]) {
+      await expectLater(
+        client.sendEmailOtp(
+          config: unsafeConfig,
+          email: 'user@example.com',
+          codeVerifier: verifier,
+          redirectTo: 'sonusauris://auth/callback',
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    }
+    for (final redirect in [
+      'http://attacker.example/callback',
+      'https://user:secret@console.example/auth/callback',
+      'https://console.example/auth/callback?next=attacker',
+      'https://console.example/auth/callback#token',
+      'sonusauris://auth/callback/extra',
+    ]) {
+      await expectLater(
+        client.sendEmailOtp(
+          config: config,
+          email: 'user@example.com',
+          codeVerifier: verifier,
+          redirectTo: redirect,
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    }
+    expect(calls, 0);
   });
 
   test('rejects a service-role project key before making a request', () async {
@@ -649,7 +583,12 @@ void main() {
     );
 
     await expectLater(
-      client.sendEmailOtp(config: unsafe, email: 'user@example.com'),
+      client.sendEmailOtp(
+        config: unsafe,
+        email: 'user@example.com',
+        codeVerifier: verifier,
+        redirectTo: 'sonusauris://auth/callback',
+      ),
       throwsA(
         isA<FormatException>().having(
           (error) => error.message,
@@ -694,7 +633,12 @@ void main() {
     );
 
     await expectLater(
-      client.sendEmailOtp(config: config, email: 'user@example.com'),
+      client.sendEmailOtp(
+        config: config,
+        email: 'user@example.com',
+        codeVerifier: verifier,
+        redirectTo: 'sonusauris://auth/callback',
+      ),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
@@ -703,7 +647,6 @@ void main() {
         ),
       ),
     );
->>>>>>> origin/main
   });
 
   test('recognizes passwordless AAL2 and rejects password-backed MFA', () {
