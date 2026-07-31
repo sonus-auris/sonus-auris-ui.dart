@@ -538,13 +538,11 @@ class AppController {
   late final Stream<AppViewModel> _viewModels;
   StreamSubscription<void>? _closedSegmentsSubscription;
   StreamSubscription<dynamic>? _triggerSubscription;
-  final CollisionSensorService _collisionSensor = CollisionSensorService();
   StreamSubscription<CollisionEvent>? _collisionSubscription;
   StreamSubscription<dynamic>? _detectionsSubscription;
   StreamSubscription<dynamic>? _uploadSubscription;
   StreamSubscription<String>? _resumeRequestsSubscription;
   StreamSubscription<DiagnosticEntry>? _diagnosticTelemetrySubscription;
-  StreamSubscription<CollisionEvent>? _collisionSubscription;
   StreamSubscription<Uri>? _authLinkSubscription;
   StreamSubscription<DevicePresenceSnapshot>? _devicePresenceSubscription;
   StreamSubscription<RustPresenceSnapshot>? _rustPresenceSubscription;

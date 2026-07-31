@@ -1,46 +1,26 @@
-<<<<<<< HEAD
-// Branded passwordless Supabase magic-link surface.
-=======
 // Reusable, validated passwordless Supabase sign-in surface. A single email +
 // one-time-code flow covers both sign-in and sign-up (an unknown address is
 // created the moment its first code is verified), so there is no separate
 // sign-up mode and nothing to memorize.
->>>>>>> origin/main
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../theme/sonus_brand.dart';
 import '../theme/sonus_theme.dart';
-<<<<<<< HEAD
-import 'supabase_auth_form.dart';
-=======
->>>>>>> origin/main
 
 class SupabaseAuthPanel extends StatefulWidget {
   const SupabaseAuthPanel({
     super.key,
-<<<<<<< HEAD
-    required this.onSendMagicLink,
-    required this.onVerifyCode,
-    this.onBusyChanged,
-    this.enabled = true,
-    this.title = 'Welcome',
-=======
     required this.onRequestCode,
     required this.onSubmitCode,
     this.onBusyChanged,
     this.enabled = true,
     this.title = 'Sign in or create your account',
->>>>>>> origin/main
     this.description =
         'Use one private account across your phone, desktop, and web dashboard. '
         'We email a one-time code to sign you in.',
   });
 
-<<<<<<< HEAD
-  final Future<bool> Function(String email) onSendMagicLink;
-  final Future<bool> Function(String email, String code) onVerifyCode;
-=======
   /// Emails the sign-in link + one-time code. Returns true when the code was
   /// sent, which reveals the code field.
   final Future<bool> Function(String email) onRequestCode;
@@ -48,7 +28,6 @@ class SupabaseAuthPanel extends StatefulWidget {
   /// Redeems the emailed code, signing the user in (or creating the account on
   /// first use).
   final Future<void> Function(String email, String code) onSubmitCode;
->>>>>>> origin/main
   final ValueChanged<bool>? onBusyChanged;
   final bool enabled;
   final String title;
@@ -61,25 +40,17 @@ class SupabaseAuthPanel extends StatefulWidget {
 enum _PanelBusy { none, request, verify }
 
 class _SupabaseAuthPanelState extends State<SupabaseAuthPanel> {
+  final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
-<<<<<<< HEAD
-=======
   final _codeController = TextEditingController();
   bool _codeSent = false;
   _PanelBusy _busy = _PanelBusy.none;
 
   bool get _isBusy => _busy != _PanelBusy.none;
->>>>>>> origin/main
 
   @override
   void dispose() {
     _emailController.dispose();
-<<<<<<< HEAD
-    super.dispose();
-  }
-
-  Future<bool> _runBool(Future<bool> Function() action) async {
-=======
     _codeController.dispose();
     super.dispose();
   }
@@ -89,17 +60,12 @@ class _SupabaseAuthPanelState extends State<SupabaseAuthPanel> {
       return;
     }
     setState(() => _busy = phase);
->>>>>>> origin/main
     widget.onBusyChanged?.call(true);
+    FocusManager.instance.primaryFocus?.unfocus();
     try {
-      return await action();
+      await action();
     } finally {
       widget.onBusyChanged?.call(false);
-<<<<<<< HEAD
-    }
-  }
-
-=======
       if (mounted) {
         setState(() => _busy = _PanelBusy.none);
       }
@@ -146,7 +112,6 @@ class _SupabaseAuthPanelState extends State<SupabaseAuthPanel> {
     setState(() => _codeSent = false);
   }
 
->>>>>>> origin/main
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -155,15 +120,6 @@ class _SupabaseAuthPanelState extends State<SupabaseAuthPanel> {
     }
     return Semantics(
       container: true,
-<<<<<<< HEAD
-      label: 'Sonus Auris passwordless account authentication',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Align(
-            alignment: Alignment.centerLeft,
-            child: SonusEyebrow('Secure account', icon: Icons.lock_outline),
-=======
       label: 'Sonus Auris account authentication',
       child: AutofillGroup(
         child: Form(
@@ -184,28 +140,11 @@ class _SupabaseAuthPanelState extends State<SupabaseAuthPanel> {
               const SizedBox(height: 12),
               const _SecurityNote(),
             ],
->>>>>>> origin/main
           ),
-          const SizedBox(height: 16),
-          Text(widget.title, style: theme.textTheme.headlineSmall),
-          const SizedBox(height: 6),
-          Text(widget.description, style: theme.textTheme.bodyMedium),
-          const SizedBox(height: 20),
-          SupabaseAuthForm(
-            emailController: _emailController,
-            onSendMagicLink: (email) =>
-                _runBool(() => widget.onSendMagicLink(email)),
-            onVerifyCode: (email, code) =>
-                _runBool(() => widget.onVerifyCode(email, code)),
-          ),
-          const SizedBox(height: 12),
-          const _SecurityNote(),
-        ],
+        ),
       ),
     );
   }
-<<<<<<< HEAD
-=======
 
   List<Widget> _emailFields(ThemeData theme) => [
     TextFormField(
@@ -329,7 +268,6 @@ class _SupabaseAuthPanelState extends State<SupabaseAuthPanel> {
     }
     return null;
   }
->>>>>>> origin/main
 }
 
 class _SecurityNote extends StatelessWidget {
@@ -351,14 +289,8 @@ class _SecurityNote extends StatelessWidget {
           SizedBox(width: 9),
           Expanded(
             child: Text(
-<<<<<<< HEAD
-              'Protected by a one-time Supabase email code and mandatory '
-              'two-factor authentication. Sonus Auris does not ask for or '
-              'store an account password.',
-=======
               'Protected by Supabase Auth. We email you a one-time code, so there '
               'is nothing to memorize and no secret to store.',
->>>>>>> origin/main
               style: TextStyle(color: SonusColors.inkSoft, height: 1.3),
             ),
           ),
