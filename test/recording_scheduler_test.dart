@@ -48,6 +48,7 @@ void main() {
       final scheduler = RecordingScheduler(
         platform: platform,
         now: () => DateTime(2026, 6, 15, 8, 0),
+        observeAppLifecycle: false,
       );
       scheduler.sync(RecordingSchedule.defaultSchedule());
       async.flushMicrotasks();
@@ -65,6 +66,7 @@ void main() {
       final scheduler = RecordingScheduler(
         platform: platform,
         now: () => clock,
+        observeAppLifecycle: false,
       );
       scheduler.onTransition = fired.add;
 
@@ -81,8 +83,8 @@ void main() {
       expect(platform.registered.single.first.startsRecording, isTrue);
 
       // Advance to 9:00 — the start barrier should fire a "should record" event.
-      async.elapse(const Duration(hours: 1));
       clock = DateTime(2026, 6, 15, 9, 0);
+      async.elapse(const Duration(hours: 1));
       async.flushMicrotasks();
       expect(fired, [true]);
 
@@ -90,12 +92,63 @@ void main() {
     });
   });
 
+  test(
+    'background start is deferred until foreground resume but stop still fires',
+    () {
+      fakeAsync((async) {
+        final start = DateTime(2026, 6, 15, 8); // Monday
+        final platform = _RecordingPlatform();
+        final fired = <bool>[];
+        final scheduler = RecordingScheduler(
+          platform: platform,
+          now: () => start.add(async.elapsed),
+          canStartFromTimer: () => false,
+          observeAppLifecycle: false,
+        )..onTransition = fired.add;
+        final schedule = RecordingSchedule(
+          enabled: true,
+          days: [
+            DaySchedule(windows: [w(9 * 60, 10 * 60)]),
+            ...List.generate(6, (_) => DaySchedule.empty),
+          ],
+        );
+
+        scheduler.sync(schedule);
+        async.flushMicrotasks();
+        async.elapse(const Duration(hours: 1));
+        async.flushMicrotasks();
+        expect(
+          fired,
+          isEmpty,
+          reason: 'a background timer must not initiate microphone capture',
+        );
+
+        // This method is called by AppLifecycleListener only on a real resume.
+        scheduler.reconcileAfterForegroundResume();
+        expect(fired, [true]);
+
+        async.elapse(const Duration(hours: 1));
+        async.flushMicrotasks();
+        expect(
+          fired,
+          [true, false],
+          reason: 'schedule-owned capture still stops at the closing barrier',
+        );
+        scheduler.dispose();
+      });
+    },
+  );
+
   test('drains pending OS schedule command through the platform', () async {
     final platform = _RecordingPlatform()..pendingShouldRecord = true;
-    final scheduler = RecordingScheduler(platform: platform);
+    final scheduler = RecordingScheduler(
+      platform: platform,
+      observeAppLifecycle: false,
+    );
 
     expect(await scheduler.drainPendingShouldRecord(), isTrue);
     expect(await scheduler.drainPendingShouldRecord(), isNull);
+    scheduler.dispose();
   });
 
   test('a newer sync wins while an older platform registration is pending', () {
@@ -106,6 +159,7 @@ void main() {
       final scheduler = RecordingScheduler(
         platform: platform,
         now: () => start.add(async.elapsed),
+        observeAppLifecycle: false,
       )..onTransition = fired.add;
       final first = RecordingSchedule(
         enabled: true,
@@ -151,7 +205,10 @@ void main() {
     'a cancellation failure does not poison a later schedule sync',
     () async {
       final platform = _RecordingPlatform()..failNextCancellation = true;
-      final scheduler = RecordingScheduler(platform: platform);
+      final scheduler = RecordingScheduler(
+        platform: platform,
+        observeAppLifecycle: false,
+      );
 
       await scheduler.sync(RecordingSchedule.defaultSchedule());
       final enabled = RecordingSchedule(
