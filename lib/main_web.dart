@@ -56,10 +56,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
   final _accountGroups = AccountGroupService();
   final _devicePresenceClient = SupabaseDevicePresenceClient();
   final _email = TextEditingController();
-<<<<<<< HEAD
-=======
   final _code = TextEditingController();
->>>>>>> origin/main
   final _supabaseUrl = TextEditingController(
     text: AppConfig.defaultSupabaseUrl,
   );

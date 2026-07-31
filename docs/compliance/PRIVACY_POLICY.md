@@ -83,36 +83,14 @@ user-entered notes. We do not bundle advertising SDKs.
 ## What we do not do
 
 - We do not sell your data.
-<<<<<<< HEAD
-- We do not use your data for advertising.
-- We do not have access to the contents of recordings sealed for Sonus Auris or
-  supported connected-storage backup. Copies you direct to iCloud Drive are
-  decrypted locally by your Apple device and governed by your Apple account.
-- We do not record unless you start capture or explicitly arm a recording schedule.
-
-## Where your data goes
-
-- **On your device** by default, inside private OS-protected app storage.
-- **To storage you control**, if you connect it (your S3-compatible bucket,
-  Google Drive, OneDrive, Dropbox, or iCloud). Supported outbound backups are
-  sealed on-device before transfer, except that iCloud copies are decrypted
-  locally into your own iCloud Drive so they remain usable there. Each
-  provider's handling is governed by its terms.
-- **To Supabase and the optional Sonus Auris backend**, only for features you
-  invoke (authentication, settings/consent sync, diagnostics, backup
-  coordination, encrypted backup, and alert links). Recordings remain
-  client-encrypted; the services cannot derive the device-held key.
-- **To an external recognition provider**, only when you explicitly enable and
-  invoke a feature that needs it. The provider receives the bounded audio excerpt
-  required for that request; connected-storage encryption does not apply to an
-  excerpt deliberately sent for recognition.
-=======
 - We do not use your data for advertising or cross-app tracking.
 - We do not record until you start, accept a prompt, or explicitly arm a schedule.
 - We do not claim that a schedule can bypass force-quit, force-stop, permission,
   or operating-system restrictions.
 - We cannot decrypt ordinary encrypted backup/sync objects because the required
   private keys remain on authorized client devices or in user-controlled recovery.
+  Copies you direct to iCloud Drive are decrypted locally by your Apple device
+  and governed by your Apple account.
 - We do not send raw audio to external AI/transcription services by default.
 
 ## Where your data goes
@@ -120,13 +98,18 @@ user-entered notes. We do not bundle advertising SDKs.
 - **On your device:** the app-private rolling working window, local analysis,
   playback, temporary analysis artifacts, settings, and secure key material.
 - **To storage you connect:** encrypted objects can go to your S3-compatible
-  bucket, Google Drive, OneDrive, iCloud, or another supported destination.
+  bucket, Google Drive, OneDrive, Dropbox, iCloud, or another supported
+  destination. Supported outbound backups are sealed on-device before transfer,
+  except that iCloud copies are decrypted locally into your own iCloud Drive so
+  they remain usable there. Each provider's handling is governed by its terms.
 - **To Supabase and the Sonus Auris backend:** account/auth data, consent/settings,
   authorized-device public keys, diagnostics, encrypted backup/sync objects or
   coordination metadata, and features you request.
 - **To an optional processing provider:** only when you explicitly enable a
-  feature that needs it; the app sends the minimum declared data for that feature.
->>>>>>> origin/main
+  feature that needs it; the app sends the minimum declared data for that
+  feature (for example the bounded audio excerpt required for a recognition
+  request). Connected-storage encryption does not apply to an excerpt
+  deliberately sent for recognition.
 
 ## Retention
 
