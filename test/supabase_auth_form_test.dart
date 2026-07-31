@@ -37,6 +37,7 @@ void main() {
     expect(harness.requestCalls, 0);
     // There is no password field, and the code field only appears after a code
     // has actually been requested.
+    expect(find.textContaining('Password'), findsNothing);
     expect(find.byKey(const ValueKey('supabase-code-field')), findsNothing);
   });
 

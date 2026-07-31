@@ -3898,7 +3898,6 @@ class AppController {
       _resumeRequestsSubscription?.cancel() ?? Future<void>.value(),
       _transferConditionsSubscription?.cancel() ?? Future<void>.value(),
       _diagnosticTelemetrySubscription?.cancel() ?? Future<void>.value(),
-      _collisionSubscription?.cancel() ?? Future<void>.value(),
       _authLinkSubscription?.cancel() ?? Future<void>.value(),
       _devicePresenceSubscription?.cancel() ?? Future<void>.value(),
       _rustPresenceSubscription?.cancel() ?? Future<void>.value(),
