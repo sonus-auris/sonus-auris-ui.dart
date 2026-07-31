@@ -2796,7 +2796,7 @@ class AppController {
       return;
     }
     unawaited(_collisionSubscription?.cancel());
-    _collisionSubscription = _collisionSensor
+    _collisionSubscription = _collisionSensors
         .collisions(sensitivityG: _config.value.collisionSensitivityG)
         .listen(
           _onCollision,
