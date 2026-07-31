@@ -267,12 +267,9 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-<<<<<<< HEAD
     windowManager.removeListener(this);
     trayManager.removeListener(this);
-=======
     _authLinkSubscription?.cancel();
->>>>>>> origin/main
     FlutterError.onError = _previousFlutterOnError;
     ui.PlatformDispatcher.instance.onError = _previousPlatformOnError;
     unawaited(_disposeController());
