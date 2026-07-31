@@ -25,16 +25,9 @@ class AccountStatus {
   /// treating the user as signed in.
   final bool mfaRequired;
 
-<<<<<<< HEAD
-  /// The email magic link/code succeeded, but no verified Supabase MFA factor
-  /// exists yet. Account-backed features remain locked until enrollment is
-  /// challenged and verified.
-  final bool mfaEnrollmentRequired;
-=======
   /// The first-factor session exists but the factor list could not be verified.
   /// Cloud account access remains closed until a retry succeeds.
   final bool mfaCheckFailed;
->>>>>>> origin/main
 
   /// Factors known for the signed-in user (verified and pending), for both the
   /// challenge step and the Account management list.
