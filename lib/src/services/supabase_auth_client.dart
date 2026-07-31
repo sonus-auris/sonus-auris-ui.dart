@@ -696,7 +696,6 @@ class SupabaseAuthClient {
       throw const FormatException('Enter the 6-digit verification code.');
     }
     return normalized;
->>>>>>> origin/main
   }
 
   void close() {
