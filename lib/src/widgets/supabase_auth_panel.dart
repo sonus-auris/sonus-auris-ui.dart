@@ -120,7 +120,7 @@ class _SupabaseAuthPanelState extends State<SupabaseAuthPanel> {
     }
     return Semantics(
       container: true,
-      label: 'Sonus Auris account authentication',
+      label: 'Sonus Auris passwordless account authentication',
       child: AutofillGroup(
         child: Form(
           key: _formKey,

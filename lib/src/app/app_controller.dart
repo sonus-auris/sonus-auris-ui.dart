@@ -608,12 +608,6 @@ class AppController {
 
   Future<void> init() async {
     _diagnostics.add('App controller init started.');
-    _collisionSubscription = _collisionSensors.events.listen(
-      (event) => unawaited(_onPossibleCollision(event)),
-      onError: (Object error) {
-        _diagnostics.add('Collision sensor stream error: $error');
-      },
-    );
     _diagnosticTelemetrySubscription = _diagnostics.events.listen(
       _queueDiagnosticTelemetry,
       onError: (_) {},
