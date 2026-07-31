@@ -47,10 +47,23 @@ class FakeTokenStore implements TokenStore {
   Future<void> clearPendingMagicLink() async => _pending = null;
 }
 
-String token({String aal = 'aal1', String email = 'a@example.test'}) {
+String token({
+  String aal = 'aal1',
+  String email = 'a@example.test',
+  List<String>? methods,
+}) {
   String seg(Map<String, Object?> m) =>
       base64Url.encode(utf8.encode(jsonEncode(m))).replaceAll('=', '');
-  return '${seg({'alg': 'HS256'})}.${seg({'sub': 'user-1', 'email': email, 'aal': aal})}.sig';
+  final authenticationMethods = methods ?? ['otp', if (aal == 'aal2') 'totp'];
+  return '${seg({'alg': 'HS256'})}.${seg({
+    'sub': 'user-1',
+    'email': email,
+    'aal': aal,
+    'exp': DateTime.now().toUtc().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000,
+    'amr': [
+      for (final method in authenticationMethods) {'method': method},
+    ],
+  })}.sig';
 }
 
 String sessionJson({String aal = 'aal1', String email = 'a@example.test'}) =>
@@ -184,6 +197,7 @@ void main() {
     expect(controller.phase, AuthPhase.mfaEnrollmentRequired);
     expect(controller.isSignedIn, isFalse);
     expect(controller.activeRecorderCount, 0);
+    expect(controller.entitlement.deviceLimit, 2); // free default, no row
   });
 
   test('a PKCE magic-link code signs in without URL bearer tokens', () async {
@@ -361,6 +375,29 @@ void main() {
     // verify returns a fresh aal2 session from the mock, clearing the gate.
     await controller.submitMfaChallenge('123456');
     expect(controller.phase, AuthPhase.signedIn);
+  });
+
+  test('password-backed AAL2 never enters the console', () async {
+    final storedSession = SupabaseSession(
+      accessToken: token(aal: 'aal2', methods: const ['password', 'totp']),
+      refreshToken: 'r',
+      expiresAtUtc: DateTime.now().toUtc().add(const Duration(hours: 1)),
+      userId: 'user-1',
+      email: 'a@example.test',
+    );
+    final store = FakeTokenStore(storedSession);
+    final controller = controllerWith(
+      factors: [
+        {'id': 'f1', 'factor_type': 'totp', 'status': 'verified'},
+      ],
+      store: store,
+    );
+
+    await controller.bootstrap();
+
+    expect(controller.phase, AuthPhase.signedOut);
+    expect(controller.isSignedIn, isFalse);
+    expect(await store.readSession(), isNull);
   });
 
   test('over-limit recorders are locked at the free tier of 2', () async {

@@ -20,7 +20,23 @@ String sessionBody({String aal = 'aal1'}) {
       .replaceAll('=', '');
   final payload = base64Url
       .encode(
-        utf8.encode('{"sub":"user-1","email":"a@example.test","aal":"$aal"}'),
+        utf8.encode(
+          jsonEncode({
+            'sub': 'user-1',
+            'email': 'a@example.test',
+            'aal': aal,
+            'exp':
+                DateTime.now()
+                    .toUtc()
+                    .add(const Duration(hours: 1))
+                    .millisecondsSinceEpoch ~/
+                1000,
+            'amr': [
+              {'method': 'otp'},
+              if (aal == 'aal2') {'method': 'totp'},
+            ],
+          }),
+        ),
       )
       .replaceAll('=', '');
   final token = '$header.$payload.sig';
@@ -246,21 +262,48 @@ void main() {
     expect(session.refreshToken, 'refresh-1');
   });
 
-  test('verifyEmailOtp rejects malformed codes before any request', () async {
-    var called = false;
+  test(
+    'verifyEmailOtp requires exactly six digits without a request',
+    () async {
+      var called = false;
+      final client = AuthClient(
+        config: _config,
+        httpClient: MockClient((_) async {
+          called = true;
+          return http.Response('{}', 200);
+        }),
+      );
+
+      for (final invalidCode in [' ', '12345', '1234567', '12x456', '12345a']) {
+        await expectLater(
+          client.verifyEmailOtp(email: 'a@example.test', code: invalidCode),
+          throwsA(isA<FormatException>()),
+        );
+      }
+      expect(called, isFalse);
+    },
+  );
+
+  test('consumeMagicLink accepts only the configured callback URI', () async {
+    final encoded = jsonDecode(sessionBody()) as Map<String, Object?>;
+    final callback = Uri.parse(
+      'https://console.example/auth/callback'
+      '#access_token=${encoded['access_token']}'
+      '&refresh_token=${encoded['refresh_token']}'
+      '&expires_in=3600',
+    );
     final client = AuthClient(
       config: _config,
-      httpClient: MockClient((req) async {
-        called = true;
-        return http.Response('{}', 200);
-      }),
+      httpClient: MockClient((_) async => http.Response('{}', 500)),
     );
 
-    await expectLater(
-      client.verifyEmailOtp(email: 'a@example.test', code: '12345a'),
+    final session = await client.consumeMagicLink(callback);
+    expect(session.userId, 'user-1');
+    expect(session.refreshToken, 'refresh-1');
+    expect(
+      () => client.consumeMagicLink(callback.replace(scheme: 'another-app')),
       throwsA(isA<FormatException>()),
     );
-    expect(called, isFalse);
   });
 
   test('refreshSession uses the refresh_token grant', () async {

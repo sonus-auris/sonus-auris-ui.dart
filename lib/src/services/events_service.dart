@@ -3,7 +3,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
-import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart' as interfaces;
+import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
+    as interfaces;
 
 import '../config/console_config.dart';
 import 'key_policy.dart';
@@ -61,7 +62,9 @@ class EventsService {
       for (final row in decoded) {
         if (row is Map) {
           try {
-            events.add(interfaces.AcousticEvent.fromJson(row.cast<String, Object?>()));
+            events.add(
+              interfaces.AcousticEvent.fromJson(row.cast<String, Object?>()),
+            );
           } catch (_) {
             // skip malformed
           }
@@ -69,7 +72,10 @@ class EventsService {
       }
       return (events: events, error: null);
     } catch (e) {
-      return (events: const <interfaces.AcousticEvent>[], error: 'Events read error: $e');
+      return (
+        events: const <interfaces.AcousticEvent>[],
+        error: 'Events read error: $e',
+      );
     }
   }
 
@@ -88,7 +94,12 @@ class EventsService {
     }
     final baseSegments = base.pathSegments.where((p) => p.isNotEmpty);
     return base.replace(
-      pathSegments: [...baseSegments, 'rest', 'v1', interfaces.acousticEventsTable],
+      pathSegments: [
+        ...baseSegments,
+        'rest',
+        'v1',
+        interfaces.acousticEventsTable,
+      ],
     );
   }
 

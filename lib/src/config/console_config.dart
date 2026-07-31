@@ -46,9 +46,10 @@ class ConsoleConfig {
   /// Empty is valid for a Supabase-only local console.
   final String backendBaseUrl;
 
-  /// Approved callback that receives a one-time Supabase PKCE code. When
-  /// empty, web uses its current HTTP(S) location and native desktop uses
-  /// [kNativeConsoleAuthRedirect].
+  /// Approved callback registered with Supabase and the operating system for
+  /// passwordless magic-link callbacks (PKCE code, token hash, or implicit
+  /// session). When empty, web uses its current HTTP(S) location and native
+  /// desktop uses [kNativeConsoleAuthRedirect].
   final String authRedirectUrl;
 
   /// Stripe Checkout payment-link URL used by the Billing screen on web and
@@ -58,4 +59,24 @@ class ConsoleConfig {
 
   bool get isConfigured =>
       supabaseUrl.trim().isNotEmpty && supabaseAnonKey.trim().isNotEmpty;
+
+  /// Exact application URI for magic-link callbacks; falls back to
+  /// [kNativeConsoleAuthRedirect] when [authRedirectUrl] is not configured.
+  Uri get authRedirectUri {
+    final configured = authRedirectUrl.trim();
+    final uri = Uri.parse(
+      configured.isEmpty ? kNativeConsoleAuthRedirect : configured,
+    );
+    if (!uri.hasScheme || uri.host.isEmpty) {
+      throw const FormatException(
+        'The auth redirect URL must include a scheme and host.',
+      );
+    }
+    if (uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment) {
+      throw const FormatException(
+        'The auth redirect URL must not contain credentials, a query, or a fragment.',
+      );
+    }
+    return uri;
+  }
 }

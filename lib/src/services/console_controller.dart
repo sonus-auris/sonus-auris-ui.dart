@@ -28,18 +28,16 @@ enum AuthPhase {
   /// A code was emailed — collect it.
   codeSent,
 
-  /// First factor cleared but the account requires a second factor.
-  mfaRequired,
-
-  /// First factor cleared but this account has no verified second factor yet.
+  /// First factor cleared, but this account has no verified second factor yet.
   /// Console data remains inaccessible until enrollment is verified.
   mfaEnrollmentRequired,
 
-  /// Fully signed in with a verified `aal2` session.
+  /// First factor cleared but the account requires a second factor.
+  mfaRequired,
+
+  /// Fully signed in with a verified factor and an `aal2` access token.
   signedIn,
 }
-
-enum _MfaDisposition { enrollmentRequired, challengeRequired, satisfied }
 
 class ConsoleController extends ChangeNotifier {
   ConsoleController({
@@ -99,6 +97,8 @@ class ConsoleController extends ChangeNotifier {
   List<interfaces.AcousticEvent> _events_ = const [];
   List<interfaces.AcousticEvent> get events => _events_;
 
+  Future<void>? _refreshInFlight;
+
   // MFA challenge state during sign-in.
   String? _challengeFactorId;
   String? _challengeId;
@@ -121,6 +121,11 @@ class ConsoleController extends ChangeNotifier {
   Future<void> bootstrap() async {
     final stored = await _store.readSession();
     if (stored == null || stored.isEmpty) {
+      _setPhase(AuthPhase.signedOut);
+      return;
+    }
+    if (!stored.hasPasswordlessFirstFactor) {
+      await _store.clearSession();
       _setPhase(AuthPhase.signedOut);
       return;
     }
@@ -193,10 +198,16 @@ class ConsoleController extends ChangeNotifier {
         code: code,
       );
       await _store.clearPendingMagicLink();
-      await _requireExpectedIdentity(session, _pendingEmail);
-      _session = session;
-      await _store.writeSession(session);
-      await _continueAfterFirstFactor();
+      await _acceptFirstFactorSession(session, expectedEmail: _pendingEmail);
+    });
+  }
+
+  /// Completes passwordless sign-in from a verified operating-system deep link.
+  /// The callback is never logged or persisted; only the resulting session is.
+  Future<void> consumeMagicLink(Uri callback) async {
+    await _guard(() async {
+      final session = await _auth.consumeMagicLink(callback);
+      await _acceptFirstFactorSession(session, expectedEmail: _pendingEmail);
     });
   }
 
@@ -232,11 +243,9 @@ class ConsoleController extends ChangeNotifier {
           codeVerifier: pending.codeVerifier,
         );
         await _store.clearPendingMagicLink();
-        await _requireExpectedIdentity(session, pending.email);
-        _session = session;
-        _pendingEmail = session.email;
-        await _store.writeSession(session);
-        await _continueAfterFirstFactor(
+        await _acceptFirstFactorSession(
+          session,
+          expectedEmail: pending.email,
           successMessage: 'Signed in with your magic link.',
         );
       });
@@ -297,6 +306,13 @@ class ConsoleController extends ChangeNotifier {
         challengeId: challengeId,
         code: code,
       );
+      if (!session.isPasswordlessAal2) {
+        await _expireSession();
+        throw StateError(
+          'Supabase did not preserve passwordless sign-in after MFA. '
+          'Sign in again.',
+        );
+      }
       _session = session;
       await _store.writeSession(session);
       _challengeFactorId = null;
@@ -429,10 +445,17 @@ class ConsoleController extends ChangeNotifier {
         challengeId: challengeId,
         code: code,
       );
+      if (!session.isPasswordlessAal2) {
+        await _expireSession();
+        throw StateError(
+          'Supabase did not preserve passwordless sign-in after MFA. '
+          'Sign in again.',
+        );
+      }
       _session = session;
       await _store.writeSession(session);
-      final disposition = await _refreshMfaState();
-      if (disposition != _MfaDisposition.satisfied) {
+      final nextPhase = await _refreshMfaState();
+      if (nextPhase != AuthPhase.signedIn) {
         throw StateError(
           'The second factor was not activated. Start enrollment again.',
         );
@@ -447,13 +470,9 @@ class ConsoleController extends ChangeNotifier {
 
   Future<void> removeFactor(String factorId) async {
     await _guard(() async {
-      final target = _factors
-          .where((factor) => factor.id == factorId)
-          .firstOrNull;
-      final verifiedCount = _factors
-          .where((factor) => factor.isVerified)
-          .length;
-      if (target?.isVerified == true && verifiedCount <= 1) {
+      final verified = _factors.where((factor) => factor.isVerified).toList();
+      if (verified.length <= 1 &&
+          verified.any((factor) => factor.id == factorId)) {
         throw StateError(
           'Two-factor authentication is mandatory. Add and verify another '
           'method before removing this one.',
@@ -469,20 +488,40 @@ class ConsoleController extends ChangeNotifier {
 
   String get _accessToken => _session?.accessToken ?? '';
 
+  /// Adopts a first-factor session (email code or magic link): verifies it is
+  /// passwordless and belongs to the identity that requested sign-in, persists
+  /// it, then continues to enrollment, the MFA challenge, or the console.
+  Future<void> _acceptFirstFactorSession(
+    SupabaseSession session, {
+    String? expectedEmail,
+    String? successMessage,
+  }) async {
+    if (!session.hasPasswordlessFirstFactor) {
+      throw StateError(
+        'Supabase did not return a passwordless session. Sign in again.',
+      );
+    }
+    await _requireExpectedIdentity(session, expectedEmail ?? _pendingEmail);
+    _session = session;
+    _pendingEmail = session.email;
+    await _store.writeSession(session);
+    await _continueAfterFirstFactor(successMessage: successMessage);
+  }
+
   Future<void> _continueAfterFirstFactor({String? successMessage}) async {
-    final disposition = await _refreshMfaState();
-    switch (disposition) {
-      case _MfaDisposition.enrollmentRequired:
+    final nextPhase = await _refreshMfaState();
+    switch (nextPhase) {
+      case AuthPhase.mfaEnrollmentRequired:
         _message =
             'Set up an authenticator app or verified phone to finish creating '
             'your account.';
         _setPhase(AuthPhase.mfaEnrollmentRequired);
         return;
-      case _MfaDisposition.challengeRequired:
+      case AuthPhase.mfaRequired:
         _message = 'Enter your two-factor code to finish signing in.';
         _setPhase(AuthPhase.mfaRequired);
         return;
-      case _MfaDisposition.satisfied:
+      default:
         await _enterConsole();
         if (successMessage != null) {
           _message = successMessage;
@@ -492,10 +531,10 @@ class ConsoleController extends ChangeNotifier {
   }
 
   Future<void> _enterConsole() async {
-    if ((_session?.aal ?? 'aal1') != 'aal2' ||
-        !_factors.any((factor) => factor.isVerified)) {
+    final hasVerifiedFactor = _factors.any((factor) => factor.isVerified);
+    if (!hasVerifiedFactor || !(_session?.isPasswordlessAal2 ?? false)) {
       throw StateError(
-        'A verified second factor is required before entering the console.',
+        'Passwordless sign-in and a verified second factor are required.',
       );
     }
     _setPhase(AuthPhase.signedIn);
@@ -519,27 +558,33 @@ class ConsoleController extends ChangeNotifier {
     }
   }
 
-  /// Loads factors and fails closed unless the session has both an enrolled
-  /// factor and the `aal2` claim issued after verifying it.
-  Future<_MfaDisposition> _refreshMfaState() async {
+  /// Loads factors and returns the only safe next authentication state. Fails
+  /// closed unless the session has both an enrolled factor and the `aal2`
+  /// claim issued after verifying it.
+  Future<AuthPhase> _refreshMfaState() async {
     if (_accessToken.isEmpty) {
-      return _MfaDisposition.enrollmentRequired;
+      throw StateError('The Supabase access token is missing.');
     }
     _factors = await _auth.listFactors(_accessToken);
     final hasVerified = _factors.any((f) => f.isVerified);
     if (!hasVerified) {
       _challengeFactorId = null;
       _challengeId = null;
-      return _MfaDisposition.enrollmentRequired;
+      return AuthPhase.mfaEnrollmentRequired;
     }
-    final pending = hasVerified && (_session?.aal ?? 'aal1') != 'aal2';
-    if (pending && _challengeFactorId == null) {
-      // Default to the first verified factor for the challenge screen.
-      _challengeFactorId = _factors.firstWhere((f) => f.isVerified).id;
+    if (!(_session?.isPasswordlessAal2 ?? false)) {
+      if (_challengeFactorId == null ||
+          !_factors.any(
+            (factor) => factor.id == _challengeFactorId && factor.isVerified,
+          )) {
+        // Default to the first verified factor for the challenge screen.
+        _challengeFactorId = _factors.firstWhere((f) => f.isVerified).id;
+      }
+      return AuthPhase.mfaRequired;
     }
-    return pending
-        ? _MfaDisposition.challengeRequired
-        : _MfaDisposition.satisfied;
+    _challengeFactorId = null;
+    _challengeId = null;
+    return AuthPhase.signedIn;
   }
 
   Future<void> _ensureFreshToken() async {
@@ -548,11 +593,67 @@ class ConsoleController extends ChangeNotifier {
       return;
     }
     if (session.refreshToken.trim().isEmpty) {
+      await _expireSession();
+      throw StateError('Your secure session expired. Sign in again.');
+    }
+    final inFlight = _refreshInFlight;
+    if (inFlight != null) {
+      await inFlight;
       return;
     }
-    final refreshed = await _auth.refreshSession(session.refreshToken);
-    _session = refreshed;
-    await _store.writeSession(refreshed);
+    final future = _refreshCurrentSession(session);
+    _refreshInFlight = future;
+    try {
+      await future;
+    } finally {
+      _refreshInFlight = null;
+    }
+  }
+
+  Future<void> _refreshCurrentSession(SupabaseSession previous) async {
+    try {
+      var refreshed = await _auth.refreshSession(previous.refreshToken);
+      if (refreshed.userId != previous.userId) {
+        await _expireSession();
+        throw StateError(
+          'Supabase returned a session for another account. Sign in again.',
+        );
+      }
+      if (!refreshed.hasPasswordlessFirstFactor) {
+        await _expireSession();
+        throw StateError(
+          'Supabase did not preserve passwordless sign-in. Sign in again.',
+        );
+      }
+      if (refreshed.refreshToken.trim().isEmpty) {
+        refreshed = refreshed.copyWith(refreshToken: previous.refreshToken);
+      }
+      _session = refreshed;
+      await _store.writeSession(refreshed);
+      if (_phase == AuthPhase.signedIn && !refreshed.isPasswordlessAal2) {
+        final nextPhase = await _refreshMfaState();
+        _setPhase(nextPhase);
+        throw StateError(
+          'Your session needs passwordless sign-in and two-factor verification '
+          'before accessing data.',
+        );
+      }
+    } catch (_) {
+      if (!previous.expiresAtUtc.isAfter(DateTime.now().toUtc())) {
+        await _expireSession();
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _expireSession() async {
+    await _clearSession();
+    _deviceList = const [];
+    _events_ = const [];
+    _factors = const [];
+    _entitlement = Entitlement.free;
+    _lockedDeviceIds = const {};
+    _setPhase(AuthPhase.signedOut);
   }
 
   Future<void> _clearSession() async {

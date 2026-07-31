@@ -1,6 +1,7 @@
 // Events: recent acoustic detections across the account's unlocked devices.
 import 'package:flutter/material.dart';
-import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart' as interfaces;
+import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
+    as interfaces;
 
 import '../services/console_controller.dart';
 import '../util/relative_time.dart';
@@ -22,8 +23,11 @@ class EventsScreen extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 48),
               child: Column(
                 children: [
-                  Icon(Icons.graphic_eq,
-                      size: 48, color: Theme.of(context).colorScheme.outline),
+                  Icon(
+                    Icons.graphic_eq,
+                    size: 48,
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
                   const SizedBox(height: 12),
                   const Text(
                     'No detections yet. Acoustic events from your devices '

@@ -22,8 +22,16 @@ class _ConsoleHomeState extends State<ConsoleHome> {
 
   static const _destinations = [
     (icon: Icons.devices_outlined, selected: Icons.devices, label: 'Devices'),
-    (icon: Icons.graphic_eq_outlined, selected: Icons.graphic_eq, label: 'Events'),
-    (icon: Icons.workspace_premium_outlined, selected: Icons.workspace_premium, label: 'Billing'),
+    (
+      icon: Icons.graphic_eq_outlined,
+      selected: Icons.graphic_eq,
+      label: 'Events',
+    ),
+    (
+      icon: Icons.workspace_premium_outlined,
+      selected: Icons.workspace_premium,
+      label: 'Billing',
+    ),
     (icon: Icons.person_outline, selected: Icons.person, label: 'Account'),
   ];
 
@@ -122,8 +130,10 @@ class ConsolePage extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(title,
-                      style: Theme.of(context).textTheme.headlineSmall),
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
                 ),
                 ...actions,
                 if (onRefresh != null)

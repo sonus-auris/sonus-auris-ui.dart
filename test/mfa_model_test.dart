@@ -5,8 +5,18 @@ void main() {
   test('parses a factors array, skipping entries with no id', () {
     final factors = MfaFactor.listFromUserJson({
       'factors': [
-        {'id': 't1', 'factor_type': 'totp', 'status': 'verified', 'friendly_name': 'Authy'},
-        {'id': 'p1', 'factor_type': 'phone', 'status': 'unverified', 'phone': '+15551230000'},
+        {
+          'id': 't1',
+          'factor_type': 'totp',
+          'status': 'verified',
+          'friendly_name': 'Authy',
+        },
+        {
+          'id': 'p1',
+          'factor_type': 'phone',
+          'status': 'unverified',
+          'phone': '+15551230000',
+        },
         {'factor_type': 'totp'}, // no id → skipped
       ],
     });

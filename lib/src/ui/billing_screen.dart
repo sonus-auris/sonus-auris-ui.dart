@@ -42,7 +42,9 @@ class BillingScreen extends StatelessWidget {
                         entitlement.isPlus
                             ? Icons.workspace_premium
                             : Icons.card_membership_outlined,
-                        color: entitlement.isPlus ? scheme.tertiary : scheme.primary,
+                        color: entitlement.isPlus
+                            ? scheme.tertiary
+                            : scheme.primary,
                       ),
                       const SizedBox(width: 10),
                       Text(
@@ -52,11 +54,13 @@ class BillingScreen extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Text(entitlement.isPlus
-                      ? 'Up to ${entitlement.deviceLimit} devices.'
-                          '${entitlement.currentPeriodEnd != null ? ' Renews ${formatStamp(entitlement.currentPeriodEnd!)}.' : ''}'
-                      : '2 devices included. Upgrade to Plus to control 3 or more '
-                          'devices and unlock permanent saves.'),
+                  Text(
+                    entitlement.isPlus
+                        ? 'Up to ${entitlement.deviceLimit} devices.'
+                              '${entitlement.currentPeriodEnd != null ? ' Renews ${formatStamp(entitlement.currentPeriodEnd!)}.' : ''}'
+                        : '2 devices included. Upgrade to Plus to control 3 or more '
+                              'devices and unlock permanent saves.',
+                  ),
                   const SizedBox(height: 12),
                   _UsageMeter(
                     used: controller.activeRecorderCount,
@@ -127,8 +131,10 @@ class _UpgradeSection extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Upgrade to Plus',
-                style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              'Upgrade to Plus',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             const Text(
               '· Control 3 or more devices\n'
@@ -139,7 +145,9 @@ class _UpgradeSection extends StatelessWidget {
             FilledButton.icon(
               onPressed: configured ? () => _upgrade(context) : null,
               icon: const Icon(Icons.open_in_new),
-              label: Text(configured ? 'Upgrade with Stripe' : 'Payments not configured'),
+              label: Text(
+                configured ? 'Upgrade with Stripe' : 'Payments not configured',
+              ),
             ),
           ],
         ),

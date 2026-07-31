@@ -23,8 +23,8 @@ class ConsoleScaffold extends StatelessWidget {
             );
           case AuthPhase.signedOut:
           case AuthPhase.codeSent:
-          case AuthPhase.mfaRequired:
           case AuthPhase.mfaEnrollmentRequired:
+          case AuthPhase.mfaRequired:
             return SignInScreen(controller: controller);
           case AuthPhase.signedIn:
             return ConsoleHome(controller: controller);

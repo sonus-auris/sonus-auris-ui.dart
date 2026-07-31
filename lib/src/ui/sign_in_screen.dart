@@ -37,10 +37,10 @@ class SignInScreen extends StatelessWidget {
     switch (controller.phase) {
       case AuthPhase.codeSent:
         return _CodeStep(controller: controller);
-      case AuthPhase.mfaRequired:
-        return _MfaStep(controller: controller);
       case AuthPhase.mfaEnrollmentRequired:
         return _MfaEnrollmentStep(controller: controller);
+      case AuthPhase.mfaRequired:
+        return _MfaStep(controller: controller);
       case AuthPhase.loading:
       case AuthPhase.signedOut:
       case AuthPhase.signedIn:
@@ -181,7 +181,7 @@ class _CodeStepState extends State<_CodeStep> {
           title: 'Check your email',
           subtitle:
               'Enter the 6-digit code we sent to ${controller.pendingEmail}, '
-              'or use the one-time link in the email as a fallback.',
+              'or use the one-time magic link in the email as a fallback.',
         ),
         TextField(
           controller: _code,

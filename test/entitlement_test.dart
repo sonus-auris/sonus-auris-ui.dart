@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sonus_auris_console/src/services/entitlements_service.dart';
-import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart' as interfaces;
+import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
+    as interfaces;
 
 void main() {
   test('the free default is 2 devices, no premium features', () {

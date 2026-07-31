@@ -38,3 +38,31 @@ String aalFromJwt(String accessToken) {
   final value = claim?.toString().trim().toLowerCase() ?? '';
   return value.isEmpty ? 'aal1' : value;
 }
+
+bool _hasPasswordlessFirstFactor(Map<String, Object?> claims) {
+  final amr = claims['amr'];
+  if (amr is! List) {
+    return false;
+  }
+  final methods = amr
+      .whereType<Map>()
+      .map((entry) => entry['method']?.toString().trim().toLowerCase() ?? '')
+      .where((method) => method.isNotEmpty)
+      .toSet();
+  const passwordlessMethods = {'otp', 'magiclink', 'email/signup'};
+  return !methods.contains('password') &&
+      methods.any(passwordlessMethods.contains);
+}
+
+/// Whether AMR records a passwordless email first factor and no password.
+bool passwordlessFirstFactorFromJwt(String accessToken) =>
+    _hasPasswordlessFirstFactor(decodeJwtClaims(accessToken));
+
+/// True only when this session has MFA and records a passwordless email first
+/// factor. This is a fail-closed client gate; the server and RLS enforce the
+/// same rule after verifying the JWT signature.
+bool passwordlessAal2FromJwt(String accessToken) {
+  final claims = decodeJwtClaims(accessToken);
+  return claims['aal']?.toString().trim().toLowerCase() == 'aal2' &&
+      _hasPasswordlessFirstFactor(claims);
+}

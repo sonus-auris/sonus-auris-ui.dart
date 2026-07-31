@@ -24,8 +24,8 @@ class MfaFactor {
   String get typeLabel => isTotp
       ? 'Authenticator app'
       : isPhone
-          ? 'Text message'
-          : factorType;
+      ? 'Text message'
+      : factorType;
 
   static MfaFactor? fromJson(Object? json) {
     if (json is! Map) {
@@ -50,9 +50,7 @@ class MfaFactor {
     if (raw is! List) {
       return const [];
     }
-    return [
-      for (final entry in raw) ?fromJson(entry),
-    ];
+    return [for (final entry in raw) ?fromJson(entry)];
   }
 }
 

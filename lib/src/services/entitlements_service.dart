@@ -4,7 +4,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
-import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart' as interfaces;
+import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
+    as interfaces;
 
 import '../config/console_config.dart';
 import 'key_policy.dart';
@@ -95,7 +96,10 @@ class EntitlementsService {
       }
       return (entitlement: Entitlement.free, error: null);
     } catch (e) {
-      return (entitlement: Entitlement.free, error: 'Entitlements read error: $e');
+      return (
+        entitlement: Entitlement.free,
+        error: 'Entitlements read error: $e',
+      );
     }
   }
 
@@ -114,7 +118,12 @@ class EntitlementsService {
     }
     final baseSegments = base.pathSegments.where((p) => p.isNotEmpty);
     return base.replace(
-      pathSegments: [...baseSegments, 'rest', 'v1', interfaces.entitlementsTable],
+      pathSegments: [
+        ...baseSegments,
+        'rest',
+        'v1',
+        interfaces.entitlementsTable,
+      ],
     );
   }
 

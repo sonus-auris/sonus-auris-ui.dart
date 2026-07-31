@@ -179,18 +179,74 @@ class AuthClient {
     required String code,
   }) async {
     _requireEmail(email);
-    final trimmedCode = code.trim();
-    if (trimmedCode.length != 6 ||
-        !trimmedCode.runes.every((rune) => rune >= 0x30 && rune <= 0x39)) {
-      throw const FormatException('Enter the 6-digit code from the email.');
-    }
+    final normalizedCode = _requireSixDigitCode(code);
     final json = await _post(
       'verify',
-      {'type': 'email', 'email': email.trim(), 'token': trimmedCode},
+      {'type': 'email', 'email': email.trim(), 'token': normalizedCode},
       'That code was not accepted. Request a fresh one and try again.',
       exposeServerError: false,
     );
     return SupabaseSession.fromJson(json);
+  }
+
+  /// Adopts a Supabase magic-link callback after verifying that it targets the
+  /// exact application URI configured for this build. Supabase may return an
+  /// implicit session in the fragment or a token hash in the query string.
+  Future<SupabaseSession> consumeMagicLink(Uri callback) async {
+    final expected = magicLinkRedirectUri ?? config.authRedirectUri;
+    if (callback.scheme != expected.scheme ||
+        callback.host != expected.host ||
+        callback.port != expected.port ||
+        callback.path != expected.path) {
+      throw const FormatException('That sign-in link targets another app.');
+    }
+
+    final parameters = <String, String>{
+      ...callback.queryParameters,
+      ...Uri.splitQueryString(
+        callback.fragment,
+        encoding: const Utf8Codec(allowMalformed: false),
+      ),
+    };
+    final callbackError =
+        parameters['error_description'] ?? parameters['error'];
+    if ((callbackError ?? '').trim().isNotEmpty) {
+      throw StateError(callbackError!.trim());
+    }
+
+    final accessToken = (parameters['access_token'] ?? '').trim();
+    final tokenHash = (parameters['token_hash'] ?? '').trim();
+    if (accessToken.isNotEmpty && tokenHash.isNotEmpty) {
+      throw const FormatException(
+        'The sign-in callback contained conflicting credentials.',
+      );
+    }
+    if (accessToken.isNotEmpty) {
+      final refreshToken = (parameters['refresh_token'] ?? '').trim();
+      if (refreshToken.isEmpty) {
+        throw const FormatException(
+          'The sign-in callback contained no refresh token.',
+        );
+      }
+      final expiresIn = int.tryParse(parameters['expires_in'] ?? '');
+      return SupabaseSession.fromJson({
+        'access_token': accessToken,
+        'refresh_token': refreshToken,
+        'expires_in': ?expiresIn,
+      });
+    }
+
+    if (tokenHash.isNotEmpty) {
+      final json = await _post(
+        'verify',
+        {'type': 'magiclink', 'token_hash': tokenHash},
+        'That magic link was not accepted. Request a fresh one and try again.',
+      );
+      return SupabaseSession.fromJson(json);
+    }
+    throw const FormatException(
+      'The sign-in link contained no usable Supabase session.',
+    );
   }
 
   /// Exchanges a refresh token for a new session.
@@ -267,14 +323,17 @@ class AuthClient {
     required String phone,
     String? friendlyName,
   }) async {
-    if (phone.trim().isEmpty) {
-      throw const FormatException('Enter the phone number to enroll.');
+    final normalizedPhone = phone.trim();
+    if (!RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(normalizedPhone)) {
+      throw const FormatException(
+        'Enter a phone number in E.164 form, such as +15551234567.',
+      );
     }
     final json = await _post(
       'factors',
       {
         'factor_type': 'phone',
-        'phone': phone.trim(),
+        'phone': normalizedPhone,
         if ((friendlyName ?? '').trim().isNotEmpty)
           'friendly_name': friendlyName!.trim(),
       },
@@ -285,7 +344,7 @@ class AuthClient {
     if (id.isEmpty) {
       throw const FormatException('SMS enrollment returned no id.');
     }
-    return PhoneEnrollment(factorId: id, phone: phone.trim());
+    return PhoneEnrollment(factorId: id, phone: normalizedPhone);
   }
 
   /// Starts a challenge (sends the SMS for phone factors); returns its id.
@@ -310,12 +369,11 @@ class AuthClient {
     required String challengeId,
     required String code,
   }) async {
-    if (code.trim().isEmpty) {
-      throw const FormatException('Enter the 6-digit code.');
-    }
+    final normalizedChallenge = _requireId(challengeId);
+    final normalizedCode = _requireSixDigitCode(code);
     final json = await _post(
       'factors/${_requireId(factorId)}/verify',
-      {'challenge_id': challengeId.trim(), 'code': code.trim()},
+      {'challenge_id': normalizedChallenge, 'code': normalizedCode},
       'That code was not accepted.',
       accessToken: accessToken,
     );
@@ -417,9 +475,7 @@ class AuthClient {
         'Supabase URL must use HTTPS except localhost development.',
       );
     }
-    if (base.userInfo.isNotEmpty ||
-        base.query.isNotEmpty ||
-        base.fragment.isNotEmpty) {
+    if (base.userInfo.isNotEmpty || base.hasQuery || base.hasFragment) {
       throw const FormatException(
         'Supabase URL must not contain credentials, a query, or a fragment.',
       );
@@ -455,10 +511,21 @@ class AuthClient {
 
   String _requireId(String factorId) {
     final trimmed = factorId.trim();
-    if (trimmed.isEmpty) {
+    if (trimmed.isEmpty ||
+        trimmed.contains('/') ||
+        trimmed.contains('?') ||
+        trimmed.contains('#')) {
       throw const FormatException('A factor id is required.');
     }
     return trimmed;
+  }
+
+  String _requireSixDigitCode(String code) {
+    final normalized = code.trim();
+    if (!RegExp(r'^[0-9]{6}$').hasMatch(normalized)) {
+      throw const FormatException('Enter the 6-digit verification code.');
+    }
+    return normalized;
   }
 
   String _describe(http.Response response, String fallback) {
