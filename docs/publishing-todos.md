@@ -1,10 +1,6 @@
 # Publishing follow-ups
 
-<<<<<<< HEAD
 Last reviewed: July 29, 2026.
-=======
-Last reviewed: July 27, 2026.
->>>>>>> origin/main
 
 The repository now contains the build, upload, installer-signing, notarization,
 and R2 publication paths. The remaining blockers are account enrollment,
