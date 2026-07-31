@@ -364,10 +364,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   late int _step;
   bool _busy = false;
   final _emailController = TextEditingController();
-<<<<<<< HEAD
-=======
   final _codeController = TextEditingController();
->>>>>>> origin/main
   final _supabaseUrlController = TextEditingController();
   final _supabaseAnonKeyController = TextEditingController();
   bool _supabaseProjectSeeded = false;
