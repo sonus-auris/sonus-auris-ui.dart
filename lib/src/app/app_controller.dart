@@ -2268,18 +2268,17 @@ class AppController {
       await _persistPendingTelemetry();
     }
     await _persistSecrets(next);
-<<<<<<< HEAD
-    _connectTelemetryRealtime();
-    _connectDevicePresence();
-=======
     if (session.isPasswordlessAal2) {
       _connectTelemetryRealtime();
+      _connectDevicePresence();
       _diagnostics.add(
         'Supabase telemetry streaming started.',
         event: 'telemetry.streaming_started',
       );
     } else {
       _telemetryRealtimeClient.close();
+      _devicePresenceClient.close();
+      _rustDevicePresenceClient.close();
       final hasVerified = _accountStatus.value.verifiedMfaFactors.isNotEmpty;
       _accountStatus.add(
         _accountStatus.value.copyWith(
@@ -2289,7 +2288,6 @@ class AppController {
         ),
       );
     }
->>>>>>> origin/main
     _scheduleSupabaseTokenRefresh();
     _scheduleTelemetryFlush();
   }
