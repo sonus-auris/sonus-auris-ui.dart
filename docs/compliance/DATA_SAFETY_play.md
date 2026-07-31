@@ -39,25 +39,7 @@ current Play definitions and the exact shipped integration.
 | **App interactions / feature state** | Yes if telemetry includes operation state, consent version, schedule state, or transfer status | No by default | App functionality, diagnostics | Optional/account-dependent |
 | **Purchase history** | Yes when store purchases/entitlements are verified | Apple/Google and the verification service participate in the transaction | App functionality, account management | Optional purchase |
 
-<<<<<<< HEAD
-Notes for the reviewer/console:
-- We do **not** select "Data is processed ephemerally" for audio unless true for
-  your config; default above assumes optional backup.
-- No data is used for **advertising or marketing**, and no data is **sold/shared**
-  with third parties. Supabase, connected object stores, and any external
-  recognition endpoint the user explicitly configures act as service providers
-  or user-directed destinations. No third-party ads/analytics SDKs are bundled.
-- Audio sent to your own connected storage (S3/Drive/OneDrive/Dropbox/iCloud) is
-  governed by that provider. Supported outbound backups are sealed on-device,
-  except iCloud copies are decrypted locally into the user's own iCloud Drive.
-  For Play purposes we declare audio as "collected" because it can leave the
-  device, and "not shared" because we don't hand it to third parties.
-- Optional cloud transcription and song identification can send a bounded audio
-  excerpt/fingerprint to the configured recognition provider. Keep Audio declared
-  as collected when either feature is present in the shipped build.
-=======
 ## Required reviewer notes
->>>>>>> origin/main
 
 - Recording begins only after the user taps Start, accepts a recording prompt, or
   explicitly arms a schedule.
