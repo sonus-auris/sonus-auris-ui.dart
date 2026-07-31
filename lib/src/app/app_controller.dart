@@ -1653,12 +1653,7 @@ class AppController {
       await _settingsStore.clearPendingSupabaseAuth();
       await _requireExpectedSupabaseIdentity(session, pending.email);
       await _applySupabaseSession(session);
-      final mfaPending = await _refreshMfaChallengeState();
-      if (mfaPending) {
-        _message.add(_mandatoryMfaPrompt());
-        return true;
-      }
-      await _onSignedIn(successMessage: 'Signed in with your magic link.');
+      await _routeFirstFactorSession();
       return true;
     } catch (error) {
       _message.add(_describeError(error));
