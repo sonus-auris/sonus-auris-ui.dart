@@ -201,16 +201,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     if (mounted) {
       setState(() {
         _config = config;
-        _status = 'Magic link sent. Check your email.';
-=======
-  Future<bool> _requestCode(String email) async {
-    final config = _currentConfig();
-    await _auth.sendEmailOtp(config: config, email: email);
-    if (mounted) {
-      setState(() {
-        _config = config;
         _status = 'We emailed you a sign-in link and a 6-digit code.';
->>>>>>> origin/main
       });
     }
     return true;
