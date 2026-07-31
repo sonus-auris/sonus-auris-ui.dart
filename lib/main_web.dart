@@ -138,10 +138,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     _auth.close();
     _rest.close();
     _email.dispose();
-<<<<<<< HEAD
-=======
     _code.dispose();
->>>>>>> origin/main
     _supabaseUrl.dispose();
     _supabaseKey.dispose();
     super.dispose();
