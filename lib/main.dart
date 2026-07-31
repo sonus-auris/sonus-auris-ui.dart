@@ -1230,30 +1230,18 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-<<<<<<< HEAD
-  Future<bool> _requestMagicLink(AppViewModel viewModel, String email) async {
-=======
   Future<bool> _requestCode(AppViewModel viewModel, String email) async {
->>>>>>> origin/main
     await _persistSupabaseConfig(viewModel);
     return widget.controller.requestSupabaseEmailOtp(email: email);
   }
 
-<<<<<<< HEAD
-  Future<bool> _verifyEmailCode(
-=======
   Future<void> _submitCode(
->>>>>>> origin/main
     AppViewModel viewModel,
     String email,
     String code,
   ) async {
     await _persistSupabaseConfig(viewModel);
-<<<<<<< HEAD
-    return widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
-=======
     await widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
->>>>>>> origin/main
   }
 
   int _parseInt(String value, int fallback) {
