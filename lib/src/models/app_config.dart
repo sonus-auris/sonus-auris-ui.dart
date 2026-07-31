@@ -114,11 +114,7 @@ class AppConfig {
   final String s3Endpoint;
 
   /// Supabase project URL (e.g. https://abc.supabase.co). Used for GoTrue
-<<<<<<< HEAD
-  /// passwordless magic-link sign-in. Non-secret.
-=======
-  /// passwordless email-code sign-in. Non-secret.
->>>>>>> origin/main
+  /// passwordless magic-link / email-code sign-in. Non-secret.
   final String supabaseUrl;
 
   /// Supabase anon/publishable API key. Safe to ship in the client; never the
