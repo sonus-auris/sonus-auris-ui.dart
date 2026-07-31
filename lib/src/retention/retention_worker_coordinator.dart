@@ -104,7 +104,7 @@ class RetentionWorkerCoordinator {
     // There is no await between admission and accounting, so a destructive
     // transition cannot observe an admitted worker without also draining it.
     final lease = RetentionWorkerLease._(
-      _owner: this,
+      owner: this,
       worker: worker,
       generation: _generation,
     );
