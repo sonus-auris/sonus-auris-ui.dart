@@ -2908,7 +2908,6 @@ class AppController {
       recorderError = error;
       _diagnostics.add('Recorder stop failed: $error.');
     } finally {
-      await _collisionSensors.stop();
       await _backgroundCaptureService.stop();
     }
     unawaited(_feedback.say('Recording stopped'));
