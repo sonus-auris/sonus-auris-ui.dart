@@ -3683,7 +3683,6 @@ class _AcousticSectionState extends State<_AcousticSection> {
                 _apply();
               },
             ),
-<<<<<<< HEAD
             const Text(
               'Clear human speech also keeps quality high briefly; quiet '
               'periods return to the low-storage profile.',
@@ -3694,28 +3693,6 @@ class _AcousticSectionState extends State<_AcousticSection> {
               subtitle: const Text(
                 'Optional. Short speech clips are sent to the external endpoint '
                 'you configure; on-device recognition is tried first.',
-=======
-            if (_sttEnabled) ...[
-              TextField(
-                controller: _keywordsController,
-                decoration: const InputDecoration(
-                  labelText: 'Keywords (comma-separated)',
-                  helperText:
-                      'Spoken keywords ding and raise recording quality for '
-                      '90 minutes.',
-                ),
-                onEditingComplete: _apply,
-              ),
-              TextField(
-                controller: _safeWordsController,
-                decoration: const InputDecoration(
-                  labelText: 'Safe words (comma-separated)',
-                  helperText:
-                      'Distress/help words — same ding and quality boost, '
-                      'kept separate from ordinary keywords.',
-                ),
-                onEditingComplete: _apply,
->>>>>>> origin/main
               ),
               value: _sttEnabled,
               onChanged: _speech
