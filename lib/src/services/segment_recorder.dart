@@ -167,17 +167,13 @@ class SegmentRecorder {
 
   /// Forces newly opened segments to remain at the full capture rate until the
   /// deadline. Used for clear speech and the configured recognition-phrase
-  /// window.
+  /// window. Overlapping calls only ever lengthen the window.
   void forceHighQualityFor(Duration duration) {
-    final candidate = DateTime.now().toUtc().add(duration);
-    final current = _forceHighQualityUntilUtc;
-    if (current == null || candidate.isAfter(current)) {
-      _forceHighQualityUntilUtc = candidate;
-    }
+    _qualityBoost.trigger(DateTime.now(), duration);
   }
 
   void clearForcedHighQuality() {
-    _forceHighQualityUntilUtc = null;
+    _qualityBoost.clear();
   }
 
   /// The most recent [window] of captured audio (processed PCM16), or null when
