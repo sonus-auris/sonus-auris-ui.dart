@@ -1,4 +1,5 @@
 // Detects likely collision-sized accelerometer impulses while capture is live.
+// ignore_for_file: prefer_initializing_formals
 //
 // Two detection surfaces are exposed:
 //  * [CollisionSensorService.start]/[CollisionSensorService.events] — a
