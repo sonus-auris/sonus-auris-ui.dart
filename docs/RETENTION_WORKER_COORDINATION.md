@@ -20,6 +20,10 @@ Account deletion is permanent. Consent revocation may be followed by
 `resumeAfterConsent` only after cleanup has completed and the product has
 recorded a new consent grant.
 
+A failed destructive clear never reopens worker admission. Account deletion
+remains permanently sealed while cleanup is retried until `localStateCleared` is
+true. After a successful clear, repeated deletion calls are idempotent.
+
 ## Worker contract
 
 Every retention-sensitive worker must run through `runWorker` and keep all of its
@@ -48,6 +52,10 @@ Cleanup happens after draining. Therefore a worker admitted before invalidation
 cannot recreate a path after cleanup: it either observes a stale lease and stops,
 or finishes before cleanup deletes its output.
 
+Cleanup success is tracked separately from permanent sealing. Conflating the two
+would make a failed account-deletion clear look complete and suppress the retry
+needed to remove residual local state.
+
 ## Current integration boundary
 
 This change introduces and exhaustively tests the coordination primitive. It does
@@ -69,4 +77,5 @@ and proves:
 - cleanup runs after the worker drains;
 - no path, inventory entry, index row, token, or queued retry is recreated;
 - account deletion cannot be resumed;
+- failed cleanup remains sealed and can be retried;
 - a new consent generation can record only after cleanup and explicit regrant.
