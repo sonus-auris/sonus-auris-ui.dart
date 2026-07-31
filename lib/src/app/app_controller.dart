@@ -54,8 +54,6 @@ import '../services/context_trigger_sources.dart';
 import '../services/local_notifications_service.dart';
 import '../services/playback_service.dart';
 import '../services/power_network_gate.dart';
-import '../services/collision_detector.dart';
-import '../services/collision_sensor_service.dart';
 import '../services/recording_feedback.dart';
 import '../services/recording_scheduler.dart';
 import '../services/recording_schedule_platform.dart';
