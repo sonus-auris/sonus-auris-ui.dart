@@ -592,20 +592,12 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
                 if (!signedIn)
                   SupabaseAuthForm(
                     emailController: _email,
-<<<<<<< HEAD
-                    supabaseUrlController: _supabaseUrl,
-                    supabaseAnonKeyController: _supabaseKey,
-                    showProjectConfiguration: true,
-                    onSendMagicLink: _sendMagicLink,
-                    onVerifyCode: _verifyEmailCode,
-=======
                     codeController: _code,
                     supabaseUrlController: _supabaseUrl,
                     supabaseAnonKeyController: _supabaseKey,
                     showProjectConfiguration: true,
-                    onRequestCode: _requestCode,
-                    onSubmitCode: _submitCode,
->>>>>>> origin/main
+                    onRequestCode: _sendMagicLink,
+                    onSubmitCode: _verifyEmailCode,
                   )
                 else ...[
                   Card(
