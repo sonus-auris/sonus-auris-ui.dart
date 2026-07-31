@@ -89,13 +89,12 @@ typedef DeviceRegistryResult = ({
   interfaces.DeviceRecord? device,
   String? error,
 });
-<<<<<<< HEAD
+
+/// Result of a registry mutation (revoke/rename): the updated row and error.
 typedef DeviceRegistryMutationResult = ({
   interfaces.DeviceRecord? device,
   String? error,
 });
-=======
->>>>>>> origin/main
 
 /// PostgREST client for the owner-scoped `devices` table.
 ///
