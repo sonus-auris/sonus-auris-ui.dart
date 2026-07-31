@@ -706,7 +706,6 @@ class AppConfig {
       musicDetectionEnabled: json['musicDetectionEnabled'] as bool? ?? true,
       speechDetectionEnabled: json['speechDetectionEnabled'] as bool? ?? true,
       shazamEnabled: json['shazamEnabled'] as bool? ?? false,
-<<<<<<< HEAD
       keywords: normalizePhrases(
         json['keywords'] is List
             ? (json['keywords'] as List).map((entry) => entry.toString())
@@ -721,20 +720,12 @@ class AppConfig {
         json['keywordQualityBoostMinutes'],
         90,
       ).clamp(15, 360),
-=======
-      keywords: _asStringList(json['keywords']),
-      safeWords: _asStringList(json['safeWords']),
-      keywordQualityBoostMinutes: _asInt(
-        json['keywordQualityBoostMinutes'],
-        90,
-      ).clamp(1, 24 * 60),
       collisionRemindersEnabled:
           json['collisionRemindersEnabled'] as bool? ?? false,
       collisionSensitivityG: _asDouble(
         json['collisionSensitivityG'],
         2.5,
       ).clamp(0.5, 16.0),
->>>>>>> origin/main
       sttEnabled: json['sttEnabled'] as bool? ?? false,
       sttEndpoint: json['sttEndpoint'] as String? ?? '',
       voiceIdEnabled: json['voiceIdEnabled'] as bool? ?? false,
