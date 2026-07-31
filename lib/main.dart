@@ -3425,10 +3425,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
         sttEndpoint: _sttEndpointController.text.trim(),
         keywords: keywords,
         safeWords: safeWords,
-<<<<<<< HEAD
         keywordQualityBoostMinutes: _phraseBoostMinutes.round(),
-=======
->>>>>>> origin/main
         adaptiveQualityEnabled: _adaptiveEnabled,
         captureSampleRate: _captureRate,
         quietSampleRate: _quietRate,
