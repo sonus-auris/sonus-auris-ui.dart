@@ -86,12 +86,7 @@ class AccountStatus {
       mfaEnrollmentRequired:
           mfaEnrollmentRequired ?? this.mfaEnrollmentRequired,
       mfaRequired: mfaRequired ?? this.mfaRequired,
-<<<<<<< HEAD
-      mfaEnrollmentRequired:
-          mfaEnrollmentRequired ?? this.mfaEnrollmentRequired,
-=======
       mfaCheckFailed: mfaCheckFailed ?? this.mfaCheckFailed,
->>>>>>> origin/main
       mfaFactors: mfaFactors ?? this.mfaFactors,
       deviceRevoked: deviceRevoked ?? this.deviceRevoked,
       activeRecorderDeviceCount:
