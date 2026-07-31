@@ -62,11 +62,8 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-<<<<<<< HEAD
             <!-- Supabase passwordless sign-up/sign-in callback. Keep this on the
                  main activity so app_links can adopt the returned session. -->
-=======
->>>>>>> origin/main
             <intent-filter android:label="supabase_magic_link">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
