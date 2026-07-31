@@ -163,7 +163,6 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     supabaseAnonKey: _supabaseKey.text.trim(),
   );
 
-<<<<<<< HEAD
   String get _effectiveAuthRedirectUrl {
     if (_authRedirectUrl.trim().isNotEmpty) {
       return _authRedirectUrl.trim();
