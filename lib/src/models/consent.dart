@@ -49,13 +49,14 @@ enum ConsentItem {
     required: false,
   ),
 
-  /// Accelerometer (NSMotionUsageDescription) for sleep analysis.
+  /// Accelerometer (NSMotionUsageDescription) for collision hints and sleep.
   motion(
     key: 'motion',
-    title: 'Motion & sleep sensors',
+    title: 'Motion sensor',
     rationale:
-        'During a sleep session the accelerometer detects stillness, tossing '
-        'and getting up to improve sleep-cycle accuracy. On-device only.',
+        'While recording, the accelerometer can flag a possible collision and '
+        'remind you that audio is being saved. During sleep analysis it also '
+        'detects stillness, tossing, and getting up. On-device only.',
     required: false,
   ),
 

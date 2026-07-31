@@ -1,4 +1,5 @@
-// Cloud speech-to-text client used to scan transcripts for magic-phrase keywords.
+// Speech-to-text client used to scan transcripts for configured recognition
+// phrases.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -8,17 +9,27 @@ import 'package:http/http.dart' as http;
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
 
-/// Result of a keyword scan over a transcript.
+enum SpokenPhraseKind { safeWord, keyword }
+
+/// Result of a configured-phrase scan over a transcript.
 class KeywordMatch {
-  const KeywordMatch({required this.keyword, required this.transcript});
+  const KeywordMatch({
+    required this.keyword,
+    required this.transcript,
+    required this.kind,
+  });
 
   final String keyword;
   final String transcript;
+  final SpokenPhraseKind kind;
+
+  bool get isSafeWord => kind == SpokenPhraseKind.safeWord;
 }
 
 /// Opt-in cloud speech-to-text. POSTs a short WAV clip to a user-configured
-/// endpoint and scans the returned transcript for keywords. Audio leaves the
-/// device only when [AppConfig.sttEnabled] is set and an endpoint is configured.
+/// endpoint and scans the returned transcript for keywords and safety words.
+/// Audio leaves the device only when [AppConfig.sttEnabled] is set and an
+/// endpoint is configured.
 class SpeechToTextClient {
   SpeechToTextClient({
     http.Client? httpClient,
@@ -68,17 +79,38 @@ class SpeechToTextClient {
     }
   }
 
-  /// First keyword (from [config.keywords]) that appears in the transcript, or
-  /// null. Case-insensitive, whole-word-ish (substring after lowercasing).
+  /// First configured phrase that appears in the transcript, or null.
+  ///
+  /// Safety words are checked before ordinary keywords, so they win even when
+  /// the same phrase appears in both lists. Matching is case-insensitive and
+  /// bounded by non-alphanumeric characters to avoid short phrases matching
+  /// inside unrelated words.
   KeywordMatch? matchKeyword(AppConfig config, String transcript) {
-    final lower = transcript.toLowerCase();
-    for (final keyword in config.keywords) {
-      final needle = keyword.trim().toLowerCase();
-      if (needle.isNotEmpty && lower.contains(needle)) {
-        return KeywordMatch(keyword: keyword.trim(), transcript: transcript);
+    for (final entry in [
+      (phrases: config.safeWords, kind: SpokenPhraseKind.safeWord),
+      (phrases: config.keywords, kind: SpokenPhraseKind.keyword),
+    ]) {
+      for (final phrase in entry.phrases) {
+        final needle = phrase.trim();
+        if (needle.isNotEmpty && _containsPhrase(transcript, needle)) {
+          return KeywordMatch(
+            keyword: needle,
+            transcript: transcript,
+            kind: entry.kind,
+          );
+        }
       }
     }
     return null;
+  }
+
+  bool _containsPhrase(String transcript, String phrase) {
+    final escaped = RegExp.escape(phrase);
+    return RegExp(
+      '(?:^|[^a-z0-9])$escaped(?=\$|[^a-z0-9])',
+      caseSensitive: false,
+      unicode: true,
+    ).hasMatch(transcript);
   }
 
   void close() {

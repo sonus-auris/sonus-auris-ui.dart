@@ -36,6 +36,7 @@ class LocalNotificationsService {
   static const String scheduleStartPayload = 'schedule-start';
   static const String scheduleStopPayload = 'schedule-stop';
   static const String sleepCycleAlarmPayload = 'sleep-cycle-alarm';
+  static const String collisionPayload = 'possible-collision';
 
   // Notification id partitions.
   static const int _scheduleStartBase = 780000;
@@ -43,6 +44,7 @@ class LocalNotificationsService {
   static const int _scheduleSpan = 64;
   static const int _consentId = 800000;
   static const int _sleepCycleAlarmBase = 810000;
+  static const int _collisionId = 820000;
 
   /// iOS allows at most 64 *pending* local notifications per app. Cap the total
   /// scheduled (start + stop) below that, leaving headroom for the consent
@@ -63,6 +65,11 @@ class LocalNotificationsService {
     const initSettings = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
       iOS: DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      ),
+      macOS: DarwinInitializationSettings(
         requestAlertPermission: false,
         requestBadgePermission: false,
         requestSoundPermission: false,
@@ -99,6 +106,14 @@ class LocalNotificationsService {
       final granted = await _plugin
           .resolvePlatformSpecificImplementation<
             IOSFlutterLocalNotificationsPlugin
+          >()
+          ?.requestPermissions(alert: true, badge: false, sound: true);
+      return granted ?? false;
+    }
+    if (Platform.isMacOS) {
+      final granted = await _plugin
+          .resolvePlatformSpecificImplementation<
+            MacOSFlutterLocalNotificationsPlugin
           >()
           ?.requestPermissions(alert: true, badge: false, sound: true);
       return granted ?? false;
@@ -150,6 +165,11 @@ class LocalNotificationsService {
       presentSound: true,
       interruptionLevel: InterruptionLevel.timeSensitive,
     ),
+    macOS: DarwinNotificationDetails(
+      presentAlert: true,
+      presentSound: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+    ),
   );
 
   static const NotificationDetails _sleepAlarmDetails = NotificationDetails(
@@ -163,6 +183,11 @@ class LocalNotificationsService {
       category: AndroidNotificationCategory.alarm,
     ),
     iOS: DarwinNotificationDetails(
+      presentAlert: true,
+      presentSound: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+    ),
+    macOS: DarwinNotificationDetails(
       presentAlert: true,
       presentSound: true,
       interruptionLevel: InterruptionLevel.timeSensitive,
@@ -258,6 +283,20 @@ class LocalNotificationsService {
       'Estimated cycle length: $minutes minutes.',
       _sleepAlarmDetails,
       payload: sleepCycleAlarmPayload,
+    );
+  }
+
+  /// Reminds the user that the rolling recorder captured a likely impact. This
+  /// is intentionally phrased as a possibility; accelerometer-only detection
+  /// cannot distinguish every phone drop from a vehicle collision.
+  Future<void> showPossibleCollision() async {
+    await ensureInitialized();
+    await _plugin.show(
+      _collisionId,
+      'Possible collision detected',
+      'Sonus Auris is recording. Open the app to review or save this moment.',
+      _sleepAlarmDetails,
+      payload: collisionPayload,
     );
   }
 }

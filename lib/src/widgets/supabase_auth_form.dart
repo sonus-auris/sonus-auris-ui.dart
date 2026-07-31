@@ -2,17 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../services/supabase_key_policy.dart';
 
-/// Shared, validated Supabase email/password form used during onboarding and
-/// from Configure. Keeping both entry points on one widget prevents the first
-/// run and returning-user flows from drifting apart.
+/// Shared passwordless Supabase magic-link form used by every app surface.
+///
+/// The same request signs in an existing address or creates a new account.
+/// A code field is retained as an optional fallback for projects whose Supabase
+/// email template includes `{{ .Token }}` as well as the confirmation link.
 class SupabaseAuthForm extends StatefulWidget {
   const SupabaseAuthForm({
     super.key,
     required this.emailController,
-    required this.passwordController,
-    required this.onSignIn,
-    required this.onSignUp,
-    required this.onPasswordReset,
+    required this.onSendMagicLink,
+    required this.onVerifyCode,
     this.supabaseUrlController,
     this.supabaseAnonKeyController,
     this.showProjectConfiguration = false,
@@ -20,12 +20,10 @@ class SupabaseAuthForm extends StatefulWidget {
   });
 
   final TextEditingController emailController;
-  final TextEditingController passwordController;
   final TextEditingController? supabaseUrlController;
   final TextEditingController? supabaseAnonKeyController;
-  final Future<void> Function(String email, String password) onSignIn;
-  final Future<void> Function(String email, String password) onSignUp;
-  final Future<void> Function(String email) onPasswordReset;
+  final Future<bool> Function(String email) onSendMagicLink;
+  final Future<bool> Function(String email, String code) onVerifyCode;
   final bool showProjectConfiguration;
   final bool enabled;
 
@@ -33,174 +31,133 @@ class SupabaseAuthForm extends StatefulWidget {
   State<SupabaseAuthForm> createState() => _SupabaseAuthFormState();
 }
 
-enum _AuthAction { signIn, signUp, passwordReset }
+enum _AuthAction { sendLink, verifyCode }
 
 class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
   final _formKey = GlobalKey<FormState>();
-  _AuthAction? _attemptedAction;
+  final _codeController = TextEditingController();
   _AuthAction? _busyAction;
   String? _inlineError;
-  bool _passwordVisible = false;
+  bool _linkSent = false;
 
   bool get _busy => _busyAction != null;
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final enabled = widget.enabled && !_busy;
     return Form(
       key: _formKey,
-      autovalidateMode: _attemptedAction == null
-          ? AutovalidateMode.disabled
-          : AutovalidateMode.onUserInteraction,
-      child: AutofillGroup(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (widget.showProjectConfiguration) ...[
-              _ProjectConfigurationFields(
-                urlController: widget.supabaseUrlController,
-                anonKeyController: widget.supabaseAnonKeyController,
-                enabled: enabled,
-              ),
-              const SizedBox(height: 16),
-            ],
-            TextFormField(
-              key: const ValueKey('supabase-email-field'),
-              controller: widget.emailController,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (widget.showProjectConfiguration) ...[
+            _ProjectConfigurationFields(
+              urlController: widget.supabaseUrlController,
+              anonKeyController: widget.supabaseAnonKeyController,
               enabled: enabled,
-              autofillHints: const [
-                AutofillHints.username,
-                AutofillHints.email,
-              ],
-              autocorrect: false,
-              enableSuggestions: false,
-              keyboardType: TextInputType.emailAddress,
-              textInputAction: TextInputAction.next,
-              validator: validateAccountEmail,
-              decoration: const InputDecoration(
-                labelText: 'Email',
-                hintText: 'you@example.com',
-                prefixIcon: Icon(Icons.alternate_email),
-              ),
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              key: const ValueKey('supabase-password-field'),
-              controller: widget.passwordController,
-              enabled: enabled,
-              autofillHints: const [AutofillHints.password],
-              autocorrect: false,
-              enableSuggestions: false,
-              obscureText: !_passwordVisible,
-              keyboardType: TextInputType.visiblePassword,
-              textInputAction: TextInputAction.done,
-              validator: (value) => validateAccountPassword(
-                value,
-                creatingAccount: _attemptedAction == _AuthAction.signUp,
-                passwordRequired: _attemptedAction != _AuthAction.passwordReset,
-              ),
-              onFieldSubmitted: enabled
-                  ? (_) => _submit(_AuthAction.signIn)
-                  : null,
-              decoration: InputDecoration(
-                labelText: 'Password',
-                helperText:
-                    'Use at least 6 characters when creating an account.',
-                prefixIcon: const Icon(Icons.lock_outline),
-                suffixIcon: IconButton(
-                  tooltip: _passwordVisible ? 'Hide password' : 'Show password',
-                  onPressed: enabled
-                      ? () =>
-                            setState(() => _passwordVisible = !_passwordVisible)
-                      : null,
-                  icon: Icon(
-                    _passwordVisible
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
-                  ),
-                ),
-              ),
-            ),
-            if (_inlineError != null) ...[
-              const SizedBox(height: 12),
-              Semantics(
-                liveRegion: true,
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    _inlineError!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onErrorContainer,
-                    ),
-                  ),
-                ),
-              ),
-            ],
             const SizedBox(height: 16),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final stacked = constraints.maxWidth < 390;
-                final signIn = FilledButton.icon(
-                  key: const ValueKey('supabase-sign-in-button'),
-                  onPressed: enabled ? () => _submit(_AuthAction.signIn) : null,
-                  icon: _actionIcon(_AuthAction.signIn, Icons.login),
-                  label: Text(
-                    _busyAction == _AuthAction.signIn
-                        ? 'Signing in…'
-                        : 'Sign in',
-                  ),
-                );
-                final signUp = OutlinedButton.icon(
-                  key: const ValueKey('supabase-sign-up-button'),
-                  onPressed: enabled ? () => _submit(_AuthAction.signUp) : null,
-                  icon: _actionIcon(
-                    _AuthAction.signUp,
-                    Icons.person_add_alt_1_outlined,
-                  ),
-                  label: Text(
-                    _busyAction == _AuthAction.signUp
-                        ? 'Creating…'
-                        : 'Create account',
-                  ),
-                );
-                if (stacked) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [signIn, const SizedBox(height: 10), signUp],
-                  );
-                }
-                return Row(
-                  children: [
-                    Expanded(child: signIn),
-                    const SizedBox(width: 12),
-                    Expanded(child: signUp),
-                  ],
-                );
-              },
+          ],
+          TextFormField(
+            key: const ValueKey('supabase-email-field'),
+            controller: widget.emailController,
+            enabled: enabled,
+            autofillHints: const [AutofillHints.email],
+            autocorrect: false,
+            enableSuggestions: false,
+            keyboardType: TextInputType.emailAddress,
+            textInputAction: TextInputAction.done,
+            validator: validateAccountEmail,
+            onFieldSubmitted: enabled ? (_) => _submitLink() : null,
+            decoration: const InputDecoration(
+              labelText: 'Email',
+              hintText: 'you@example.com',
+              prefixIcon: Icon(Icons.alternate_email),
             ),
-            const SizedBox(height: 6),
-            TextButton.icon(
-              key: const ValueKey('supabase-reset-password-button'),
-              onPressed: enabled
-                  ? () => _submit(_AuthAction.passwordReset)
-                  : null,
-              icon: _actionIcon(
-                _AuthAction.passwordReset,
-                Icons.lock_reset_outlined,
-              ),
-              label: Text(
-                _busyAction == _AuthAction.passwordReset
-                    ? 'Sending reset email…'
-                    : 'Forgot password?',
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'We’ll email a 6-digit Supabase sign-in code. The same code creates '
+            'your account on first use—there is no password.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (_linkSent) ...[
+            const SizedBox(height: 14),
+            TextFormField(
+              key: const ValueKey('supabase-code-field'),
+              controller: _codeController,
+              enabled: enabled,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.done,
+              autofillHints: const [AutofillHints.oneTimeCode],
+              validator: (value) => _linkSent ? validateEmailCode(value) : null,
+              onFieldSubmitted: enabled ? (_) => _verifyCode() : null,
+              decoration: const InputDecoration(
+                labelText: '6-digit email code',
+                helperText: 'Enter the code from your Sonus Auris email.',
+                prefixIcon: Icon(Icons.pin_outlined),
               ),
             ),
           ],
-        ),
+          if (_inlineError != null) ...[
+            const SizedBox(height: 12),
+            Semantics(
+              liveRegion: true,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  _inlineError!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onErrorContainer,
+                  ),
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            key: const ValueKey('supabase-send-link-button'),
+            onPressed: enabled ? _submitLink : null,
+            icon: _actionIcon(_AuthAction.sendLink, Icons.mark_email_read),
+            label: Text(
+              _busyAction == _AuthAction.sendLink
+                  ? 'Sending…'
+                  : _linkSent
+                  ? 'Send a fresh code'
+                  : 'Email me a 6-digit code',
+            ),
+          ),
+          if (_linkSent) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: const ValueKey('supabase-verify-code-button'),
+              onPressed: enabled ? _verifyCode : null,
+              icon: _actionIcon(_AuthAction.verifyCode, Icons.login),
+              label: Text(
+                _busyAction == _AuthAction.verifyCode
+                    ? 'Verifying…'
+                    : 'Verify email code',
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Check your inbox and enter the 6-digit code. The one-time link '
+              'in the same email is a fallback. You can close '
+              'this screen while the email opens Sonus Auris.',
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -215,31 +172,58 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
     );
   }
 
-  Future<void> _submit(_AuthAction action) async {
+  bool _validateBaseFields() {
+    return _formKey.currentState?.validate() ?? false;
+  }
+
+  Future<void> _submitLink() async {
     if (_busy || !widget.enabled) {
       return;
     }
+    _codeController.clear();
     setState(() {
-      _attemptedAction = action;
+      _linkSent = false;
       _inlineError = null;
     });
-    if (!(_formKey.currentState?.validate() ?? false)) {
+    if (!_validateBaseFields()) {
       return;
     }
-    setState(() => _busyAction = action);
-    final email = widget.emailController.text.trim();
+    setState(() => _busyAction = _AuthAction.sendLink);
     try {
-      switch (action) {
-        case _AuthAction.signIn:
-          await widget.onSignIn(email, widget.passwordController.text);
-          break;
-        case _AuthAction.signUp:
-          await widget.onSignUp(email, widget.passwordController.text);
-          break;
-        case _AuthAction.passwordReset:
-          await widget.onPasswordReset(email);
-          break;
+      final sent = await widget.onSendMagicLink(
+        widget.emailController.text.trim(),
+      );
+      if (mounted && sent) {
+        setState(() => _linkSent = true);
       }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _inlineError = describeAuthError(error));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busyAction = null);
+      }
+    }
+  }
+
+  Future<void> _verifyCode() async {
+    if (_busy || !widget.enabled) {
+      return;
+    }
+    setState(() => _inlineError = null);
+    final emailError = validateAccountEmail(widget.emailController.text);
+    final codeError = validateEmailCode(_codeController.text);
+    if (emailError != null || codeError != null) {
+      _formKey.currentState?.validate();
+      return;
+    }
+    setState(() => _busyAction = _AuthAction.verifyCode);
+    try {
+      await widget.onVerifyCode(
+        widget.emailController.text.trim(),
+        _codeController.text.trim(),
+      );
     } catch (error) {
       if (mounted) {
         setState(() => _inlineError = describeAuthError(error));
@@ -309,7 +293,6 @@ class _ProjectConfigurationFields extends StatelessWidget {
             autocorrect: false,
             enableSuggestions: false,
             obscureText: true,
-            keyboardType: TextInputType.visiblePassword,
             textInputAction: TextInputAction.next,
             validator: validateSupabaseAnonKey,
             decoration: const InputDecoration(
@@ -333,26 +316,21 @@ String? validateAccountEmail(String? value) {
   if (at <= 0 ||
       at != lastAt ||
       at == email.length - 1 ||
-      email.contains(' ')) {
+      email.length > 320 ||
+      email.runes.any((rune) => rune <= 0x20 || rune == 0x7f)) {
     return 'Enter a valid email address.';
   }
   return null;
 }
 
-String? validateAccountPassword(
-  String? value, {
-  required bool creatingAccount,
-  bool passwordRequired = true,
-}) {
-  final password = value ?? '';
-  if (!passwordRequired) {
-    return null;
+String? validateEmailCode(String? value) {
+  final code = value?.trim() ?? '';
+  if (code.isEmpty) {
+    return 'Enter the one-time code from your email.';
   }
-  if (password.isEmpty) {
-    return 'Enter your password.';
-  }
-  if (creatingAccount && password.length < 6) {
-    return 'Use at least 6 characters.';
+  if (code.length != 6 ||
+      !code.runes.every((rune) => rune >= 0x30 && rune <= 0x39)) {
+    return 'Enter the 6-digit code from your email.';
   }
   return null;
 }

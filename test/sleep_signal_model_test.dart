@@ -80,4 +80,25 @@ void main() {
     expect(estimate.sleepProbability, greaterThan(0.65));
     expect(estimate.activeSignals, ['audio']);
   });
+
+  test('drops non-finite native values instead of poisoning the estimate', () {
+    final estimate = model.estimate(
+      consent: const SleepSignalConsent(
+        audio: true,
+        motion: true,
+        ambientLight: true,
+        phoneContext: true,
+      ),
+      sample: const SleepSignalSample(
+        acousticSleepScore: double.nan,
+        motionStillnessScore: double.infinity,
+        ambientLux: double.negativeInfinity,
+        phoneIdleMinutes: double.nan,
+        usualBedtimeScore: 0.8,
+      ),
+    );
+
+    expect(estimate.sleepProbability.isFinite, isTrue);
+    expect(estimate.activeSignals, ['phoneContext']);
+  });
 }

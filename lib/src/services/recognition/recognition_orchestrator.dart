@@ -63,6 +63,10 @@ class RecognitionOrchestrator {
   final StreamController<RecognitionResult> _results =
       StreamController<RecognitionResult>.broadcast();
   StreamSubscription<AcousticDetection>? _subscription;
+  bool _songInFlight = false;
+  bool _birdInFlight = false;
+  DateTime? _lastSongAttemptUtc;
+  static const Duration _songCooldown = Duration(seconds: 30);
 
   Stream<RecognitionResult> get results => _results.stream;
 
@@ -100,65 +104,87 @@ class RecognitionOrchestrator {
   }
 
   Future<void> _identifySong(AcousticDetection detection) async {
+    final now = DateTime.now().toUtc();
+    if (_songInFlight ||
+        (_lastSongAttemptUtc != null &&
+            now.difference(_lastSongAttemptUtc!) < _songCooldown)) {
+      return;
+    }
+    _songInFlight = true;
+    _lastSongAttemptUtc = now;
     final shazam = this.shazam;
-    if (songIdEnabled && shazam != null && shazam.isSupported) {
-      final pcm = await clips.pcm16Around(
-        detection,
-        length: const Duration(seconds: 12),
-      );
-      if (pcm != null) {
-        final match = await shazam.identify(
-          pcm16: pcm,
-          sampleRate: 44100,
-          channels: 1,
-        );
-        if (match != null) {
-          _results.add(
-            RecognitionResult(
-              kind: RecognitionKind.song,
-              detection: detection.copyWith(
-                details: {...detection.details, ...match.toDetails()},
-              ),
-            ),
+    try {
+      if (songIdEnabled && shazam != null && shazam.isSupported) {
+        final pcm = await clips
+            .pcm16Around(detection, length: const Duration(seconds: 12))
+            .timeout(const Duration(seconds: 2), onTimeout: () => null);
+        if (pcm != null) {
+          final match = await shazam.identify(
+            pcm16: pcm,
+            sampleRate: 44100,
+            channels: 1,
           );
-          return;
+          if (match != null) {
+            if (!_results.isClosed) {
+              _results.add(
+                RecognitionResult(
+                  kind: RecognitionKind.song,
+                  detection: detection.copyWith(
+                    details: {...detection.details, ...match.toDetails()},
+                  ),
+                ),
+              );
+            }
+            return;
+          }
         }
       }
+      // Tonal but not a catalog song — worth a bird-ID pass when enabled.
+      await _identifyBird(detection);
+    } finally {
+      _songInFlight = false;
     }
-    // Tonal but not a catalog song — worth a bird-ID pass when enabled.
-    await _identifyBird(detection);
   }
 
   Future<void> _identifyBird(AcousticDetection detection) async {
     final birds = this.birds;
-    if (!birdIdEnabled || birds == null) {
+    if (_birdInFlight || !birdIdEnabled || birds == null) {
       return;
     }
-    final samples = await clips.monoFloatAround(
-      detection,
-      length: const Duration(seconds: 5),
-      sampleRate: BirdClassifier.sampleRate,
-    );
-    if (samples == null) {
-      return;
-    }
-    final matches = await birds.classify(samples);
-    if (matches.isEmpty) {
-      return;
-    }
-    _results.add(
-      RecognitionResult(
-        kind: RecognitionKind.birdCall,
-        detection: detection.copyWith(
-          details: {
-            ...detection.details,
-            ...matches.first.toDetails(),
-            if (matches.length > 1)
-              'alternates': [for (final m in matches.skip(1)) m.toDetails()],
-          },
+    _birdInFlight = true;
+    try {
+      final samples = await clips
+          .monoFloatAround(
+            detection,
+            length: const Duration(seconds: 5),
+            sampleRate: BirdClassifier.sampleRate,
+          )
+          .timeout(const Duration(seconds: 2), onTimeout: () => null);
+      if (samples == null) {
+        return;
+      }
+      final matches = await birds
+          .classify(samples)
+          .timeout(const Duration(seconds: 10), onTimeout: () => const []);
+      if (matches.isEmpty || _results.isClosed) {
+        return;
+      }
+      _results.add(
+        RecognitionResult(
+          kind: RecognitionKind.birdCall,
+          detection: detection.copyWith(
+            details: {
+              ...detection.details,
+              ...matches.first.toDetails(),
+              if (matches.length > 1)
+                'alternates': [for (final m in matches.skip(1)) m.toDetails()],
+            },
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      _birdInFlight = false;
+    }
   }
 
   Future<void> dispose() async {

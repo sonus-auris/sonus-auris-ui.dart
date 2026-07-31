@@ -47,6 +47,7 @@ dependencies:
   # Authenticated Supabase Realtime broadcasts for low-latency client
   # observability. Durable delivery remains the idempotent REST outbox.
   web_socket_channel: ^3.0.3
+  web: ^1.1.1
   crypto: ^3.0.7
   # AES-256-GCM + Argon2id/HKDF for on-device, zero-knowledge segment encryption.
   cryptography: ^2.7.0
@@ -56,6 +57,8 @@ dependencies:
   geocoding: ^3.0.0
   # Browser-based OAuth (PKCE) for linking SoundCloud / Spotify.
   flutter_web_auth_2: ^4.1.0
+  # Receives Supabase magic-link callbacks on mobile, desktop, and web.
+  app_links: ^7.2.1
   # Public privacy, account-deletion, and support links required by both stores.
   url_launcher: ^6.3.2
   # Store-compliant subscriptions (App Store / Play Billing). Apple and Google
@@ -69,6 +72,10 @@ dependencies:
   # Desktop launch-at-login (macOS/Windows/Linux) so the desktop build runs at
   # startup. No-op on mobile.
   launch_at_startup: ^0.5.1
+  # Keep desktop capture alive when its window is closed and expose an explicit
+  # system-tray Open/Quit control for true background mode.
+  window_manager: ^0.5.2
+  tray_manager: ^0.5.3
   uuid: ^4.5.3
   intl: ^0.20.2
   path: ^1.9.1
@@ -95,6 +102,8 @@ dependencies:
   # Context triggers: Bluetooth adapter / connected-device / nearby-device (BLE
   # scan) detection.
   flutter_blue_plus: ^1.32.0
+  # Collision cues use gravity-filtered accelerometer spikes while recording.
+  sensors_plus: ^7.1.0
 
 dev_dependencies:
   flutter_test:
@@ -132,6 +141,10 @@ flutter:
     - family: Baloo 2
       fonts:
         - asset: assets/fonts/Baloo2-VF.ttf
+
+  assets:
+    - macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_32.png
+    - windows/runner/resources/app_icon.ico
 
   # To add assets to your application, add an assets section, like this:
   # assets:

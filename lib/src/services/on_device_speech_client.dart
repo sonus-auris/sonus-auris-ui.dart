@@ -1,4 +1,5 @@
 // Dart side of the on-device (offline) speech-recognition bridge, keeping transcription inside the local plaintext window.
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -23,10 +24,13 @@ import 'package:flutter/services.dart';
 /// All methods fail soft (return null/false) so a missing model or platform
 /// error never breaks capture or analysis.
 class OnDeviceSpeechClient {
-  OnDeviceSpeechClient({MethodChannel? channel})
-    : _channel = channel ?? const MethodChannel('audio_dashcam/stt');
+  OnDeviceSpeechClient({
+    MethodChannel? channel,
+    this.timeout = const Duration(seconds: 12),
+  }) : _channel = channel ?? const MethodChannel('audio_dashcam/stt');
 
   final MethodChannel _channel;
+  final Duration timeout;
 
   /// Whether on-device speech recognition is plausibly supported on this OS.
   /// The authoritative check is [isAvailable], which asks the native model.
@@ -39,7 +43,12 @@ class OnDeviceSpeechClient {
       return false;
     }
     try {
-      return await _channel.invokeMethod<bool>('isAvailable') ?? false;
+      return await _channel
+              .invokeMethod<bool>('isAvailable')
+              .timeout(timeout) ??
+          false;
+    } on TimeoutException {
+      return false;
     } on PlatformException {
       return false;
     } on MissingPluginException {
@@ -59,12 +68,17 @@ class OnDeviceSpeechClient {
       return null;
     }
     try {
-      final result = await _channel.invokeMapMethod<String, Object?>(
-        'transcribe',
-        {'pcm': pcm16, 'sampleRate': sampleRate, 'channels': channels},
-      );
+      final result = await _channel
+          .invokeMapMethod<String, Object?>('transcribe', {
+            'pcm': pcm16,
+            'sampleRate': sampleRate,
+            'channels': channels,
+          })
+          .timeout(timeout);
       final text = (result?['text'] as String?)?.trim();
       return (text == null || text.isEmpty) ? null : text;
+    } on TimeoutException {
+      return null;
     } on PlatformException {
       return null;
     } on MissingPluginException {

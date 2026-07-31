@@ -84,7 +84,14 @@ Set<String> selectDeviceIdsOverLimit(
 }
 
 /// Result of a registry read/write: the row (when known) and a short error.
-typedef DeviceRegistryResult = ({interfaces.DeviceRecord? device, String? error});
+typedef DeviceRegistryResult = ({
+  interfaces.DeviceRecord? device,
+  String? error,
+});
+typedef DeviceRegistryMutationResult = ({
+  interfaces.DeviceRecord? device,
+  String? error,
+});
 
 /// PostgREST client for the owner-scoped `devices` table.
 ///
@@ -136,6 +143,50 @@ class DeviceRegistry {
     return _fetchRows(config, secrets, query: const {'select': '*'});
   }
 
+  /// Soft-revokes an account device. Its token/connection may still exist
+  /// briefly, but the next heartbeat observes the row and cloud sync halts.
+  Future<DeviceRegistryMutationResult> revokeDevice({
+    required AppConfig config,
+    required CloudSecrets secrets,
+    required String deviceId,
+    DateTime? nowUtc,
+  }) {
+    return _patchDevice(
+      config: config,
+      secrets: secrets,
+      deviceId: deviceId,
+      patch: {
+        'revoked_at': (nowUtc ?? DateTime.now().toUtc())
+            .toUtc()
+            .toIso8601String(),
+      },
+      action: 'Device revocation',
+    );
+  }
+
+  /// Renames a device without allowing clients to change ownership or role.
+  Future<DeviceRegistryMutationResult> renameDevice({
+    required AppConfig config,
+    required CloudSecrets secrets,
+    required String deviceId,
+    required String displayName,
+  }) {
+    final normalized = displayName.trim();
+    if (normalized.isEmpty || normalized.length > 120) {
+      return Future.value((
+        device: null,
+        error: 'Device name must be between 1 and 120 characters.',
+      ));
+    }
+    return _patchDevice(
+      config: config,
+      secrets: secrets,
+      deviceId: deviceId,
+      patch: {'display_name': normalized},
+      action: 'Device rename',
+    );
+  }
+
   /// Registers this install on first sight, or refreshes its heartbeat.
   ///
   /// - Missing row → INSERT with the friendly default [platform] name.
@@ -149,6 +200,7 @@ class DeviceRegistry {
     required AppConfig config,
     required CloudSecrets secrets,
     required String platform,
+    String role = 'recorder',
     DateTime? nowUtc,
   }) async {
     if (!canUse(config, secrets)) {
@@ -166,7 +218,7 @@ class DeviceRegistry {
         .toIso8601String();
     final current = existing.device;
     if (current == null) {
-      return _insertOwnRow(config, secrets, platform, lastSeenAt);
+      return _insertOwnRow(config, secrets, platform, role, lastSeenAt);
     }
     if ((current.revokedAt ?? '').trim().isNotEmpty) {
       // Removed from the account in the console. Do not refresh the heartbeat;
@@ -180,13 +232,14 @@ class DeviceRegistry {
     AppConfig config,
     CloudSecrets secrets,
     String platform,
+    String role,
     String lastSeenAt,
   ) async {
     final Uri uri;
     try {
-      uri = _restUri(config).replace(
-        queryParameters: const {'on_conflict': 'user_id,device_id'},
-      );
+      uri = _restUri(
+        config,
+      ).replace(queryParameters: const {'on_conflict': 'user_id,device_id'});
     } on FormatException catch (error) {
       return (device: null, error: error.message);
     }
@@ -196,7 +249,7 @@ class DeviceRegistry {
       'device_id': config.deviceId,
       'display_name': defaultDeviceDisplayName(platform),
       'platform': platform,
-      'role': 'recorder',
+      'role': role == 'viewer' ? 'viewer' : 'recorder',
       if (kSonusAppVersion.trim().isNotEmpty)
         'app_version': kSonusAppVersion.trim(),
       'last_seen_at': lastSeenAt,
@@ -227,9 +280,9 @@ class DeviceRegistry {
   ) async {
     final Uri uri;
     try {
-      uri = _restUri(config).replace(
-        queryParameters: {'device_id': 'eq.${config.deviceId}'},
-      );
+      uri = _restUri(
+        config,
+      ).replace(queryParameters: {'device_id': 'eq.${config.deviceId}'});
     } on FormatException catch (error) {
       return (device: current, error: error.message);
     }
@@ -255,6 +308,52 @@ class DeviceRegistry {
       return (device: _firstRow(response.body) ?? current, error: null);
     } catch (error) {
       return (device: current, error: 'Device heartbeat error: $error');
+    }
+  }
+
+  Future<DeviceRegistryMutationResult> _patchDevice({
+    required AppConfig config,
+    required CloudSecrets secrets,
+    required String deviceId,
+    required Map<String, Object?> patch,
+    required String action,
+  }) async {
+    final normalizedId = deviceId.trim();
+    if (normalizedId.isEmpty) {
+      return (device: null, error: 'Choose a device first.');
+    }
+    if (!canUse(config, secrets)) {
+      return (device: null, error: 'A signed-in Supabase session is required.');
+    }
+    final Uri uri;
+    try {
+      uri = _restUri(
+        config,
+      ).replace(queryParameters: {'device_id': 'eq.$normalizedId'});
+    } on FormatException catch (error) {
+      return (device: null, error: error.message);
+    }
+    final headers = _headers(config, secrets)
+      ..['prefer'] = 'return=representation';
+    try {
+      final response = await _httpClient
+          .patch(uri, headers: headers, body: jsonEncode(patch))
+          .timeout(requestTimeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return (
+          device: null,
+          error:
+              '$action failed (${response.statusCode}): '
+              '${_shortBody(response.body)}',
+        );
+      }
+      final updated = _firstRow(response.body);
+      if (updated == null) {
+        return (device: null, error: '$action did not find that device.');
+      }
+      return (device: updated, error: null);
+    } catch (error) {
+      return (device: null, error: '$action error: $error');
     }
   }
 

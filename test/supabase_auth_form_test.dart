@@ -6,77 +6,63 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('auth validators reject malformed credentials and insecure URLs', () {
+  test('auth validators reject malformed email and insecure URLs', () {
     expect(validateAccountEmail(''), isNotNull);
     expect(validateAccountEmail('not-an-email'), isNotNull);
+    expect(validateAccountEmail('person@@example.com'), isNotNull);
+    expect(validateAccountEmail('person@example.com\nattacker'), isNotNull);
     expect(validateAccountEmail('person@example.com'), isNull);
-    expect(validateAccountPassword('', creatingAccount: false), isNotNull);
-    expect(validateAccountPassword('short', creatingAccount: true), isNotNull);
-    expect(validateAccountPassword('six-ok', creatingAccount: true), isNull);
+    expect(validateEmailCode(''), isNotNull);
+    expect(validateEmailCode('12345a'), isNotNull);
+    expect(validateEmailCode('123456'), isNull);
     expect(validateSupabaseProjectUrl('http://project.supabase.co'), isNotNull);
     expect(validateSupabaseProjectUrl('https://project.supabase.co'), isNull);
     expect(validateSupabaseProjectUrl('http://localhost:54321'), isNull);
     expect(validateSupabaseAnonKey('sb_secret_never-ship'), isNotNull);
   });
 
-  testWidgets('blocks invalid sign-in before invoking Supabase', (
+  testWidgets('contains no password field and validates before sending', (
     tester,
   ) async {
     final harness = _AuthHarness(showProjectConfiguration: true);
     addTearDown(harness.dispose);
     await tester.pumpWidget(harness.build());
 
-    await tester.tap(find.byKey(const ValueKey('supabase-sign-in-button')));
+    expect(find.textContaining('Password'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('supabase-send-link-button')));
     await tester.pump();
 
     expect(find.text('Enter the Supabase project URL.'), findsOneWidget);
     expect(find.text('Enter the publishable or anon key.'), findsOneWidget);
     expect(find.text('Enter your email address.'), findsOneWidget);
-    expect(find.text('Enter your password.'), findsOneWidget);
-    expect(harness.signInCalls, 0);
+    expect(harness.sendCalls, 0);
   });
 
-  testWidgets(
-    'create account validates length and reports per-action progress',
-    (tester) async {
-      final completer = Completer<void>();
-      final harness = _AuthHarness(onSignUp: () => completer.future);
-      addTearDown(harness.dispose);
-      await tester.pumpWidget(harness.build());
-      await tester.enterText(
-        find.byKey(const ValueKey('supabase-email-field')),
-        'person@example.com',
-      );
-      await tester.enterText(
-        find.byKey(const ValueKey('supabase-password-field')),
-        'short',
-      );
+  testWidgets('sends a normalized email code and reveals code entry', (
+    tester,
+  ) async {
+    final completer = Completer<bool>();
+    final harness = _AuthHarness(onSend: () => completer.future);
+    addTearDown(harness.dispose);
+    await tester.pumpWidget(harness.build());
+    await tester.enterText(
+      find.byKey(const ValueKey('supabase-email-field')),
+      ' listener@example.com ',
+    );
 
-      await tester.tap(find.byKey(const ValueKey('supabase-sign-up-button')));
-      await tester.pump();
-      expect(find.text('Use at least 6 characters.'), findsOneWidget);
-      expect(harness.signUpCalls, 0);
+    await tester.tap(find.byKey(const ValueKey('supabase-send-link-button')));
+    await tester.pump();
+    expect(harness.sendCalls, 1);
+    expect(harness.lastEmail, 'listener@example.com');
+    expect(find.text('Sending…'), findsOneWidget);
 
-      await tester.enterText(
-        find.byKey(const ValueKey('supabase-password-field')),
-        'six-ok',
-      );
-      await tester.tap(find.byKey(const ValueKey('supabase-sign-up-button')));
-      await tester.pump();
-      expect(harness.signUpCalls, 1);
-      expect(find.text('Creating…'), findsOneWidget);
-      final signIn = tester.widget<FilledButton>(
-        find.byKey(const ValueKey('supabase-sign-in-button')),
-      );
-      expect(signIn.onPressed, isNull);
+    completer.complete(true);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('supabase-code-field')), findsOneWidget);
+    expect(find.text('Send a fresh code'), findsOneWidget);
+  });
 
-      completer.complete();
-      await tester.pumpAndSettle();
-      expect(find.text('Create account'), findsOneWidget);
-    },
-  );
-
-  testWidgets('password reset needs email but not a password', (tester) async {
+  testWidgets('verifies the emailed sign-in code', (tester) async {
     final harness = _AuthHarness();
     addTearDown(harness.dispose);
     await tester.pumpWidget(harness.build());
@@ -84,81 +70,55 @@ void main() {
       find.byKey(const ValueKey('supabase-email-field')),
       'person@example.com',
     );
-
-    await tester.tap(
-      find.byKey(const ValueKey('supabase-reset-password-button')),
+    await tester.tap(find.byKey(const ValueKey('supabase-send-link-button')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('supabase-code-field')),
+      '123456',
     );
+    await tester.tap(find.byKey(const ValueKey('supabase-verify-code-button')));
     await tester.pumpAndSettle();
 
-    expect(harness.resetCalls, 1);
-    expect(find.text('Enter your password.'), findsNothing);
-  });
-
-  testWidgets('uses a stacked layout on a narrow large-text screen', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(320, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final harness = _AuthHarness(textScale: 1.8);
-    addTearDown(harness.dispose);
-
-    await tester.pumpWidget(harness.build());
-
-    final signIn = tester.getCenter(
-      find.byKey(const ValueKey('supabase-sign-in-button')),
-    );
-    final signUp = tester.getCenter(
-      find.byKey(const ValueKey('supabase-sign-up-button')),
-    );
-    expect(signUp.dy, greaterThan(signIn.dy));
-    expect(tester.takeException(), isNull);
+    expect(harness.verifyCalls, 1);
+    expect(harness.lastCode, '123456');
   });
 }
 
 class _AuthHarness {
-  _AuthHarness({
-    this.showProjectConfiguration = false,
-    this.onSignUp,
-    this.textScale = 1,
-  });
+  _AuthHarness({this.showProjectConfiguration = false, this.onSend});
 
   final bool showProjectConfiguration;
-  final Future<void> Function()? onSignUp;
-  final double textScale;
+  final Future<bool> Function()? onSend;
   final email = TextEditingController();
-  final password = TextEditingController();
   final url = TextEditingController();
   final anonKey = TextEditingController();
-  int signInCalls = 0;
-  int signUpCalls = 0;
-  int resetCalls = 0;
+  int sendCalls = 0;
+  int verifyCalls = 0;
+  String? lastEmail;
+  String? lastCode;
 
   Widget build() {
     return MaterialApp(
       theme: buildSonusTheme(),
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(
-          context,
-        ).copyWith(textScaler: TextScaler.linear(textScale)),
-        child: child!,
-      ),
       home: Scaffold(
         body: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: SupabaseAuthForm(
             emailController: email,
-            passwordController: password,
             supabaseUrlController: url,
             supabaseAnonKeyController: anonKey,
             showProjectConfiguration: showProjectConfiguration,
-            onSignIn: (email, password) async => signInCalls += 1,
-            onSignUp: (email, password) async {
-              signUpCalls += 1;
-              await onSignUp?.call();
+            onSendMagicLink: (email) async {
+              sendCalls += 1;
+              lastEmail = email;
+              return await onSend?.call() ?? true;
             },
-            onPasswordReset: (email) async => resetCalls += 1,
+            onVerifyCode: (email, code) async {
+              verifyCalls += 1;
+              lastEmail = email;
+              lastCode = code;
+              return true;
+            },
           ),
         ),
       ),
@@ -167,7 +127,6 @@ class _AuthHarness {
 
   void dispose() {
     email.dispose();
-    password.dispose();
     url.dispose();
     anonKey.dispose();
   }

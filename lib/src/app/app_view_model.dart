@@ -1,5 +1,6 @@
 // Immutable snapshot of everything the UI renders (config, secrets, segments, recorder/playback state, detections), emitted by the AppController.
 import '../models/acoustic_detection.dart';
+import '../models/account_status.dart';
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
 import '../models/context_trigger.dart';
@@ -20,6 +21,7 @@ class AppViewModel {
     required this.diagnosticEntries,
     required this.isInitializing,
     required this.isUploading,
+    this.accountStatus = const AccountStatus(),
     this.isStarting = false,
     this.transferStatus = const TransferGateStatus.unknown(),
     this.message,
@@ -35,6 +37,7 @@ class AppViewModel {
   final List<String> diagnosticEntries;
   final bool isInitializing;
   final bool isUploading;
+  final AccountStatus accountStatus;
 
   /// True from the moment "Start" is tapped until capture is live (or fails) —
   /// covers the wait while the OS permission prompts load, so the button can show
@@ -60,7 +63,12 @@ class AppViewModel {
       config.uploadEnabled && transferStatus.isPaused && pendingUploads > 0;
 
   /// Whether a Supabase session (access or refresh token) is held.
-  bool get isSignedIn => secrets.hasSupabaseSession;
+  bool get hasSupabaseSession => secrets.hasSupabaseSession;
+
+  /// A held AAL1 token is deliberately not "signed in" for product access.
+  /// Magic-link users become signed in only after a verified second factor
+  /// upgrades the Supabase JWT to AAL2.
+  bool get isSignedIn => hasSupabaseSession && accountStatus.isMfaSatisfied;
 
   /// Email of the signed-in user, or null when signed out / unknown.
   String? get signedInEmail => secrets.supabaseEmail.trim().isEmpty

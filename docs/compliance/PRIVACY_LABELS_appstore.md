@@ -24,6 +24,9 @@ buckets: **Used to Track You**, **Linked to You**, **Not Linked to You**.
   **Authentication** for IDs). Do **not** select Advertising, Analytics (3rd
   party), or Product Personalization.
 - Keep App Store Connect answers synchronized with `ios/Runner/PrivacyInfo.xcprivacy`.
+- Optional cloud transcription and song identification can send a bounded audio
+  excerpt/fingerprint to the configured recognition provider. Keep **Audio Data**
+  declared when either feature is present, even if encrypted backup is disabled.
 - If you ship a build with the backend/backup fully disabled, Audio/Location/IDs
   become "Data Not Collected." Keep this in sync with the shipped build.
 - Privacy policy URL: `https://sonusauris.app/privacy/`.

@@ -5,6 +5,7 @@ import 'supabase_mfa.dart';
 class AccountStatus {
   const AccountStatus({
     this.mfaRequired = false,
+    this.mfaEnrollmentRequired = false,
     this.mfaFactors = const <MfaFactor>[],
     this.deviceRevoked = false,
     this.activeRecorderDeviceCount = 0,
@@ -18,6 +19,11 @@ class AccountStatus {
   /// the session is still `aal1` — the UI must run a factor challenge before
   /// treating the user as signed in.
   final bool mfaRequired;
+
+  /// The email magic link/code succeeded, but no verified Supabase MFA factor
+  /// exists yet. Account-backed features remain locked until enrollment is
+  /// challenged and verified.
+  final bool mfaEnrollmentRequired;
 
   /// Factors known for the signed-in user (verified and pending), for both the
   /// challenge step and the Account management list.
@@ -36,7 +42,7 @@ class AccountStatus {
   /// server-side enforcement lands.
   final bool exceededDeviceLimit;
 
-  /// `free` or `plus` (from the entitlements row; free when absent).
+  /// `free`, `plus`, or non-expiring `lifetime` (free when absent).
   final String plan;
 
   /// Active recorder devices the plan allows.
@@ -47,11 +53,22 @@ class AccountStatus {
 
   bool get isPlus => plan.trim().toLowerCase() == 'plus';
 
+  bool get isLifetime => plan.trim().toLowerCase() == 'lifetime';
+
+  /// Lifetime purchasers must never be gated behind a later subscription.
+  bool get isSubscriptionExempt => isLifetime;
+
+  bool get hasPaidEntitlement => isLifetime || isPlus;
+
   List<MfaFactor> get verifiedMfaFactors =>
       mfaFactors.where((factor) => factor.isVerified).toList(growable: false);
 
+  bool get isMfaSatisfied =>
+      !mfaRequired && !mfaEnrollmentRequired && verifiedMfaFactors.isNotEmpty;
+
   AccountStatus copyWith({
     bool? mfaRequired,
+    bool? mfaEnrollmentRequired,
     List<MfaFactor>? mfaFactors,
     bool? deviceRevoked,
     int? activeRecorderDeviceCount,
@@ -62,6 +79,8 @@ class AccountStatus {
   }) {
     return AccountStatus(
       mfaRequired: mfaRequired ?? this.mfaRequired,
+      mfaEnrollmentRequired:
+          mfaEnrollmentRequired ?? this.mfaEnrollmentRequired,
       mfaFactors: mfaFactors ?? this.mfaFactors,
       deviceRevoked: deviceRevoked ?? this.deviceRevoked,
       activeRecorderDeviceCount:

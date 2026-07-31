@@ -11,5 +11,9 @@ Drop the required images here; `fastlane supply` picks them up by filename.
 
 Notes:
 - Screenshots must reflect the actual app (no device frames with fake content).
+- Capture account screenshots from a build with bundled public Supabase client
+  values so store customers never see the development-only project fields.
+- Run `scripts/release/verify-store-assets.sh` after replacing screenshots. It
+  rejects stale password/reset UI and checks the exact tracked dimensions.
 - Avoid implying covert/secret recording of others in any promo image — it
   triggers Play "deceptive behavior" / sensitive-permission rejections.

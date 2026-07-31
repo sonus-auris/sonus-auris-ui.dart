@@ -1,5 +1,6 @@
 // Speaks short spoken cues (TTS) confirming capture state for eyes-free use.
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:flutter/services.dart';
 
 /// Speaks short verbal cues ("recording", "stopped", "saved") so the user can
 /// confirm capture state without looking at the screen. All speech is gated by
@@ -38,6 +39,16 @@ class RecordingFeedback {
       await _tts.speak(phrase);
     } catch (_) {
       // Never propagate TTS failures into the capture pipeline.
+    }
+  }
+
+  /// A short non-verbal acknowledgement used for safety-word and collision
+  /// cues. Unlike spoken status, this remains recognizable in noisy settings.
+  Future<void> ding() async {
+    try {
+      await SystemSound.play(SystemSoundType.alert);
+    } catch (_) {
+      // Best effort on platforms without a system alert sound.
     }
   }
 

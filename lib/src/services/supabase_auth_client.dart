@@ -1,7 +1,9 @@
-// Thin http client for Supabase GoTrue auth (anon key only): sign-in/up and token refresh.
+// Thin passwordless Supabase GoTrue client (anon key only): magic links, OTP verification, and token refresh.
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/app_config.dart';
@@ -23,38 +25,20 @@ class SupabaseAuthClient {
   final http.Client _httpClient;
   final Duration requestTimeout;
 
-  Future<SupabaseSession> signInWithPassword({
-    required AppConfig config,
-    required String email,
-    required String password,
-  }) async {
-    _validateEmail(email);
-    _validatePassword(password);
-    final uri = _authUri(config, 'token', query: {'grant_type': 'password'});
-    return _session(config, uri, {
-      'email': email.trim(),
-      'password': password,
-    }, 'Supabase sign-in failed.');
+  /// Creates an RFC 7636 verifier with enough entropy for a public client.
+  static String createPkceVerifier() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(56, (_) => random.nextInt(256));
+    return base64UrlEncode(bytes).replaceAll('=', '');
   }
 
-  /// Creates an account. Returns null when the project requires email
-  /// confirmation (the response carries a user but no session yet).
-  Future<SupabaseSession?> signUp({
-    required AppConfig config,
-    required String email,
-    required String password,
-  }) async {
-    _validateEmail(email);
-    _validatePassword(password, creatingAccount: true);
-    final uri = _authUri(config, 'signup');
-    final decoded = await _post(config, uri, {
-      'email': email.trim(),
-      'password': password,
-    }, 'Supabase sign-up failed.');
-    if ((decoded['access_token'] as String? ?? '').trim().isEmpty) {
-      return null;
-    }
-    return SupabaseSession.fromJson(decoded);
+  /// Derives the S256 challenge sent to Supabase. Public for deterministic
+  /// contract tests and for callers that persist the verifier themselves.
+  static String pkceChallengeForVerifier(String codeVerifier) {
+    _validatePkceVerifier(codeVerifier);
+    return base64UrlEncode(
+      sha256.convert(ascii.encode(codeVerifier)).bytes,
+    ).replaceAll('=', '');
   }
 
   /// Emails a one-time sign-in code (and, with the default template, a magic
@@ -63,13 +47,36 @@ class SupabaseAuthClient {
   Future<void> sendEmailOtp({
     required AppConfig config,
     required String email,
+    required String codeVerifier,
+    String redirectTo = '',
   }) async {
     _validateEmail(email);
-    final uri = _authUri(config, 'otp');
-    await _post(config, uri, {
-      'email': email.trim(),
-      'create_user': true,
-    }, 'Sending the sign-in code failed.');
+    final normalizedRedirect = _validateAuthRedirect(redirectTo);
+    if (normalizedRedirect.isEmpty) {
+      throw const FormatException(
+        'A magic-link callback URL is required for secure sign-in.',
+      );
+    }
+    final codeChallenge = pkceChallengeForVerifier(codeVerifier);
+    final uri = _authUri(
+      config,
+      'otp',
+      query: {
+        if (normalizedRedirect.isNotEmpty) 'redirect_to': normalizedRedirect,
+      },
+    );
+    await _post(
+      config,
+      uri,
+      {
+        'email': email.trim(),
+        'create_user': true,
+        'code_challenge': codeChallenge,
+        'code_challenge_method': 's256',
+      },
+      'Sending the sign-in code failed.',
+      exposeServerError: false,
+    );
   }
 
   /// Redeems an emailed one-time code for a session (passwordless sign-in).
@@ -80,15 +87,110 @@ class SupabaseAuthClient {
   }) async {
     _validateEmail(email);
     final trimmedCode = code.trim();
-    if (trimmedCode.isEmpty) {
-      throw const FormatException('Enter the code from the email.');
+    if (trimmedCode.length != 6 ||
+        !trimmedCode.runes.every((rune) => rune >= 0x30 && rune <= 0x39)) {
+      throw const FormatException('Enter the 6-digit code from the email.');
     }
     final uri = _authUri(config, 'verify');
-    return _session(config, uri, {
-      'type': 'email',
-      'email': email.trim(),
-      'token': trimmedCode,
-    }, 'That code was not accepted. Request a fresh one and try again.');
+    return _session(
+      config,
+      uri,
+      {'type': 'email', 'email': email.trim(), 'token': trimmedCode},
+      'That code was not accepted. Request a fresh one and try again.',
+      exposeServerError: false,
+    );
+  }
+
+  /// Returns true only for the exact registered callback endpoint. Query
+  /// parameters are intentionally ignored here because Supabase adds the code.
+  static bool isExpectedMagicLinkCallback({
+    required Uri callbackUri,
+    required Uri expectedRedirectUri,
+  }) {
+    return callbackUri.scheme == expectedRedirectUri.scheme &&
+        callbackUri.host == expectedRedirectUri.host &&
+        callbackUri.path == expectedRedirectUri.path &&
+        callbackUri.userInfo.isEmpty &&
+        _samePort(callbackUri, expectedRedirectUri);
+  }
+
+  static bool sessionMatchesRequestedEmail({
+    required SupabaseSession session,
+    required String requestedEmail,
+  }) {
+    final expected = requestedEmail.trim().toLowerCase();
+    final verified = session.email.trim().toLowerCase();
+    return expected.isNotEmpty && verified == expected;
+  }
+
+  /// Extracts a PKCE authorization code from the exact callback endpoint.
+  ///
+  /// Access/refresh tokens in either the query or fragment are deliberately
+  /// rejected: release clients never accept the interceptable implicit flow.
+  static String authorizationCodeFromCallback({
+    required Uri callbackUri,
+    required Uri expectedRedirectUri,
+  }) {
+    if (!isExpectedMagicLinkCallback(
+      callbackUri: callbackUri,
+      expectedRedirectUri: expectedRedirectUri,
+    )) {
+      throw const FormatException(
+        'The sign-in link was sent to an unexpected callback.',
+      );
+    }
+    if (callbackUri.fragment.isNotEmpty ||
+        callbackUri.queryParameters.containsKey('access_token') ||
+        callbackUri.queryParameters.containsKey('refresh_token')) {
+      throw const FormatException(
+        'This older sign-in link is not accepted. Request a fresh magic link.',
+      );
+    }
+    if (callbackUri.queryParameters.containsKey('error') ||
+        callbackUri.queryParameters.containsKey('error_code') ||
+        callbackUri.queryParameters.containsKey('error_description')) {
+      throw StateError(
+        'This sign-in link is invalid or expired. Request a fresh one.',
+      );
+    }
+    final codes = callbackUri.queryParametersAll['code'] ?? const <String>[];
+    if (codes.length != 1) {
+      throw const FormatException(
+        'The sign-in link did not contain one authorization code.',
+      );
+    }
+    final code = codes.single.trim();
+    if (code.isEmpty ||
+        code.length > 2048 ||
+        code.runes.any((rune) => rune <= 0x20 || rune == 0x7f)) {
+      throw const FormatException(
+        'The sign-in link contained an invalid authorization code.',
+      );
+    }
+    return code;
+  }
+
+  /// Redeems a PKCE code. Possession of the callback URL alone is insufficient:
+  /// Supabase also requires the verifier held by the requesting installation.
+  Future<SupabaseSession> exchangePkceCode({
+    required AppConfig config,
+    required String authorizationCode,
+    required String codeVerifier,
+  }) async {
+    final code = authorizationCode.trim();
+    if (code.isEmpty || code.length > 2048) {
+      throw const FormatException(
+        'The magic link authorization code is invalid.',
+      );
+    }
+    _validatePkceVerifier(codeVerifier);
+    return _session(
+      config,
+      _authUri(config, 'token', query: {'grant_type': 'pkce'}),
+      {'auth_code': code, 'code_verifier': codeVerifier},
+      'This sign-in link is invalid or expired. Request a fresh one.',
+      exposeServerError: false,
+    );
   }
 
   // --- Multi-factor auth (Bearer = the user's current access token) ---------
@@ -117,11 +219,17 @@ class SupabaseAuthClient {
     String? friendlyName,
   }) async {
     final uri = _authUri(config, 'factors');
-    final decoded = await _post(config, uri, {
-      'factor_type': 'totp',
-      if ((friendlyName ?? '').trim().isNotEmpty)
-        'friendly_name': friendlyName!.trim(),
-    }, 'Could not start authenticator enrollment.', accessToken: accessToken);
+    final decoded = await _post(
+      config,
+      uri,
+      {
+        'factor_type': 'totp',
+        if ((friendlyName ?? '').trim().isNotEmpty)
+          'friendly_name': friendlyName!.trim(),
+      },
+      'Could not start authenticator enrollment.',
+      accessToken: accessToken,
+    );
     final factorId = (decoded['id'] as String? ?? '').trim();
     if (factorId.isEmpty) {
       throw StateError('Authenticator enrollment returned no factor id.');
@@ -151,12 +259,18 @@ class SupabaseAuthClient {
       throw const FormatException('Enter the phone number to enroll.');
     }
     final uri = _authUri(config, 'factors');
-    final decoded = await _post(config, uri, {
-      'factor_type': 'phone',
-      'phone': trimmedPhone,
-      if ((friendlyName ?? '').trim().isNotEmpty)
-        'friendly_name': friendlyName!.trim(),
-    }, 'Could not start SMS enrollment.', accessToken: accessToken);
+    final decoded = await _post(
+      config,
+      uri,
+      {
+        'factor_type': 'phone',
+        'phone': trimmedPhone,
+        if ((friendlyName ?? '').trim().isNotEmpty)
+          'friendly_name': friendlyName!.trim(),
+      },
+      'Could not start SMS enrollment.',
+      accessToken: accessToken,
+    );
     final factorId = (decoded['id'] as String? ?? '').trim();
     if (factorId.isEmpty) {
       throw StateError('SMS enrollment returned no factor id.');
@@ -278,22 +392,6 @@ class SupabaseAuthClient {
     }, 'Supabase token refresh failed.');
   }
 
-  /// Sends Supabase's hosted password-reset email. The reset link is generated
-  /// by the project Auth settings; the app never sees the user's new password.
-  Future<void> sendPasswordResetEmail({
-    required AppConfig config,
-    required String email,
-    String redirectTo = '',
-  }) async {
-    _validateEmail(email);
-    final uri = _authUri(config, 'recover');
-    final normalizedRedirect = _validateRedirectTo(redirectTo);
-    await _post(config, uri, {
-      'email': email.trim(),
-      if (normalizedRedirect.isNotEmpty) 'redirect_to': normalizedRedirect,
-    }, 'Supabase password reset failed.');
-  }
-
   /// Best-effort server-side session revocation. Local secrets are cleared by
   /// the caller regardless of the outcome.
   Future<void> signOut({
@@ -319,6 +417,7 @@ class SupabaseAuthClient {
     Map<String, Object?> body,
     String fallbackError, {
     String? accessToken,
+    bool exposeServerError = true,
   }) async {
     final decoded = await _post(
       config,
@@ -326,6 +425,7 @@ class SupabaseAuthClient {
       body,
       fallbackError,
       accessToken: accessToken,
+      exposeServerError: exposeServerError,
     );
     try {
       return SupabaseSession.fromJson(decoded);
@@ -340,6 +440,7 @@ class SupabaseAuthClient {
     Map<String, Object?> body,
     String fallbackError, {
     String? accessToken,
+    bool exposeServerError = true,
   }) async {
     late final http.Response response;
     try {
@@ -359,7 +460,11 @@ class SupabaseAuthClient {
     }
     final decoded = _decode(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(_errorMessage(decoded, fallbackError));
+      throw StateError(
+        exposeServerError
+            ? _errorMessage(decoded, fallbackError)
+            : fallbackError,
+      );
     }
     return decoded;
   }
@@ -409,9 +514,11 @@ class SupabaseAuthClient {
         'Supabase URL must use HTTPS except localhost development.',
       );
     }
-    if (base.userInfo.isNotEmpty) {
+    if (base.userInfo.isNotEmpty ||
+        base.query.isNotEmpty ||
+        base.fragment.isNotEmpty) {
       throw const FormatException(
-        'Supabase URL must not contain embedded credentials.',
+        'Supabase URL must not contain credentials, a query, or a fragment.',
       );
     }
     final baseSegments = base.pathSegments.where((part) => part.isNotEmpty);
@@ -466,36 +573,35 @@ class SupabaseAuthClient {
     if (at <= 0 ||
         at != normalized.lastIndexOf('@') ||
         at == normalized.length - 1 ||
-        normalized.contains(' ')) {
+        normalized.length > 320 ||
+        normalized.runes.any((rune) => rune <= 0x20 || rune == 0x7f)) {
       throw const FormatException('Enter a valid email address.');
     }
   }
 
-  void _validatePassword(String password, {bool creatingAccount = false}) {
-    if (password.isEmpty) {
-      throw const FormatException('Enter your password.');
-    }
-    if (creatingAccount && password.length < 6) {
-      throw const FormatException(
-        'Use at least 6 characters when creating an account.',
-      );
-    }
-  }
-
-  String _validateRedirectTo(String value) {
+  String _validateAuthRedirect(String value) {
     final normalized = value.trim();
     if (normalized.isEmpty) {
       return '';
     }
     final uri = Uri.tryParse(normalized);
-    if (uri == null || uri.host.isEmpty || uri.userInfo.isNotEmpty) {
-      throw const FormatException('Password-reset redirect URL is invalid.');
+    if (uri == null ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty ||
+        uri.query.isNotEmpty ||
+        uri.fragment.isNotEmpty) {
+      throw const FormatException('Magic-link redirect URL is invalid.');
     }
-    if (uri.scheme != 'https' &&
-        uri.host != 'localhost' &&
-        uri.host != '127.0.0.1') {
+    final isLocalWeb =
+        uri.scheme == 'http' &&
+        (uri.host == 'localhost' || uri.host == '127.0.0.1');
+    final isNativeCallback =
+        uri.scheme == 'sonusauris' &&
+        uri.host == 'auth' &&
+        uri.path == '/callback';
+    if (uri.scheme != 'https' && !isLocalWeb && !isNativeCallback) {
       throw const FormatException(
-        'Password-reset redirect URL must use HTTPS except localhost development.',
+        'Magic-link redirect URL must use HTTPS or the Sonus Auris app callback.',
       );
     }
     return uri.toString();
@@ -504,4 +610,20 @@ class SupabaseAuthClient {
   void close() {
     _httpClient.close();
   }
+}
+
+void _validatePkceVerifier(String codeVerifier) {
+  final verifier = codeVerifier.trim();
+  if (verifier.length < 43 ||
+      verifier.length > 128 ||
+      !RegExp(r'^[A-Za-z0-9._~-]+$').hasMatch(verifier)) {
+    throw const FormatException('The PKCE code verifier is invalid.');
+  }
+}
+
+bool _samePort(Uri first, Uri second) {
+  if (first.hasPort != second.hasPort) {
+    return false;
+  }
+  return !first.hasPort || first.port == second.port;
 }

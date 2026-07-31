@@ -1,5 +1,6 @@
 import 'package:audio_dashcam/src/models/cloud_secrets.dart';
 import 'package:audio_dashcam/src/models/client_telemetry_event.dart';
+import 'package:audio_dashcam/src/models/pending_supabase_auth.dart';
 import 'package:audio_dashcam/src/services/settings_store.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -58,6 +59,63 @@ void main() {
     expect(restored.backendDeviceToken, isEmpty);
     expect(restored.s3AccessKeyId, 's3-access');
     expect(restored.s3SecretAccessKey, 's3-secret');
+  });
+
+  test('pending PKCE state is secure, expiring, and clearable', () async {
+    final store = SettingsStore(secureStorage: const FlutterSecureStorage());
+    final pending = PendingSupabaseAuth(
+      codeVerifier: 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+      email: 'person@example.com',
+      supabaseUrl: 'https://project.supabase.co',
+      redirectUrl: 'sonusauris://auth/callback',
+      requestedAtUtc: DateTime.utc(2026, 7, 29, 12),
+    );
+
+    await store.savePendingSupabaseAuth(pending);
+    final restored = await store.loadPendingSupabaseAuth();
+
+    expect(restored?.codeVerifier, pending.codeVerifier);
+    expect(
+      restored?.isExpired(now: DateTime.utc(2026, 7, 29, 12, 10)),
+      isFalse,
+    );
+    expect(restored?.isExpired(now: DateTime.utc(2026, 7, 29, 12, 15)), isTrue);
+
+    await store.clearPendingSupabaseAuth();
+    expect(await store.loadPendingSupabaseAuth(), isNull);
+  });
+
+  test(
+    'pending PKCE state rejects future clocks and never uses preferences',
+    () async {
+      final store = SettingsStore(secureStorage: const FlutterSecureStorage());
+      final pending = PendingSupabaseAuth(
+        codeVerifier: 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+        email: 'person@example.com',
+        supabaseUrl: 'https://project.supabase.co',
+        redirectUrl: 'sonusauris://auth/callback',
+        requestedAtUtc: DateTime.utc(2026, 7, 29, 12, 2),
+      );
+
+      await store.savePendingSupabaseAuth(pending);
+
+      expect(pending.isExpired(now: DateTime.utc(2026, 7, 29, 12)), isTrue);
+      final preferences = await SharedPreferences.getInstance();
+      expect(
+        preferences.getKeys().where((key) => key.contains('pending_auth')),
+        isEmpty,
+      );
+    },
+  );
+
+  test('corrupt pending PKCE state is rejected and removed', () async {
+    const key = 'audio_dashcam.supabase.pending_auth.v1';
+    FlutterSecureStorage.setMockInitialValues({key: '{"code_verifier": 3}'});
+    const secureStorage = FlutterSecureStorage();
+    final store = SettingsStore(secureStorage: secureStorage);
+
+    expect(await store.loadPendingSupabaseAuth(), isNull);
+    expect(await secureStorage.read(key: key), isNull);
   });
 
   test(

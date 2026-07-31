@@ -3,12 +3,15 @@ recording of your own surroundings so the moments that matter aren't lost — an
 idea you mumble while driving, a song you want to identify, or the sounds of your
 sleep. You start and stop capture, and you decide what is kept.
 
-YOUR AUDIO, ENCRYPTED ON YOUR DEVICE
-- Every recording is encrypted on the device with AES-256-GCM before it is stored
-  or uploaded. Keys stay on your device.
+YOUR AUDIO, PROTECTED ON YOUR DEVICE
+- The rolling local window stays in the app’s private, OS-protected storage.
+- Before a recording leaves the device for supported cloud backup, Sonus Auris
+  seals it on-device with AES-256-GCM. Keys stay on your device.
 - Optional backup to storage you control — your own S3-compatible bucket, Google
-  Drive, OneDrive, or iCloud — or to Sonus Auris ciphertext backup. Recordings
-  are encrypted before upload, so the service cannot listen to them.
+  Drive, OneDrive, Dropbox, or iCloud — or to Sonus Auris ciphertext backup.
+  Sonus Auris servers receive ciphertext and cannot listen to it. iCloud copies
+  are decrypted on your Apple device into your own iCloud Drive so they remain
+  usable there.
 - Keep only a rolling window on the phone; older clips age out automatically.
 
 USEFUL THINGS IT HEARS (ALL OPTIONAL, OFF BY DEFAULT)

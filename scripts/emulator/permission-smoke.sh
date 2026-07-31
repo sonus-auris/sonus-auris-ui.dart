@@ -16,7 +16,7 @@ set -euo pipefail
 
 APK="${1:?usage: permission-smoke.sh <apk-path> [adb-serial]}"
 SERIAL="${2:-}"
-PKG="com.ores.audio_dashcam"
+PKG="com.ores.sonus_auris"
 ACTIVITY="$PKG/.MainActivity"
 
 adb_() { if [[ -n "$SERIAL" ]]; then adb -s "$SERIAL" "$@"; else adb "$@"; fi; }
@@ -143,8 +143,15 @@ if ! wait_for_ui_text "Create your account" 20; then
   exit 1
 fi
 assert_ui_text "Create your account" "$ui_xml"
-assert_ui_text "Sign in" "$ui_xml"
-assert_ui_text "Create account" "$ui_xml"
+assert_ui_text "Email me a magic link" "$ui_xml"
+assert_ui_text "there is no password" "$ui_xml"
+if grep -Eq 'text="(Password|Forgot password\\?|Sign in|Create account)"|content-desc="(Password|Forgot password\\?|Sign in|Create account)"' <<< "$ui_xml"; then
+  echo "  ✗ retired password-auth control is visible"
+  capture_failure_evidence
+  exit 1
+else
+  echo "  ✓ passwordless magic-link controls only"
+fi
 if adb_ logcat -d 2>/dev/null | grep -m1 -F "A RenderFlex overflowed"; then
   echo "  ✗ Flutter reported a visible layout overflow"
   capture_failure_evidence

@@ -69,6 +69,8 @@ class AppConfig {
     this.speechDetectionEnabled = true,
     this.shazamEnabled = false,
     this.keywords = const [],
+    this.safeWords = const [],
+    this.keywordQualityBoostMinutes = 90,
     this.sttEnabled = false,
     this.sttEndpoint = '',
     this.voiceIdEnabled = false,
@@ -110,7 +112,7 @@ class AppConfig {
   final String s3Endpoint;
 
   /// Supabase project URL (e.g. https://abc.supabase.co). Used for GoTrue
-  /// email/password sign-in. Non-secret.
+  /// passwordless magic-link sign-in. Non-secret.
   final String supabaseUrl;
 
   /// Supabase anon/publishable API key. Safe to ship in the client; never the
@@ -220,13 +222,22 @@ class AppConfig {
   /// No-op on Android. Sends a short audio fingerprint to Apple's service.
   final bool shazamEnabled;
 
-  /// Keywords to watch for in transcribed speech (case-insensitive). A match
-  /// raises a magic-phrase alert. Only consulted when [sttEnabled].
+  /// General phrases to watch for in transcribed speech (case-insensitive).
+  /// Matches ding, raise a magic-phrase alert, and temporarily keep recording
+  /// at full fidelity.
   final List<String> keywords;
 
+  /// Urgent user-defined phrases. These behave like [keywords], but are labeled
+  /// as safety words in event metadata and win when a phrase appears in both
+  /// lists.
+  final List<String> safeWords;
+
+  /// Full-fidelity recording window opened by a keyword or safety-word match.
+  final int keywordQualityBoostMinutes;
+
   /// Opt-in cloud speech-to-text. When on, short clips of sustained speech are
-  /// POSTed to [sttEndpoint] to scan for [keywords]. Off by default; audio only
-  /// leaves the device while this is enabled.
+  /// POSTed to [sttEndpoint] to scan for configured phrases. Off by default;
+  /// audio only leaves the device while this is enabled.
   final bool sttEnabled;
   final String sttEndpoint;
 
@@ -337,7 +348,7 @@ class AppConfig {
   bool get s3TargetReady =>
       s3Bucket.trim().isNotEmpty && s3Region.trim().isNotEmpty;
 
-  /// Whether Supabase email/password sign-in can be attempted.
+  /// Whether Supabase passwordless sign-in can be attempted.
   bool get hasSupabaseAuthConfig =>
       supabaseUrl.trim().isNotEmpty && supabaseAnonKey.trim().isNotEmpty;
 
@@ -409,6 +420,8 @@ class AppConfig {
     bool? speechDetectionEnabled,
     bool? shazamEnabled,
     List<String>? keywords,
+    List<String>? safeWords,
+    int? keywordQualityBoostMinutes,
     bool? sttEnabled,
     String? sttEndpoint,
     bool? voiceIdEnabled,
@@ -492,6 +505,9 @@ class AppConfig {
           speechDetectionEnabled ?? this.speechDetectionEnabled,
       shazamEnabled: shazamEnabled ?? this.shazamEnabled,
       keywords: keywords ?? this.keywords,
+      safeWords: safeWords ?? this.safeWords,
+      keywordQualityBoostMinutes:
+          keywordQualityBoostMinutes ?? this.keywordQualityBoostMinutes,
       sttEnabled: sttEnabled ?? this.sttEnabled,
       sttEndpoint: sttEndpoint ?? this.sttEndpoint,
       voiceIdEnabled: voiceIdEnabled ?? this.voiceIdEnabled,
@@ -563,6 +579,8 @@ class AppConfig {
       'speechDetectionEnabled': speechDetectionEnabled,
       'shazamEnabled': shazamEnabled,
       'keywords': keywords,
+      'safeWords': safeWords,
+      'keywordQualityBoostMinutes': keywordQualityBoostMinutes,
       'sttEnabled': sttEnabled,
       'sttEndpoint': sttEndpoint,
       'voiceIdEnabled': voiceIdEnabled,
@@ -666,7 +684,20 @@ class AppConfig {
       musicDetectionEnabled: json['musicDetectionEnabled'] as bool? ?? true,
       speechDetectionEnabled: json['speechDetectionEnabled'] as bool? ?? true,
       shazamEnabled: json['shazamEnabled'] as bool? ?? false,
-      keywords: _asStringList(json['keywords']),
+      keywords: normalizePhrases(
+        json['keywords'] is List
+            ? (json['keywords'] as List).map((entry) => entry.toString())
+            : const <String>[],
+      ),
+      safeWords: normalizePhrases(
+        json['safeWords'] is List
+            ? (json['safeWords'] as List).map((entry) => entry.toString())
+            : const <String>[],
+      ),
+      keywordQualityBoostMinutes: _asInt(
+        json['keywordQualityBoostMinutes'],
+        90,
+      ).clamp(15, 360),
       sttEnabled: json['sttEnabled'] as bool? ?? false,
       sttEndpoint: json['sttEndpoint'] as String? ?? '',
       voiceIdEnabled: json['voiceIdEnabled'] as bool? ?? false,
@@ -704,6 +735,21 @@ class AppConfig {
           .toList();
     }
     return const [];
+  }
+
+  /// Normalizes user-entered recognition phrases for storage and live use.
+  static List<String> normalizePhrases(Iterable<String> value) {
+    final seen = <String>{};
+    return value
+        .map((entry) => entry.trim())
+        .where(
+          (entry) =>
+              entry.isNotEmpty &&
+              entry.length <= 80 &&
+              seen.add(entry.toLowerCase()),
+        )
+        .take(32)
+        .toList(growable: false);
   }
 
   static String _withBuildDefault(Object? value, String fallback) {

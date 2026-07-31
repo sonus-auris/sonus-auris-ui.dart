@@ -14,7 +14,7 @@
 set -euo pipefail
 
 TARGET="${1:?usage: grant-then-run-integration.sh <integration_test target>}"
-PKG=com.ores.audio_dashcam
+PKG=com.ores.sonus_auris
 APP_BINARY=build/app/outputs/flutter-apk/app-debug.apk
 
 adb wait-for-device

@@ -94,11 +94,19 @@ final class IcloudBridge {
     // Stage locally, then hand the file to iCloud (Apple's recommended pattern).
     let staging = fileManager.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
-    try data.write(to: staging, options: .atomic)
-    if fileManager.fileExists(atPath: destination.path) {
-      try fileManager.removeItem(at: destination)
+    let incoming = destination.deletingLastPathComponent()
+      .appendingPathComponent(".sonus-incoming-\(UUID().uuidString)")
+    defer {
+      try? fileManager.removeItem(at: staging)
+      try? fileManager.removeItem(at: incoming)
     }
-    try fileManager.setUbiquitous(true, itemAt: staging, destinationURL: destination)
+    try data.write(to: staging, options: .atomic)
+    try fileManager.setUbiquitous(true, itemAt: staging, destinationURL: incoming)
+    if fileManager.fileExists(atPath: destination.path) {
+      _ = try fileManager.replaceItemAt(destination, withItemAt: incoming)
+    } else {
+      try fileManager.moveItem(at: incoming, to: destination)
+    }
     return destination.path
   }
 

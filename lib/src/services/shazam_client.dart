@@ -21,6 +21,7 @@ class ShazamClient {
   ShazamClient({
     MethodChannel? channel,
     this.timeout = const Duration(seconds: 12),
+    this.maxClipBytes = 4 * 1024 * 1024,
   }) : _channel = channel ?? const MethodChannel('audio_dashcam/shazam');
 
   final MethodChannel _channel;
@@ -29,6 +30,7 @@ class ShazamClient {
   /// timeout guards against a native callback that never fires so a match can
   /// never stall detection handling.
   final Duration timeout;
+  final int maxClipBytes;
 
   /// Whether song identification is available on this platform.
   bool get isSupported => Platform.isIOS;
@@ -40,7 +42,13 @@ class ShazamClient {
     required int sampleRate,
     required int channels,
   }) async {
-    if (!isSupported || pcm16.isEmpty) {
+    if (!isSupported ||
+        pcm16.isEmpty ||
+        pcm16.lengthInBytes > maxClipBytes ||
+        sampleRate < 8000 ||
+        sampleRate > 192000 ||
+        channels < 1 ||
+        channels > 2) {
       return null;
     }
     try {

@@ -35,6 +35,25 @@ void main() {
       expect(snap.currentPeriodEnd, DateTime.utc(2026, 8, 17));
     });
 
+    test('lifetime purchasers are permanently subscription-exempt', () {
+      final row = Entitlement(
+        userId: 'founder-1',
+        plan: 'lifetime',
+        deviceLimit: 10,
+        features: const {'founders_lifetime': true, 'permanent_saves': true},
+        source: 'play_store',
+        externalRef: 'play-license:founder-1',
+        updatedAt: '2026-07-29T00:00:00Z',
+        createdAt: '2026-07-29T00:00:00Z',
+      );
+      final snap = EntitlementsSnapshot.fromRow(row, nowUtc: now);
+      expect(snap.isLifetime, isTrue);
+      expect(snap.isSubscriptionExempt, isTrue);
+      expect(snap.hasPaidEntitlement, isTrue);
+      expect(snap.isPlus, isFalse);
+      expect(snap.currentPeriodEnd, isNull);
+    });
+
     test('a blank plan degrades to free', () {
       final row = Entitlement(
         userId: 'u1',

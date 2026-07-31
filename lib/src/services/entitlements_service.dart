@@ -15,6 +15,10 @@ import 'supabase_key_policy.dart';
 /// Devices included with the free tier when no entitlements row exists yet.
 const int kFreeTierDeviceLimit = 2;
 
+/// Non-expiring plan granted to users who buy the paid app before the future
+/// subscription transition. Subscription webhooks must never downgrade it.
+const String kLifetimePlan = 'lifetime';
+
 /// Immutable view of the account's current plan, defaulting to free/2 when
 /// the account has no entitlements row.
 class EntitlementsSnapshot {
@@ -55,6 +59,13 @@ class EntitlementsSnapshot {
   final DateTime fetchedAtUtc;
 
   bool get isPlus => plan.trim().toLowerCase() == 'plus';
+
+  bool get isLifetime => plan.trim().toLowerCase() == kLifetimePlan;
+
+  /// Lifetime purchasers remain entitled without ever subscribing.
+  bool get isSubscriptionExempt => isLifetime;
+
+  bool get hasPaidEntitlement => isLifetime || isPlus;
 
   /// True when a boolean feature flag is granted (e.g. `permanent_saves`).
   bool hasFeature(String key) => features[key] == true;

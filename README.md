@@ -2,6 +2,14 @@
 
 Flutter Android/iOS app for continuous rolling audio capture. It keeps one microphone stream open, writes short overlapped `.wav` segments, keeps the most recent local window on-device, and uploads segments through either the sound-recorder backend or a direct S3-compatible fallback.
 
+The recorder is the product core: a private audio dashcam for musicians,
+note-takers, and people preserving contemporaneous context. Sleep estimates,
+song identification, speech/keyword handling, and safety-sound cues are
+opt-in/best-effort sidecars with bounded queues and timeouts; none may gate or
+stop capture. Recording laws and consent requirements vary by jurisdiction,
+and the app does not promise legal admissibility, prevent lawsuits, diagnose a
+medical condition, or establish that an incident occurred.
+
 ## Defaults
 
 - Local retention: 50 hours
@@ -9,8 +17,14 @@ Flutter Android/iOS app for continuous rolling audio capture. It keeps one micro
 - Segment length: 1 minute
 - Overlap: 2 seconds at the start of every segment after the first
 - Encoding: PCM16 `.wav`, mono, 16 kHz, about 256 kbps
-- Provider support: the Rust backend at `~/codes/ores/k8s-cluster/remote/deployments/dd-sound-recorder-rs` can issue presigned upload URLs and fan out cloud copy jobs for S3, Google Drive, Microsoft OneDrive, and client-managed iCloud. Direct AWS S3 / S3-compatible PUT and DELETE remains available as a fallback only when S3 is selected.
-- UI: Home, Playback, and Configure screens. Playback can permanently save a timestamp range into long-term cloud storage.
+- Provider support: the Rust backend can issue presigned upload URLs and fan out
+  cloud copy jobs for S3, Google Drive, Microsoft OneDrive, Dropbox, and
+  client-managed iCloud. Direct AWS S3 / Cloudflare R2 upload remains available
+  from Connections without a Sonus Auris server account; its credentials stay
+  in this device's secure credential store.
+- UI: mobile has Home, Playback, Connections, Automation, and Configure. The
+  Flutter desktop app has Home, Playback, Configure, Connections, and Devices
+  in its right-side workspace rail plus a collapsible account rail.
 
 ## Storage Math
 
@@ -31,7 +45,11 @@ Compressed AAC at 64 kbps would be about 14.4 GB for 500 hours, but stop/start e
 ## Runtime Notes
 
 - Android uses a foreground microphone service while recording. The app asks for microphone permission and notification permission; it does not request storage, location, contacts, or battery optimization permissions.
-- On Android 11+, microphone capture must be started while the app is foregrounded. After the foreground microphone service is running, the app can move to the background and continue recording under the visible notification. The app does not try to auto-start microphone capture from boot or from a background-only state.
+- On Android 11+, microphone capture must be started while the app is
+  foregrounded. After the foreground microphone service is running, the app can
+  move to the background and continue recording under the visible notification.
+  A boot receiver re-arms user schedules, but Android 14+ does not permit a
+  microphone foreground service to cold-start from `BOOT_COMPLETED`.
 - Android app backup is disabled so app-local audio and cloud configuration are not copied into device backups.
 - iOS uses microphone permission and the `audio` background mode. iOS will still stop capture if the user force-quits the app or the OS terminates it.
 - Segment boundaries are sample-counted. Playback trims the duplicate overlap with `just_audio` clipping so local playback does not repeat the overlap.
@@ -92,11 +110,18 @@ sounds are observed, then goes idle again.
   `audio_dashcam/shazam` platform channel. Requires the ShazamKit capability on
   the App ID (see entitlements). On Android the event still says "music
   detected" but carries no title. Only a derived audio signature is sent.
-- **Keywords (opt-in cloud speech-to-text):** when speech is detected, STT is
-  enabled, and keywords are configured, the recent clip is POSTed as WAV to a
-  user-configured endpoint (`sttEndpoint` + secret `sttApiKey`). A keyword hit
-  records a `keyword` event and raises the existing magic-phrase alert/email.
-  Audio leaves the device only while STT is enabled.
+- **User-defined keywords and safety words:** when speech is detected and
+  recognition phrases are configured, on-device transcription is tried first.
+  Cloud STT is an explicit fallback opt-in. Safety words are tracked separately
+  and take priority when lists overlap. A match dings, records a `keyword` event
+  with its phrase type, raises the existing alert/email, and forces
+  full-fidelity recording for the user-selected 15–360 minute window (90
+  minutes by default). Clear speech temporarily keeps adaptive storage at full
+  quality; quiet periods return to the low-storage profile.
+- **Possible collision reminder (opt-in motion sensor):** while recording, a conservative
+  gravity-filtered accelerometer spike shows a local notification and ding to
+  remind the user that the moment is in the rolling buffer. It is only a hint,
+  never an emergency-service trigger or a claim that a crash occurred.
 - Classification and feature extraction happen on-device; no transcription is
   needed for these classes. Detection metadata is surfaced on the Home screen
   and follows the configured Supabase sync.
@@ -113,7 +138,46 @@ segment is stored at full quality only when its trailing loudness is at or above
 the loud/quiet threshold; quiet segments are anti-aliased and decimated to
 `quietSampleRate` before being written. Stored rate is per-segment
 (`RecordingSegment.sampleRate`), and wall-clock segment timestamps stay
-authoritative, so playback and ranges are unaffected.
+authoritative, so playback and ranges are unaffected. Clear speech holds full
+quality briefly; a configured keyword or safety-word match holds it for the
+selected phrase window.
+
+## Passwordless Supabase accounts
+
+Every native/mobile sign-up and sign-in surface is code-first: it sends a
+six-digit Supabase email OTP, and unknown email addresses are created on first
+verification. The app has no account password field or password-reset flow.
+The same email retains a magic-link fallback using S256 PKCE: the callback
+contains only a one-time authorization code, while the matching verifier stays
+in Keychain/Keystore and expires with the request. Release clients reject
+access or refresh tokens delivered in a callback URL. Add
+`sonusauris://auth/callback` (or the
+`SONUS_SUPABASE_AUTH_REDIRECT_URL` build-time override) to the Supabase Auth
+redirect allow-list as an exact URL. The hosted Magic Link template must retain
+both `{{ .ConfirmationURL }}` and the six-digit `{{ .Token }}` fallback.
+
+For local development while Supabase is unavailable, a debug build can expose
+the explicit offline option with
+`--dart-define=SONUS_ENABLE_OFFLINE_MODE=true`. The override is compiled out of
+release builds, does not create an account or cloud identity, and leaves local
+recording, playback, schedules, iCloud mirroring, and direct S3/R2 available.
+Account initialization runs in the background so an unreachable Supabase
+instance cannot hold the app at its startup spinner.
+
+Google Drive, OneDrive, and Dropbox linking returns through the backend's
+hosted `/oauth/callback` and immediately into the waiting app session, so users
+do not need to locate or paste authorization codes. Register that exact hosted
+HTTPS callback in each provider console. iCloud uses the signed Apple container
+on the device and can mirror recordings in addition to another linked cloud
+destination.
+
+macOS developer/notarized builds use the minimal
+`Runner/Release.entitlements` so they remain buildable without an Apple
+provisioning profile. A Mac App Store archive that enables the signed iCloud
+Documents container is produced with
+`scripts/release/macos-archive-store.sh`; it requires
+`APPLE_DEVELOPMENT_TEAM`, an Apple Distribution identity, and a profile that
+authorizes `iCloud.com.ores.audioDashcam`.
 
 ## Supabase Schema (acoustic_events)
 
@@ -161,28 +225,46 @@ Run checks:
 /Users/maca5/development/flutter/bin/flutter test
 ```
 
-The opt-in live Supabase test signs in two pre-created users, inserts one
-`acoustic_events` fixture per user, proves cross-user reads and writes are
-blocked by the deployed RLS policy, and removes both fixtures:
+The opt-in live Supabase test uses three independent, fresh email codes: one
+identity exercises the rendered passwordless sign-in UI, while two separate
+identities insert one `acoustic_events` fixture each, prove cross-user reads and
+writes are blocked by RLS, and remove both fixtures:
 
 ```sh
 flutter test -d macos integration_test/live_supabase_auth_test.dart \
   --dart-define=SONUS_SUPABASE_URL=https://PROJECT.supabase.co \
   --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_REPLACE_ME \
   --dart-define=SONUS_TEST_EMAIL=user-a@example.test \
-  --dart-define=SONUS_TEST_PASSWORD=REPLACE_ME \
+  --dart-define=SONUS_TEST_EMAIL_OTP=REPLACE_WITH_FRESH_CODE \
   --dart-define=SONUS_TEST_EMAIL_B=user-b@example.test \
-  --dart-define=SONUS_TEST_PASSWORD_B=REPLACE_ME
+  --dart-define=SONUS_TEST_EMAIL_OTP_B=REPLACE_WITH_FRESH_CODE
 ```
 
 Use only the public client key. The test never accepts a service-role key and
-does not print access tokens.
+does not print access tokens. To include the rendered UI leg, use the local
+Supabase harness below; it reads the fresh UI code from local Mailpit after the
+app itself requests it:
+
+```sh
+scripts/e2e/local-supabase-auth.mjs
+```
 
 Run on a configured device:
 
 ```sh
 /Users/maca5/development/flutter/bin/flutter run
 ```
+
+When hosted Supabase is temporarily unavailable, developers can explicitly run
+the local-only recorder path:
+
+```sh
+flutter run --dart-define=SONUS_ENABLE_OFFLINE_MODE=true
+```
+
+This override is rejected by release builds. It never fabricates a user,
+device registration, entitlement, or cloud connection; those features remain
+disabled until a real passwordless sign-in succeeds.
 
 Install on a physical Android phone over Wi-Fi:
 
@@ -225,7 +307,8 @@ The desktop build has its **own entrypoint** — `lib/main_desktop.dart` — sep
 from the phone's `lib/main.dart`. Both share the entire core (`AppController`,
 services, crypto, models) but present independent UIs and can diverge in logic:
 the phone records this device with a touch UI; the desktop uses a windowed
-nav-rail layout and is the home of the future **"All devices" master viewer**.
+nav-rail layout, records the selected built-in/USB/Bluetooth microphone, and
+includes the account's Devices view.
 Form factor / role helpers live in `lib/src/platform/form_factor.dart`.
 
 ```sh
@@ -237,9 +320,9 @@ flutter build macos      -t lib/main_desktop.dart      # needs full Xcode; Windo
 Plugin notes on desktop: mobile-only plugins (e.g. `flutter_foreground_task`,
 foreground capture) are simply not registered on desktop and the code already
 guards them with `Platform.isAndroid`, so they no-op. `flutter_web_auth_2`
-(OAuth) pulls `desktop_webview_window` on desktop. `flutter analyze` is clean and
-`flutter test` (147 tests, incl. the multi-device crypto) passes on this machine;
-the native desktop **binary** link step needs the platform toolchain above.
+(OAuth) pulls `desktop_webview_window` on desktop. The desktop Connections view
+can configure direct S3/R2 while signed out; account-linked OAuth providers
+appear after passwordless sign-in and device registration.
 
 > This is the **Flutter** desktop app. There is also a separate, lean **pure-Rust**
 > desktop recorder in the `desktop.app.rs` repo — two desktop apps by design.

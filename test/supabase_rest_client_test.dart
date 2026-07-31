@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:audio_dashcam/src/models/acoustic_detection.dart';
 import 'package:audio_dashcam/src/models/app_config.dart';
 import 'package:audio_dashcam/src/models/client_telemetry_event.dart';
+import 'package:audio_dashcam/src/models/cloud_provider.dart';
 import 'package:audio_dashcam/src/models/cloud_secrets.dart';
 import 'package:audio_dashcam/src/services/supabase_rest_client.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -426,6 +427,14 @@ void main() {
     expect(payload, isNot(contains('device_id')));
     expect(payload, isNot(contains('supabase_anon_key')));
     expect(payload['device_retention_hours'], 100);
+  });
+
+  test('Dropbox is a valid portable account setting', () {
+    final settings = SupabaseRestClient().userSettingsForUpsert(
+      config.copyWith(cloudProvider: CloudProvider.dropbox),
+    );
+
+    expect(settings.toInsertJson()['cloud_provider'], 'dropbox');
   });
 
   test('merges account settings without touching device-only controls', () {

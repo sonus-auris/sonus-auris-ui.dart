@@ -1,4 +1,4 @@
-# android/app/src/main/kotlin/com/ores/audio_dashcam
+# android/app/src/main/kotlin/com/ores/sonus_auris
 
 The Android native (Kotlin) host code. Almost all logic is in Dart; the native
 side is kept minimal and exists mainly to host platform method channels the Dart

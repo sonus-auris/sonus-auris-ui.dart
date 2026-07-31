@@ -35,11 +35,16 @@ app simply skips iCloud mirroring (no crash, no error surfaced to the user).
      <key>iCloud.YOUR.BUNDLE.ID</key>
      <dict>
        <key>NSUbiquitousContainerIsDocumentScopePublic</key><true/>
-       <key>NSUbiquitousContainerName</key><string>Audio Dashcam</string>
+       <key>NSUbiquitousContainerName</key><string>Sonus Auris</string>
        <key>NSUbiquitousContainerSupportedFolderLevels</key><string>Any</string>
      </dict>
    </dict>
    ```
 
-5. Build to a real device signed into iCloud, link iCloud in the app's Configure tab,
-   record + upload, and confirm segments appear under iCloud Drive → Audio Dashcam.
+5. Build to a real device signed into iCloud, link iCloud in the app's Connections tab,
+   record + upload, and confirm segments appear under iCloud Drive → Sonus Auris.
+
+The checked-in iOS and macOS release metadata already declare
+`iCloud.com.ores.audioDashcam` as a public Documents container. The Apple
+Developer App IDs and distribution profiles must authorize that exact container;
+otherwise the native bridge deliberately reports iCloud as unavailable.

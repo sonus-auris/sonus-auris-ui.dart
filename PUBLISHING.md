@@ -6,14 +6,29 @@ Store** and the **Apple App Store**. Everything here is set up so the app is
 produce signed artifacts locally; uploading is an explicit, separate, manual
 (or fastlane) step you trigger deliberately.
 
-- App name: **Sonus Auris** (Flutter project `audio_dashcam`)
-- Android applicationId: `com.ores.audio_dashcam`
+- Google Play listing name: **Sonus Auris - Audio Dashcam**
+- In-app product name: **Sonus Auris** (Flutter project `audio_dashcam`)
+- Android applicationId: `com.ores.sonus_auris`
 - iOS bundle id: `com.ores.audioDashcam`
 - Version source of truth: `pubspec.yaml` → `version: <name>+<build>` (e.g. `1.0.0+1`)
 - Website / marketing URL: `https://sonusauris.app/`
 - Support URL: `https://sonusauris.app/support/`
 - Privacy policy URL: `https://sonusauris.app/privacy/`
 - Account deletion URL: `https://sonusauris.app/account-deletion/`
+
+## Monetization contract
+
+- The initial Google Play release is a one-time paid app.
+- Every verified purchaser from the paid-app era receives a permanent
+  `lifetime` / Founders entitlement after signing in. That entitlement has no
+  period end and must never be downgraded or replaced by a subscription.
+- A future subscription may fund recurring-cost services for later customers,
+  but Lifetime users are exempt from every Sonus Auris subscription gate. They
+  are never required to subscribe to retain or unlock app functionality.
+- Before changing the Play download to free or launching subscriptions, deploy
+  server-side Play-license verification and the immutable Lifetime grant. Test
+  reinstall, account restoration, device replacement, and subscription webhook
+  handling against a grandfathered account.
 
 ## What's in this repo to support release
 
@@ -42,7 +57,8 @@ These require a human with the right accounts; do them once.
 - [ ] (Optional, recommended) An **App Store Connect API key** (.p8) for fastlane uploads without 2FA friction.
 
 ### Google
-- [ ] Google Play Console account ($25 one-time), app created (package `com.ores.audio_dashcam`).
+- [x] Google Play Console account active; paid app record created as
+  **Sonus Auris - Audio Dashcam** (package `com.ores.sonus_auris`).
 - [ ] Generate the **upload keystore** (`scripts/release/android-generate-keystore.sh`) and enrol in **Play App Signing** (Google holds the app-signing key; you hold the upload key).
 - [ ] (Optional, recommended) A Play Console **service account** JSON for fastlane `supply` uploads.
 
@@ -63,7 +79,7 @@ These require a human with the right accounts; do them once.
 - [ ] **Content / age rating** — Play IARC questionnaire + App Store age rating.
 - [ ] **Screenshots & graphics** — iOS (6.7"/6.5"/5.5" + iPad if supported) and Play (≥2 phone shots + 1024×500 feature graphic). The app must be runnable to capture these; see `android/fastlane/metadata/.../images/README.md`.
 - [ ] **App category / contact info / support URL.**
-- [ ] **Pricing & availability** (free, countries).
+- [ ] **Pricing & availability** (paid price, countries).
 - [ ] **Sign in / demo** for reviewers if any gated feature needs it (see iOS review notes).
 
 ## Release flow (once the above is done)

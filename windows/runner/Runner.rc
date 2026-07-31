@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "app.sonusauris" "\0"
-            VALUE "FileDescription", "audio_dashcam" "\0"
+            VALUE "CompanyName", "Sonus Auris" "\0"
+            VALUE "FileDescription", "Sonus Auris audio dashcam" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "audio_dashcam" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 app.sonusauris. All rights reserved." "\0"
-            VALUE "OriginalFilename", "audio_dashcam.exe" "\0"
-            VALUE "ProductName", "audio_dashcam" "\0"
+            VALUE "InternalName", "sonus_auris" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Sonus Auris. All rights reserved." "\0"
+            VALUE "OriginalFilename", "sonus_auris.exe" "\0"
+            VALUE "ProductName", "Sonus Auris" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

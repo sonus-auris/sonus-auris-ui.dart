@@ -55,6 +55,7 @@ class SegmentRecorder {
   );
 
   final AudioRecorder _recorder;
+  InputDevice? _preferredInputDevice;
   final SegmentIndex _segmentIndex;
   final AcousticAnalyzer _analyzer;
   final Uuid _uuid;
@@ -117,6 +118,7 @@ class SegmentRecorder {
   _Pcm16Downsampler? _storeDownsampler;
   int _storedOverlapSamples = 0;
   double? _recentDb; // EMA of slice loudness, drives the per-segment decision.
+  DateTime? _forceHighQualityUntilUtc;
 
   // Rolling buffer of recently captured (processed) audio for Shazam / STT.
   final List<Uint8List> _recentChunks = [];
@@ -134,10 +136,44 @@ class SegmentRecorder {
   /// (app controller) decides whether to act, applying its own back-off.
   Stream<String> get resumeRequests => _resume.resumeRequests;
 
+  /// Connected microphones reported by the native desktop audio stack.
+  Future<List<InputDevice>> listInputDevices() => _recorder.listInputDevices();
+
+  /// Chooses a connected microphone for the next capture start. Passing null
+  /// restores the operating-system default input.
+  Future<void> selectInputDevice(String? deviceId) async {
+    if (deviceId == null || deviceId.trim().isEmpty) {
+      _preferredInputDevice = null;
+      return;
+    }
+    final devices = await _recorder.listInputDevices();
+    _preferredInputDevice = devices
+        .where((device) => device.id == deviceId)
+        .firstOrNull;
+    if (_preferredInputDevice == null) {
+      throw StateError('The selected microphone is no longer connected.');
+    }
+  }
+
   /// Acoustic-intelligence detections from the on-device FFT engine.
   Stream<AcousticDetection> get detections => _analyzer.detections;
 
   bool get isRecording => _running;
+
+  /// Forces newly opened segments to remain at the full capture rate until the
+  /// deadline. Used for clear speech and the configured recognition-phrase
+  /// window.
+  void forceHighQualityFor(Duration duration) {
+    final candidate = DateTime.now().toUtc().add(duration);
+    final current = _forceHighQualityUntilUtc;
+    if (current == null || candidate.isAfter(current)) {
+      _forceHighQualityUntilUtc = candidate;
+    }
+  }
+
+  void clearForcedHighQuality() {
+    _forceHighQualityUntilUtc = null;
+  }
 
   /// The most recent [window] of captured audio (processed PCM16), or null when
   /// nothing has been captured yet. Used to fingerprint music / transcribe
@@ -213,6 +249,7 @@ class SegmentRecorder {
           noiseSuppress: config.noiseSuppress,
           audioInterruption: AudioInterruptionMode.pauseResume,
           streamBufferSize: _streamBufferSize(config),
+          device: _preferredInputDevice,
         ),
       );
       _streamDone = Completer<void>();
@@ -572,6 +609,16 @@ class SegmentRecorder {
       _storeFactor = 1;
       _storeDownsampler = null;
       return;
+    }
+    final forcedUntil = _forceHighQualityUntilUtc;
+    if (forcedUntil != null && DateTime.now().toUtc().isBefore(forcedUntil)) {
+      _storeRate = _captureRate;
+      _storeFactor = 1;
+      _storeDownsampler = null;
+      return;
+    }
+    if (forcedUntil != null) {
+      _forceHighQualityUntilUtc = null;
     }
     // Until we have a trailing-loudness reading, keep full quality (treat the
     // first segment as loud) rather than needlessly downsampling startup audio.

@@ -26,6 +26,12 @@ jobs:
           cache: true
       - run: flutter --version
       - run: flutter pub get
+      - name: Install store-listing OCR verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr
+      - name: Verify App Store and Play Store graphics
+        run: scripts/release/verify-store-assets.sh
       - name: Analyze (fails on warnings/errors, not pre-existing style infos)
         run: flutter analyze --no-fatal-infos
       - name: Unit tests (hard gate)

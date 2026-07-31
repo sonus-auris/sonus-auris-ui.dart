@@ -19,7 +19,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.ores.audio_dashcam"
+    namespace = "com.ores.sonus_auris"
     // Pin the store contract instead of inheriting a moving Flutter default.
     // Google Play requires API 36 for new apps/updates starting 2026-08-31.
     compileSdk = 36
@@ -35,7 +35,7 @@ android {
 
     defaultConfig {
         // Permanent Play Store identity. Never change after the first upload.
-        applicationId = "com.ores.audio_dashcam"
+        applicationId = "com.ores.sonus_auris"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

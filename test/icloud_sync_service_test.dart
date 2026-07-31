@@ -26,14 +26,20 @@ void main() {
 
   late List<MethodCall> nativeCalls;
 
-  void mockNative({required bool available}) {
+  void mockNative({
+    required bool available,
+    Duration availabilityDelay = Duration.zero,
+    Duration importDelay = Duration.zero,
+  }) {
     nativeCalls = [];
     messenger.setMockMethodCallHandler(channel, (call) async {
       nativeCalls.add(call);
       switch (call.method) {
         case 'isAvailable':
+          await Future<void>.delayed(availabilityDelay);
           return available;
         case 'importSegment':
+          await Future<void>.delayed(importDelay);
           return 'icloud://Documents/${call.arguments['destinationKey']}';
       }
       return null;
@@ -91,12 +97,36 @@ void main() {
     expect(nativeCalls.map((c) => c.method), ['isAvailable']);
   });
 
+  test(
+    'treats an unresponsive iCloud availability check as unavailable',
+    () async {
+      mockNative(
+        available: true,
+        availabilityDelay: const Duration(milliseconds: 30),
+      );
+      final client = MockClient((_) async => http.Response('not reached', 500));
+      final icloud = IcloudSyncService(
+        httpClient: client,
+        platformTimeout: const Duration(milliseconds: 5),
+      );
+
+      final result = await icloud.syncPendingJobs(
+        backendClient: SoundRecorderBackendClient(httpClient: client),
+        config: config,
+        secrets: secrets,
+      );
+
+      expect(result.skipped, isTrue);
+      expect(nativeCalls.map((call) => call.method), ['isAvailable']);
+    },
+  );
+
   test('downloads, writes to iCloud, and completes the job', () async {
     mockNative(available: true);
     final h = harness('https://dl.example/seg-1');
     final result = await h.icloud.syncPendingJobs(
       backendClient: h.backend,
-      config: config,
+      config: config.copyWith(cloudProvider: CloudProvider.googleDrive),
       secrets: secrets,
     );
     expect(result.completed, 1);
@@ -120,4 +150,40 @@ void main() {
       expect(nativeCalls.any((c) => c.method == 'importSegment'), isFalse);
     },
   );
+
+  test('leaves a job retryable when the native iCloud write stalls', () async {
+    mockNative(available: true, importDelay: const Duration(milliseconds: 30));
+    final client = MockClient((request) async {
+      if (request.url.path.endsWith('/cloud-copy-jobs')) {
+        return http.Response(
+          jsonEncode({
+            'jobs': [
+              {
+                'job': {'id': 'job-1', 'destinationKey': 'folder/seg-1.wav'},
+                'download': {'url': 'https://dl.example/seg-1'},
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      if (request.url.host == 'dl.example') {
+        return http.Response.bytes(const [1, 2, 3, 4], 200);
+      }
+      fail('A timed-out iCloud write must not complete the backend job.');
+    });
+    final icloud = IcloudSyncService(
+      httpClient: client,
+      platformTimeout: const Duration(milliseconds: 5),
+    );
+
+    final result = await icloud.syncPendingJobs(
+      backendClient: SoundRecorderBackendClient(httpClient: client),
+      config: config,
+      secrets: secrets,
+    );
+
+    expect(result.completed, 0);
+    expect(result.failed, 1);
+  });
 }

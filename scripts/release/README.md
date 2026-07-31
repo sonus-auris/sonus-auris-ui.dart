@@ -16,3 +16,6 @@ release flow.
   (macOS + Xcode only).
 - **[generate-store-assets.sh](generate-store-assets.sh)** — regenerate branded
   iOS/Android launcher icons plus Play icon/feature graphic (ImageMagick 7).
+- **[verify-store-assets.sh](verify-store-assets.sh)** — verify required
+  dimensions and OCR-check both account screenshots for current passwordless
+  six-digit email-code copy (`tesseract` required).

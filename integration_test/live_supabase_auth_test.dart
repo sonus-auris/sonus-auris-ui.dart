@@ -1,17 +1,24 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:audio_dashcam/main.dart';
+import 'package:audio_dashcam/src/app/app_controller.dart';
+import 'package:audio_dashcam/src/services/settings_store.dart';
 import 'package:audio_dashcam/src/services/supabase_key_policy.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:integration_test/integration_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+const _uiEmail = String.fromEnvironment('SONUS_TEST_UI_EMAIL');
+const _mailpitUrl = String.fromEnvironment('SONUS_TEST_MAILPIT_URL');
 const _email = String.fromEnvironment('SONUS_TEST_EMAIL');
-const _password = String.fromEnvironment('SONUS_TEST_PASSWORD');
+const _otp = String.fromEnvironment('SONUS_TEST_EMAIL_OTP');
 const _otherEmail = String.fromEnvironment('SONUS_TEST_EMAIL_B');
-const _otherPassword = String.fromEnvironment('SONUS_TEST_PASSWORD_B');
+const _otherOtp = String.fromEnvironment('SONUS_TEST_EMAIL_OTP_B');
 const _supabaseUrl = String.fromEnvironment('SONUS_SUPABASE_URL');
 const _supabaseKey = String.fromEnvironment('SONUS_SUPABASE_ANON_KEY');
 
@@ -19,9 +26,17 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'live Supabase password sign-in reaches the authenticated account state',
+    'live Supabase email OTP reaches the authenticated account state',
     (tester) async {
-      await tester.pumpWidget(const AudioDashcamRoot());
+      SharedPreferences.setMockInitialValues({});
+      final secureValues = _MemorySecretValueStore();
+      await tester.pumpWidget(
+        AudioDashcamRoot(
+          controllerFactory: () => AppController(
+            settingsStore: SettingsStore(secretValueStore: secureValues),
+          ),
+        ),
+      );
 
       await _pumpUntil(
         tester,
@@ -31,32 +46,67 @@ void main() {
       await tester.tap(find.text('Continue'));
 
       final emailField = find.byKey(const ValueKey('supabase-email-field'));
-      final passwordField = find.byKey(
-        const ValueKey('supabase-password-field'),
+      final sendLinkButton = find.byKey(
+        const ValueKey('supabase-send-link-button'),
       );
-      final signInButton = find.byKey(
-        const ValueKey('supabase-sign-in-button'),
-      );
-      await _pumpUntilEnabled(tester, signInButton);
+      await _pumpUntilEnabled(tester, sendLinkButton);
 
-      await tester.enterText(emailField, _email);
-      await tester.enterText(passwordField, _password);
+      await tester.enterText(emailField, _uiEmail);
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pump();
-      await tester.ensureVisible(signInButton);
+      await tester.ensureVisible(sendLinkButton);
       await tester.pump();
-      await tester.tap(signInButton);
+      await tester.tap(sendLinkButton);
+      await _pumpUntil(
+        tester,
+        find.byKey(const ValueKey('supabase-code-field')),
+      );
+      final uiOtp = await _waitForLocalEmailOtp(_uiEmail);
+      await tester.enterText(
+        find.byKey(const ValueKey('supabase-code-field')),
+        uiOtp,
+      );
+      final verifyButton = find.byKey(
+        const ValueKey('supabase-verify-code-button'),
+      );
+      await tester.ensureVisible(verifyButton);
+      await tester.pump();
+      await tester.tap(verifyButton);
 
       await _pumpUntil(
         tester,
-        find.text('Signed in'),
-        timeout: const Duration(seconds: 45),
+        find.byKey(const ValueKey('mandatory-mfa-totp-button')),
+        timeout: const Duration(seconds: 60),
       );
-      expect(find.textContaining(_email), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('mandatory-mfa-totp-button')));
+      final secretFinder = find.byKey(
+        const ValueKey('mandatory-mfa-totp-secret'),
+      );
+      await _pumpUntil(tester, secretFinder);
+      final secret = tester.widget<SelectableText>(secretFinder).data;
+      expect(secret, isNotNull);
+      await tester.enterText(
+        find.byKey(const ValueKey('mandatory-mfa-code-field')),
+        _currentTotp(secret!),
+      );
+      final mfaVerify = find.byKey(
+        const ValueKey('mandatory-mfa-enrollment-verify-button'),
+      );
+      await tester.ensureVisible(mfaVerify);
+      await tester.pump();
+      await tester.tap(mfaVerify);
+
+      await _pumpUntil(
+        tester,
+        find.byKey(const ValueKey('onboarding-signed-in-state')),
+        timeout: const Duration(seconds: 60),
+      );
+      expect(find.text('Signed in'), findsOneWidget);
+      expect(find.textContaining(_uiEmail), findsOneWidget);
     },
     // This test is opt-in because it targets a real Supabase project. Supply
-    // both credentials as dart-defines; no live credential belongs in source.
-    skip: _email.isEmpty || _password.isEmpty,
+    // the email and freshly received OTP as dart-defines.
+    skip: _uiEmail.isEmpty || _mailpitUrl.isEmpty,
     timeout: const Timeout(Duration(minutes: 4)),
   );
 
@@ -64,12 +114,13 @@ void main() {
     'live Supabase keeps two authenticated users isolated by RLS',
     () async {
       requireSafeSupabaseClientKey(_supabaseKey);
-      final first = await _signIn(_email, _password);
-      final second = await _signIn(_otherEmail, _otherPassword);
+      final first = await _verifyOtp(_email, _otp);
+      final second = await _verifyOtp(_otherEmail, _otherOtp);
       expect(first.userId, isNot(second.userId));
 
       final firstEvent = const Uuid().v4();
       final secondEvent = const Uuid().v4();
+      var assertionsCompleted = false;
       try {
         await _insertAcousticEvent(first, firstEvent, 'rls-user-a');
         await _insertAcousticEvent(second, secondEvent, 'rls-user-b');
@@ -99,20 +150,79 @@ void main() {
 
         final firstRows = await _visibleEvents(first, id: firstEvent);
         expect(firstRows.single['kind'], 'rls-user-a');
+        assertionsCompleted = true;
       } finally {
-        await _deleteAcousticEvent(first, firstEvent);
-        await _deleteAcousticEvent(second, secondEvent);
+        final cleanupResponses = await Future.wait([
+          _deleteAcousticEvent(first, firstEvent),
+          _deleteAcousticEvent(second, secondEvent),
+        ]);
+        if (assertionsCompleted) {
+          for (final response in cleanupResponses) {
+            expect(
+              response.statusCode,
+              204,
+              reason: 'live RLS fixture cleanup failed',
+            );
+          }
+        }
       }
     },
     skip:
         _email.isEmpty ||
-        _password.isEmpty ||
+        _otp.isEmpty ||
         _otherEmail.isEmpty ||
-        _otherPassword.isEmpty ||
+        _otherOtp.isEmpty ||
         _supabaseUrl.isEmpty ||
         _supabaseKey.isEmpty,
     timeout: const Timeout(Duration(minutes: 2)),
   );
+}
+
+final class _MemorySecretValueStore implements SecretValueStore {
+  final Map<String, String> _values = {};
+
+  @override
+  Future<String?> read({required String key}) async => _values[key];
+
+  @override
+  Future<void> write({required String key, required String value}) async {
+    _values[key] = value;
+  }
+
+  @override
+  Future<void> delete({required String key}) async {
+    _values.remove(key);
+  }
+}
+
+Future<String> _waitForLocalEmailOtp(String email) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 30));
+  final mailbox = _mailpitUrl.replaceFirst(RegExp(r'/+$'), '');
+  while (DateTime.now().isBefore(deadline)) {
+    final response = await http.get(Uri.parse('$mailbox/api/v1/messages'));
+    if (response.statusCode == 200) {
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final messages = body['messages'] as List<dynamic>? ?? const [];
+      for (final candidate in messages.whereType<Map<String, dynamic>>()) {
+        final recipients = candidate['To'] as List<dynamic>? ?? const [];
+        final matchesRecipient = recipients
+            .whereType<Map<String, dynamic>>()
+            .any(
+              (recipient) =>
+                  (recipient['Address'] as String?)?.toLowerCase() ==
+                  email.toLowerCase(),
+            );
+        if (!matchesRecipient) continue;
+        final snippet = candidate['Snippet'] as String? ?? '';
+        final code = RegExp(r'\b\d{6}\b').firstMatch(snippet)?.group(0);
+        if (code != null) {
+          return code;
+        }
+      }
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  throw StateError('Timed out waiting for the local passwordless email.');
 }
 
 class _LiveSession {
@@ -122,21 +232,99 @@ class _LiveSession {
   final String accessToken;
 }
 
-Future<_LiveSession> _signIn(String email, String password) async {
+Future<_LiveSession> _verifyOtp(String email, String otp) async {
   final response = await http.post(
     Uri.parse(
-      '${_supabaseUrl.replaceFirst(RegExp(r'/+$'), '')}/auth/v1/token?grant_type=password',
+      '${_supabaseUrl.replaceFirst(RegExp(r'/+$'), '')}/auth/v1/verify',
     ),
     headers: {'apikey': _supabaseKey, 'Content-Type': 'application/json'},
-    body: jsonEncode({'email': email, 'password': password}),
+    body: jsonEncode({'type': 'email', 'email': email, 'token': otp}),
   );
-  expect(response.statusCode, 200, reason: 'live Supabase sign-in failed');
+  expect(
+    response.statusCode,
+    200,
+    reason: 'live Supabase OTP verification failed',
+  );
   final body = jsonDecode(response.body) as Map<String, dynamic>;
   final user = body['user'] as Map<String, dynamic>;
-  return _LiveSession(
+  final aal1 = _LiveSession(
     userId: user['id'] as String,
     accessToken: body['access_token'] as String,
   );
+  return _enrollAndVerifyTotp(aal1);
+}
+
+Future<_LiveSession> _enrollAndVerifyTotp(_LiveSession aal1) async {
+  final enrollmentResponse = await http.post(
+    Uri.parse(
+      '${_supabaseUrl.replaceFirst(RegExp(r'/+$'), '')}/auth/v1/factors',
+    ),
+    headers: _headers(aal1),
+    body: jsonEncode({'factor_type': 'totp', 'friendly_name': 'Live RLS test'}),
+  );
+  expect(enrollmentResponse.statusCode, 200);
+  final enrollment =
+      jsonDecode(enrollmentResponse.body) as Map<String, dynamic>;
+  final factorId = enrollment['id'] as String;
+  final totp = enrollment['totp'] as Map<String, dynamic>;
+
+  final challengeResponse = await http.post(
+    Uri.parse(
+      '${_supabaseUrl.replaceFirst(RegExp(r'/+$'), '')}/auth/v1/factors/'
+      '$factorId/challenge',
+    ),
+    headers: _headers(aal1),
+    body: '{}',
+  );
+  expect(challengeResponse.statusCode, 200);
+  final challenge = jsonDecode(challengeResponse.body) as Map<String, dynamic>;
+
+  final verifyResponse = await http.post(
+    Uri.parse(
+      '${_supabaseUrl.replaceFirst(RegExp(r'/+$'), '')}/auth/v1/factors/'
+      '$factorId/verify',
+    ),
+    headers: _headers(aal1),
+    body: jsonEncode({
+      'challenge_id': challenge['id'],
+      'code': _currentTotp(totp['secret'] as String),
+    }),
+  );
+  expect(verifyResponse.statusCode, 200);
+  final verified = jsonDecode(verifyResponse.body) as Map<String, dynamic>;
+  return _LiveSession(
+    userId: aal1.userId,
+    accessToken: verified['access_token'] as String,
+  );
+}
+
+String _currentTotp(String secret) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  var bits = '';
+  for (final character in secret.replaceAll('=', '').toUpperCase().split('')) {
+    final index = alphabet.indexOf(character);
+    if (index < 0) {
+      throw FormatException('Invalid base32 TOTP secret.');
+    }
+    bits += index.toRadixString(2).padLeft(5, '0');
+  }
+  final secretBytes = <int>[];
+  for (var offset = 0; offset + 8 <= bits.length; offset += 8) {
+    secretBytes.add(int.parse(bits.substring(offset, offset + 8), radix: 2));
+  }
+  final counter = DateTime.now().millisecondsSinceEpoch ~/ 30000;
+  final counterBytes = ByteData(8)..setUint64(0, counter);
+  final digest = Hmac(
+    sha1,
+    secretBytes,
+  ).convert(counterBytes.buffer.asUint8List()).bytes;
+  final offset = digest.last & 0x0f;
+  final binary =
+      ((digest[offset] & 0x7f) << 24) |
+      ((digest[offset + 1] & 0xff) << 16) |
+      ((digest[offset + 2] & 0xff) << 8) |
+      (digest[offset + 3] & 0xff);
+  return (binary % 1000000).toString().padLeft(6, '0');
 }
 
 Map<String, String> _headers(_LiveSession session, {String? prefer}) {
@@ -196,13 +384,11 @@ Future<List<Map<String, dynamic>>> _visibleEvents(
 Future<Set<String>> _visibleEventIds(_LiveSession session) async =>
     (await _visibleEvents(session)).map((row) => row['id'] as String).toSet();
 
-Future<void> _deleteAcousticEvent(_LiveSession session, String id) async {
-  final response = await http.delete(
-    _restUri('acoustic_events?id=eq.$id'),
-    headers: _headers(session),
-  );
-  expect(response.statusCode, 204, reason: 'live RLS fixture cleanup failed');
-}
+Future<http.Response> _deleteAcousticEvent(_LiveSession session, String id) =>
+    http.delete(
+      _restUri('acoustic_events?id=eq.$id'),
+      headers: _headers(session),
+    );
 
 Future<void> _pumpUntilEnabled(
   WidgetTester tester,
@@ -228,9 +414,23 @@ Future<void> _pumpUntil(
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
     await tester.pump(const Duration(milliseconds: 250));
+    final startupError = find.byType(ErrorPage);
+    if (startupError.evaluate().isNotEmpty) {
+      final page = tester.widget<ErrorPage>(startupError.first);
+      fail('Sonus Auris startup failed during auth E2E: ${page.error}');
+    }
     if (finder.evaluate().isNotEmpty) {
       return;
     }
   }
-  fail('Timed out waiting for the expected live-auth widget.');
+  final visibleText = tester
+      .widgetList<Text>(find.byType(Text))
+      .map((widget) => widget.data)
+      .whereType<String>()
+      .where((text) => text.trim().isNotEmpty)
+      .join(' | ');
+  fail(
+    'Timed out waiting for the expected live-auth widget. '
+    'Visible text: $visibleText',
+  );
 }

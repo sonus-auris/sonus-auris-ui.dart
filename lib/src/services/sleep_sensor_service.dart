@@ -1,4 +1,6 @@
 // Reads native motion / ambient-light / phone-context sensors (via method channel) as extra sleep-sensing signals.
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 
 class SleepSensorSnapshot {
@@ -68,10 +70,13 @@ class SleepSignalValues {
 }
 
 class SleepSensorService {
-  SleepSensorService({MethodChannel? channel})
-    : _channel = channel ?? const MethodChannel('audio_dashcam/sleep_sensors');
+  SleepSensorService({
+    MethodChannel? channel,
+    this.timeout = const Duration(seconds: 3),
+  }) : _channel = channel ?? const MethodChannel('audio_dashcam/sleep_sensors');
 
   final MethodChannel _channel;
+  final Duration timeout;
 
   Future<SleepSensorSnapshot> sample({
     required bool motionConsent,
@@ -80,10 +85,20 @@ class SleepSensorService {
     if (!motionConsent && !ambientLightConsent) {
       return SleepSensorSnapshot(sampledAtUtc: DateTime.now().toUtc());
     }
-    final raw = await _channel.invokeMapMethod<String, Object?>(
-      'sampleSleepSignals',
-      {'motion': motionConsent, 'ambientLight': ambientLightConsent},
-    );
-    return SleepSensorSnapshot.fromMap(raw ?? const {});
+    try {
+      final raw = await _channel
+          .invokeMapMethod<String, Object?>('sampleSleepSignals', {
+            'motion': motionConsent,
+            'ambientLight': ambientLightConsent,
+          })
+          .timeout(timeout);
+      return SleepSensorSnapshot.fromMap(raw ?? const {});
+    } on TimeoutException {
+      return SleepSensorSnapshot(sampledAtUtc: DateTime.now().toUtc());
+    } on PlatformException {
+      return SleepSensorSnapshot(sampledAtUtc: DateTime.now().toUtc());
+    } on MissingPluginException {
+      return SleepSensorSnapshot(sampledAtUtc: DateTime.now().toUtc());
+    }
   }
 }

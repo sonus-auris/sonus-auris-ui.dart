@@ -1,13 +1,12 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:audio_dashcam/src/theme/sonus_theme.dart';
 import 'package:audio_dashcam/src/widgets/supabase_auth_panel.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   Widget harness({
-    required Future<void> Function(String, String) onSignIn,
-    required Future<void> Function(String, String) onSignUp,
-    Future<void> Function(String)? onPasswordReset,
+    required Future<bool> Function(String) onSendMagicLink,
+    required Future<bool> Function(String, String) onVerifyCode,
     bool enabled = true,
   }) {
     return MaterialApp(
@@ -18,9 +17,8 @@ void main() {
           children: [
             SupabaseAuthPanel(
               enabled: enabled,
-              onSignIn: onSignIn,
-              onSignUp: onSignUp,
-              onPasswordReset: onPasswordReset,
+              onSendMagicLink: onSendMagicLink,
+              onVerifyCode: onVerifyCode,
             ),
           ],
         ),
@@ -28,107 +26,41 @@ void main() {
     );
   }
 
-  testWidgets('validates credentials before sign in', (tester) async {
-    var calls = 0;
-    await tester.pumpWidget(
-      harness(onSignIn: (_, _) async => calls += 1, onSignUp: (_, _) async {}),
-    );
-
-    await tester.tap(find.text('Sign in securely'));
-    await tester.pump();
-
-    expect(find.text('Enter a valid email address.'), findsOneWidget);
-    expect(find.text('Use at least 8 characters.'), findsOneWidget);
-    expect(calls, 0);
-  });
-
-  testWidgets('signs in with normalized email and exact password', (
-    tester,
-  ) async {
+  testWidgets('uses a passwordless magic-link surface', (tester) async {
     String? submittedEmail;
-    String? submittedPassword;
     await tester.pumpWidget(
       harness(
-        onSignIn: (email, password) async {
+        onSendMagicLink: (email) async {
           submittedEmail = email;
-          submittedPassword = password;
+          return true;
         },
-        onSignUp: (_, _) async {},
+        onVerifyCode: (_, _) async => true,
       ),
     );
 
+    expect(find.textContaining('password', findRichText: true), findsWidgets);
+    expect(find.byType(TextFormField), findsOneWidget);
     await tester.enterText(
-      find.byKey(const ValueKey('supabase-email')),
-      '  listener@example.com  ',
+      find.byKey(const ValueKey('supabase-email-field')),
+      ' listener@example.com ',
     );
-    await tester.enterText(
-      find.byKey(const ValueKey('supabase-password')),
-      'correct horse battery staple',
-    );
-    await tester.tap(find.text('Sign in securely'));
+    await tester.tap(find.text('Email me a 6-digit code'));
     await tester.pumpAndSettle();
 
     expect(submittedEmail, 'listener@example.com');
-    expect(submittedPassword, 'correct horse battery staple');
-  });
-
-  testWidgets('switches to account creation and submits', (tester) async {
-    String? submittedEmail;
-    await tester.pumpWidget(
-      harness(
-        onSignIn: (_, _) async {},
-        onSignUp: (email, _) async => submittedEmail = email,
-      ),
-    );
-
-    await tester.tap(find.text('Create account'));
-    await tester.pump();
-    await tester.enterText(
-      find.byKey(const ValueKey('supabase-email')),
-      'new.listener@example.com',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('supabase-password')),
-      'long-enough-password',
-    );
-    await tester.tap(find.text('Create my account'));
-    await tester.pumpAndSettle();
-
-    expect(submittedEmail, 'new.listener@example.com');
-  });
-
-  testWidgets('requests a password reset for the entered email', (
-    tester,
-  ) async {
-    String? resetEmail;
-    await tester.pumpWidget(
-      harness(
-        onSignIn: (_, _) async {},
-        onSignUp: (_, _) async {},
-        onPasswordReset: (email) async => resetEmail = email,
-      ),
-    );
-
-    await tester.enterText(
-      find.byKey(const ValueKey('supabase-email')),
-      '  reset@example.com ',
-    );
-    await tester.tap(find.text('Reset password'));
-    await tester.pumpAndSettle();
-
-    expect(resetEmail, 'reset@example.com');
+    expect(find.byKey(const ValueKey('supabase-code-field')), findsOneWidget);
   });
 
   testWidgets('explains when account access is not configured', (tester) async {
     await tester.pumpWidget(
       harness(
         enabled: false,
-        onSignIn: (_, _) async {},
-        onSignUp: (_, _) async {},
+        onSendMagicLink: (_) async => true,
+        onVerifyCode: (_, _) async => true,
       ),
     );
 
     expect(find.textContaining('Account access is not configured'), findsOne);
-    expect(find.byKey(const ValueKey('supabase-email')), findsNothing);
+    expect(find.byKey(const ValueKey('supabase-email-field')), findsNothing);
   });
 }

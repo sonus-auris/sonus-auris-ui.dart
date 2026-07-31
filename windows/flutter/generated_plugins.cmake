@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  app_links
   battery_plus
   connectivity_plus
   desktop_webview_window
@@ -11,7 +12,10 @@ list(APPEND FLUTTER_PLUGIN_LIST
   geolocator_windows
   permission_handler_windows
   record_windows
+  screen_retriever_windows
+  tray_manager
   url_launcher_windows
+  window_manager
   window_to_front
 )
 

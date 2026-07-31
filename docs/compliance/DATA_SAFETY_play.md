@@ -8,7 +8,9 @@ device is still declared honestly below.
 
 ## Security practices
 - **Encrypted in transit:** Yes (TLS/HTTPS).
-- **Data encrypted at rest on device:** Yes (AES-256-GCM, keys on device).
+- **Data protected at rest on device:** Yes. Local rolling files remain in the
+  app's private container and rely on device/OS storage protection; recordings
+  are additionally sealed with AES-256-GCM before supported cloud transfer.
 - **Users can request deletion:** Yes — in-app + web URL (see ACCOUNT_DELETION).
 - **Committed to Play Families policy:** app is not directed to children.
 - **Independent security review:** optional to declare.
@@ -28,11 +30,17 @@ Notes for the reviewer/console:
 - We do **not** select "Data is processed ephemerally" for audio unless true for
   your config; default above assumes optional backup.
 - No data is used for **advertising or marketing**, and no data is **sold/shared**
-  with third parties. Supabase and connected object stores act as service
-  providers or user-directed destinations. No third-party ads/analytics SDKs are bundled.
-- Audio sent to your own connected storage (S3/Drive/OneDrive/iCloud) is governed
-  by that provider; for Play purposes we declare audio as "collected" because it
-  can leave the device, and "not shared" because we don't hand it to third parties.
+  with third parties. Supabase, connected object stores, and any external
+  recognition endpoint the user explicitly configures act as service providers
+  or user-directed destinations. No third-party ads/analytics SDKs are bundled.
+- Audio sent to your own connected storage (S3/Drive/OneDrive/Dropbox/iCloud) is
+  governed by that provider. Supported outbound backups are sealed on-device,
+  except iCloud copies are decrypted locally into the user's own iCloud Drive.
+  For Play purposes we declare audio as "collected" because it can leave the
+  device, and "not shared" because we don't hand it to third parties.
+- Optional cloud transcription and song identification can send a bounded audio
+  excerpt/fingerprint to the configured recognition provider. Keep Audio declared
+  as collected when either feature is present in the shipped build.
 
 > If you ship **without** the optional backend/backup enabled at all, audio,
 > location, and IDs may all be "not collected" (everything stays on-device).
