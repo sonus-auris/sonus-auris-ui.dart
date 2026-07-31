@@ -289,8 +289,9 @@ class _SecurityNote extends StatelessWidget {
           SizedBox(width: 9),
           Expanded(
             child: Text(
-              'Protected by Supabase Auth. We email you a one-time code, so there '
-              'is nothing to memorize and no secret to store.',
+              'Protected by a one-time Supabase email code and mandatory '
+              'two-factor authentication. Sonus Auris does not ask for or '
+              'store an account password.',
               style: TextStyle(color: SonusColors.inkSoft, height: 1.3),
             ),
           ),
