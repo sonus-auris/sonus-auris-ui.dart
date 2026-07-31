@@ -2923,27 +2923,6 @@ class AppController {
     await _updateContextTriggers();
   }
 
-  Future<void> _onPossibleCollision(CollisionEvent event) async {
-    if (!_recorder.isRecording) {
-      return;
-    }
-    _diagnostics.add(
-      'Possible collision detected at '
-      '${event.accelerationMetersPerSecondSquared.toStringAsFixed(1)} m/s².',
-    );
-    _message.add(
-      'Possible collision detected. Recording is active; review or save this moment.',
-    );
-    try {
-      await Future.wait([
-        _feedback.ding(),
-        _localNotifications.showPossibleCollision(),
-      ]);
-    } catch (error) {
-      _diagnostics.add('Collision reminder failed: $error');
-    }
-  }
-
   void _cancelPendingPauseResume() {
     _pauseResumeTimer?.cancel();
     _pauseResumeTimer = null;
