@@ -2416,15 +2416,9 @@ class _ConfigureActionBar extends StatelessWidget {
   }
 }
 
-<<<<<<< HEAD
-/// Supabase identity: project config plus passwordless magic-link sign-in. When
-/// signed in, the controller registers the device and uploads run under the
-/// verified account.
-=======
 /// Supabase identity: project config plus passwordless email-code sign-in. When
 /// signed in, the controller registers the device and uploads run under the
 /// verified account. The one-time code is held only transiently in a local field.
->>>>>>> origin/main
 class _AccountSection extends StatefulWidget {
   const _AccountSection({
     required this.controller,
