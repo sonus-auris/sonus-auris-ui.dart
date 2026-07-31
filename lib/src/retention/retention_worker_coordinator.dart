@@ -156,14 +156,22 @@ class RetentionWorkerCoordinator {
 
     final barrier = _drainAndClear(clearLocalState);
     _barrierFuture = barrier;
+    // Clear only the bookkeeping future. The caller still receives the original
+    // barrier error, while this side-chain deliberately consumes it so cleanup
+    // failures are not reported twice as unhandled asynchronous errors.
     unawaited(
-      barrier.whenComplete(() {
-        if (identical(_barrierFuture, barrier)) {
-          _barrierFuture = null;
-        }
-      }),
+      barrier.then<void>(
+        (_) => _clearBarrierReference(barrier),
+        onError: (Object _, StackTrace __) => _clearBarrierReference(barrier),
+      ),
     );
     return barrier;
+  }
+
+  void _clearBarrierReference(Future<void> barrier) {
+    if (identical(_barrierFuture, barrier)) {
+      _barrierFuture = null;
+    }
   }
 
   Future<void> _drainAndClear(Future<void> Function() clearLocalState) async {
