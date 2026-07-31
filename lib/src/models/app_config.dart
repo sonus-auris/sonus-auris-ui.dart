@@ -224,21 +224,6 @@ class AppConfig {
   /// No-op on Android. Sends a short audio fingerprint to Apple's service.
   final bool shazamEnabled;
 
-<<<<<<< HEAD
-  /// General phrases to watch for in transcribed speech (case-insensitive).
-  /// Matches ding, raise a magic-phrase alert, and temporarily keep recording
-  /// at full fidelity.
-  final List<String> keywords;
-
-  /// Urgent user-defined phrases. These behave like [keywords], but are labeled
-  /// as safety words in event metadata and win when a phrase appears in both
-  /// lists.
-  final List<String> safeWords;
-
-  /// Full-fidelity recording window opened by a keyword or safety-word match.
-  final int keywordQualityBoostMinutes;
-
-=======
   /// Keywords to watch for in transcribed speech (case-insensitive). A match
   /// raises a magic-phrase alert, dings, and opens a full-quality boost window
   /// ([keywordQualityBoostMinutes]). Only consulted when [sttEnabled].
@@ -246,7 +231,9 @@ class AppConfig {
 
   /// Safe words: a second watch list with the same detection behaviour as
   /// [keywords], kept separate so a user can name distress/help words apart
-  /// from ordinary alert keywords. Case-insensitive; consulted when [sttEnabled].
+  /// from ordinary alert keywords. They are labeled as safety words in event
+  /// metadata and win when a phrase appears in both lists. Case-insensitive;
+  /// consulted when [sttEnabled].
   final List<String> safeWords;
 
   /// How long, in minutes, a heard keyword or safe word forces full recording
@@ -262,7 +249,6 @@ class AppConfig {
   /// counts as a collision. Lower is more sensitive; ~2.5g is a firm knock.
   final double collisionSensitivityG;
 
->>>>>>> origin/main
   /// Opt-in cloud speech-to-text. When on, short clips of sustained speech are
   /// POSTed to [sttEndpoint] to scan for configured phrases. Off by default;
   /// audio only leaves the device while this is enabled.
