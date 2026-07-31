@@ -26,6 +26,8 @@ signing access.
 - [x] Google Play organization account verified and paid app record created on
   July 29, 2026 as **Sonus Auris - Audio Dashcam**, package
   `com.ores.sonus_auris`.
+- [ ] Create the Google Play API service account, link it in Play Console, and
+  grant only the Sonus Auris app/track permissions required for publication.
 - [x] Canonical production Supabase project selected and dashboard-verified on
   July 29, 2026: organization `sonus-auris` (`ngixgitdtrbwnaimwsbb`), project
   `mckxblyvfzyoxpwvrnjm`, AWS `us-east-2`. Use
