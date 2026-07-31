@@ -18,9 +18,11 @@ signing access.
 
 - [ ] Finish Apple Developer Program enrollment and billing:
   [Apple checkout](https://secure7.store.apple.com/shop/checkout?_s=Billing)
-<<<<<<< HEAD
-- [ ] Create or finish the Sonus Auris App Store Connect app record:
+- [ ] Create or finish the Sonus Auris App Store Connect app record for
+  `com.ores.audioDashcam`; accept current agreements, tax, and banking terms:
   [App Store Connect apps](https://appstoreconnect.apple.com/apps)
+- [ ] Create an App Store Connect API key with the narrowest role that can upload
+  builds. Retain the `.p8` in the protected GitHub environment only.
 - [x] Google Play organization account verified and paid app record created on
   July 29, 2026 as **Sonus Auris - Audio Dashcam**, package
   `com.ores.sonus_auris`.
