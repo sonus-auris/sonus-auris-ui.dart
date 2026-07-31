@@ -30,10 +30,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      harness(
-        onRequestCode: (_) async => true,
-        onSubmitCode: (_, _) async {},
-      ),
+      harness(onRequestCode: (_) async => true, onSubmitCode: (_, _) async {}),
     );
 
     expect(find.textContaining('password', findRichText: true), findsWidgets);

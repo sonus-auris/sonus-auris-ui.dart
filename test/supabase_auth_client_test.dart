@@ -358,7 +358,13 @@ void main() {
         }),
       );
 
-      for (final invalidCode in ['   ', '12345', '1234567', '12x456', '12345a']) {
+      for (final invalidCode in [
+        '   ',
+        '12345',
+        '1234567',
+        '12x456',
+        '12345a',
+      ]) {
         await expectLater(
           client.verifyEmailOtp(
             config: config,

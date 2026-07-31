@@ -35,7 +35,6 @@ prompt, or armed schedule. The app keeps a rolling working window in app-private
 local storage for up to 100 hours or your selected shorter period. That local
 working audio may be plaintext so the app can record, play, transcribe, and
 analyze it. Purpose: the core recording and user-selected analysis features.
->>>>>>> origin/main
 
 **Encrypted backups and device sync** — if you enable backup or sync, each audio
 object is encrypted on-device with a fresh per-object key before upload. The

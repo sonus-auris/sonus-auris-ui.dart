@@ -89,7 +89,10 @@ void main() {
 
     expect(harness.requestCalls, 1);
     expect(find.byKey(const ValueKey('supabase-code-field')), findsNothing);
-    expect(find.byKey(const ValueKey('supabase-request-button')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('supabase-request-button')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('blocks verification until the code is six digits', (
@@ -171,9 +174,14 @@ void main() {
     expect(find.byKey(const ValueKey('supabase-code-field')), findsOneWidget);
 
     // "Use a different email" returns to the email step.
-    await tester.tap(find.byKey(const ValueKey('supabase-change-email-button')));
+    await tester.tap(
+      find.byKey(const ValueKey('supabase-change-email-button')),
+    );
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('supabase-request-button')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('supabase-request-button')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('supabase-code-field')), findsNothing);
   });
 
@@ -214,7 +222,10 @@ void main() {
 
     await tester.pumpWidget(harness.build());
 
-    expect(find.byKey(const ValueKey('supabase-request-button')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('supabase-request-button')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 }
