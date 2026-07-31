@@ -1877,11 +1877,6 @@ class AppController {
   }
 
   Future<void> _onSignedIn({required String successMessage}) async {
-<<<<<<< HEAD
-    if (!_accountStatus.value.isMfaSatisfied) {
-      throw StateError(
-        'A verified second factor is required before account access.',
-=======
     final secrets = _secrets.valueOrNull;
     if (secrets == null ||
         !supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken) ||
@@ -1890,7 +1885,6 @@ class AppController {
         _accountStatus.value.mfaCheckFailed) {
       throw StateError(
         'A verified second factor and an AAL2 session are required.',
->>>>>>> origin/main
       );
     }
     await _syncPortableSettingsFromSupabase();

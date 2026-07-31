@@ -19,12 +19,8 @@
 set -euo pipefail
 
 TARGET="${1:?usage: grant-then-run-integration.sh <integration_test target>}"
-<<<<<<< HEAD
 PKG=com.ores.sonus_auris
-=======
-PKG=com.ores.audio_dashcam
 ACTIVITY="$PKG/.MainActivity"
->>>>>>> origin/main
 APP_BINARY=build/app/outputs/flutter-apk/app-debug.apk
 BACKGROUND_PROBE_ENABLED="${SONUS_BACKGROUND_PROBE:-0}"
 BACKGROUND_EVIDENCE_DIR="${BACKGROUND_EVIDENCE_DIR:-$PWD/background-recording-evidence}"
