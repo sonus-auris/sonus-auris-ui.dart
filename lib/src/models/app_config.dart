@@ -524,13 +524,10 @@ class AppConfig {
       safeWords: safeWords ?? this.safeWords,
       keywordQualityBoostMinutes:
           keywordQualityBoostMinutes ?? this.keywordQualityBoostMinutes,
-<<<<<<< HEAD
-=======
       collisionRemindersEnabled:
           collisionRemindersEnabled ?? this.collisionRemindersEnabled,
       collisionSensitivityG:
           collisionSensitivityG ?? this.collisionSensitivityG,
->>>>>>> origin/main
       sttEnabled: sttEnabled ?? this.sttEnabled,
       sttEndpoint: sttEndpoint ?? this.sttEndpoint,
       voiceIdEnabled: voiceIdEnabled ?? this.voiceIdEnabled,
