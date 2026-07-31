@@ -391,10 +391,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
 
   bool get _requiredAccepted =>
       ConsentItem.values.where((i) => i.required).every((i) => _grants[i]!);
-<<<<<<< HEAD
   bool get _offlineModeEnabled => isOfflineDevelopmentModeEnabled();
-=======
->>>>>>> origin/main
 
   Future<void> _finish() async {
     setState(() => _busy = true);
