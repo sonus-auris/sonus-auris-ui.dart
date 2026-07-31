@@ -6,11 +6,7 @@ class AccountStatus {
   const AccountStatus({
     this.mfaEnrollmentRequired = false,
     this.mfaRequired = false,
-<<<<<<< HEAD
-    this.mfaEnrollmentRequired = false,
-=======
     this.mfaCheckFailed = false,
->>>>>>> origin/main
     this.mfaFactors = const <MfaFactor>[],
     this.deviceRevoked = false,
     this.activeRecorderDeviceCount = 0,
