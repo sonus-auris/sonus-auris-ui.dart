@@ -2443,13 +2443,8 @@ class _AccountSection extends StatefulWidget {
   final bool isAwaitingDeviceRegistration;
   final TextEditingController supabaseUrlController;
   final TextEditingController supabaseAnonKeyController;
-<<<<<<< HEAD
-  final Future<bool> Function(String email) onSendMagicLink;
-  final Future<bool> Function(String email, String code) onVerifyCode;
-=======
   final Future<bool> Function(String email) onRequestCode;
   final Future<void> Function(String email, String code) onSubmitCode;
->>>>>>> origin/main
   final Future<void> Function() onSignOut;
   final Future<void> Function() onDeleteAccount;
 
