@@ -48,6 +48,7 @@ void main() {
       final scheduler = RecordingScheduler(
         platform: platform,
         now: () => DateTime(2026, 6, 15, 8, 0),
+        canStartFromTimer: () => true,
         observeAppLifecycle: false,
       );
       scheduler.sync(RecordingSchedule.defaultSchedule());
@@ -66,6 +67,7 @@ void main() {
       final scheduler = RecordingScheduler(
         platform: platform,
         now: () => clock,
+        canStartFromTimer: () => true,
         observeAppLifecycle: false,
       );
       scheduler.onTransition = fired.add;
@@ -143,6 +145,7 @@ void main() {
     final platform = _RecordingPlatform()..pendingShouldRecord = true;
     final scheduler = RecordingScheduler(
       platform: platform,
+      canStartFromTimer: () => true,
       observeAppLifecycle: false,
     );
 
@@ -159,6 +162,7 @@ void main() {
       final scheduler = RecordingScheduler(
         platform: platform,
         now: () => start.add(async.elapsed),
+        canStartFromTimer: () => true,
         observeAppLifecycle: false,
       )..onTransition = fired.add;
       final first = RecordingSchedule(
@@ -207,6 +211,7 @@ void main() {
       final platform = _RecordingPlatform()..failNextCancellation = true;
       final scheduler = RecordingScheduler(
         platform: platform,
+        canStartFromTimer: () => true,
         observeAppLifecycle: false,
       );
 
