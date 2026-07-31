@@ -444,14 +444,6 @@ class _DesktopRootState extends State<_DesktopRoot> {
         title: const Text('Sign in'),
         content: SizedBox(
           width: 440,
-<<<<<<< HEAD
-          child: SupabaseAuthForm(
-            emailController: email,
-            onSendMagicLink: (email) =>
-                widget.controller.requestSupabaseEmailOtp(email: email),
-            onVerifyCode: (email, code) => widget.controller
-                .confirmSupabaseEmailOtp(email: email, code: code),
-=======
           child: StreamBuilder(
             stream: widget.controller.accountStatus,
             initialData: widget.controller.accountStatusValue,
