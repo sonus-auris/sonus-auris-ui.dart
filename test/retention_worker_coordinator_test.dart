@@ -131,6 +131,7 @@ void main() {
 
     expect(coordinator.permanentlyClosed, isTrue);
     expect(coordinator.acceptsWork, isFalse);
+    expect(coordinator.localStateCleared, isTrue);
     expect(clearCount, 1);
     await expectLater(
       coordinator.resumeAfterConsent(),
@@ -150,7 +151,7 @@ void main() {
       ),
     );
 
-    // Repeated deletion is idempotent and does not run a second local clear.
+    // Repeated deletion is idempotent after a successful local clear.
     await coordinator.revokeAndClear(
       reason: RetentionRevocationReason.accountDeletion,
       clearLocalState: () async {
@@ -159,6 +160,53 @@ void main() {
     );
     expect(clearCount, 1);
   });
+
+  test(
+    'failed account cleanup stays sealed and can be retried until it succeeds',
+    () async {
+      final coordinator = RetentionWorkerCoordinator();
+      var clearAttempts = 0;
+
+      await expectLater(
+        coordinator.revokeAndClear(
+          reason: RetentionRevocationReason.accountDeletion,
+          clearLocalState: () async {
+            clearAttempts += 1;
+            throw StateError('simulated local deletion failure');
+          },
+        ),
+        throwsA(isA<StateError>()),
+      );
+      // Let the side-chain that clears the in-flight barrier reference run.
+      await Future<void>.delayed(Duration.zero);
+
+      expect(coordinator.permanentlyClosed, isTrue);
+      expect(coordinator.acceptsWork, isFalse);
+      expect(coordinator.localStateCleared, isFalse);
+      expect(clearAttempts, 1);
+      await expectLater(
+        coordinator.resumeAfterConsent(),
+        throwsA(isA<StateError>()),
+      );
+
+      await coordinator.revokeAndClear(
+        reason: RetentionRevocationReason.accountDeletion,
+        clearLocalState: () async {
+          clearAttempts += 1;
+        },
+      );
+      expect(coordinator.localStateCleared, isTrue);
+      expect(clearAttempts, 2);
+
+      await coordinator.revokeAndClear(
+        reason: RetentionRevocationReason.accountDeletion,
+        clearLocalState: () async {
+          clearAttempts += 1;
+        },
+      );
+      expect(clearAttempts, 2);
+    },
+  );
 
   test('account deletion dominates an in-flight consent revocation', () async {
     final coordinator = RetentionWorkerCoordinator();
@@ -189,6 +237,7 @@ void main() {
     clearBlock.complete();
     await Future.wait([consentBarrier, accountBarrier]);
     expect(clearCount, 1);
+    expect(coordinator.localStateCleared, isTrue);
     await expectLater(
       coordinator.resumeAfterConsent(),
       throwsA(isA<StateError>()),
