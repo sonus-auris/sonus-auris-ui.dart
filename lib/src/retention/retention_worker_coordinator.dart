@@ -29,10 +29,10 @@ class RetentionAccessRevoked implements Exception {
 /// so a valid worker cannot recreate a path after deletion.
 class RetentionWorkerLease {
   RetentionWorkerLease._({
-    required RetentionWorkerCoordinator owner,
+    required this._owner,
     required this.worker,
     required this.generation,
-  }) : _owner = owner;
+  });
 
   final RetentionWorkerCoordinator _owner;
   final RetentionWorkerKind worker;
@@ -104,7 +104,7 @@ class RetentionWorkerCoordinator {
     // There is no await between admission and accounting, so a destructive
     // transition cannot observe an admitted worker without also draining it.
     final lease = RetentionWorkerLease._(
-      owner: this,
+      _owner: this,
       worker: worker,
       generation: _generation,
     );
@@ -175,7 +175,7 @@ class RetentionWorkerCoordinator {
     unawaited(
       barrier.then<void>(
         (_) => _clearBarrierReference(barrier),
-        onError: (Object _, StackTrace __) => _clearBarrierReference(barrier),
+        onError: (Object _, StackTrace _) => _clearBarrierReference(barrier),
       ),
     );
     return barrier;
