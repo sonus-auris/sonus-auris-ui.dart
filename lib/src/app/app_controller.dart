@@ -1421,14 +1421,6 @@ class AppController {
       await _settingsStore.clearPendingSupabaseAuth();
       await _requireExpectedSupabaseIdentity(session, email);
       await _applySupabaseSession(session);
-<<<<<<< HEAD
-      final mfaPending = await _refreshMfaChallengeState();
-      if (mfaPending) {
-        _message.add(_mandatoryMfaPrompt());
-        return true;
-      }
-      await _onSignedIn(successMessage: 'Signed in.');
-=======
       await _routeFirstFactorSession();
       return true;
     } catch (error) {
@@ -1451,7 +1443,6 @@ class AppController {
       );
       await _applySupabaseSession(session);
       await _routeFirstFactorSession();
->>>>>>> origin/main
       return true;
     } catch (error) {
       _message.add(_describeError(error));
