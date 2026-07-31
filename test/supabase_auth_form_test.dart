@@ -13,6 +13,7 @@ void main() {
     expect(validateEmailOtpCode(''), isNotNull);
     expect(validateEmailOtpCode('123'), isNotNull);
     expect(validateEmailOtpCode('12ab56'), isNotNull);
+    expect(validateEmailOtpCode('12345a'), isNotNull);
     expect(validateEmailOtpCode('123456'), isNull);
     expect(validateSupabaseProjectUrl('http://project.supabase.co'), isNotNull);
     expect(validateSupabaseProjectUrl('https://project.supabase.co'), isNull);
