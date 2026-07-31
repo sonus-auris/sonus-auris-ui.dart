@@ -91,15 +91,7 @@ class SupabaseAuthClient {
     required String code,
   }) async {
     _validateEmail(email);
-<<<<<<< HEAD
-    final trimmedCode = code.trim();
-    if (trimmedCode.length != 6 ||
-        !trimmedCode.runes.every((rune) => rune >= 0x30 && rune <= 0x39)) {
-      throw const FormatException('Enter the 6-digit code from the email.');
-    }
-=======
     final trimmedCode = _requireSixDigitCode(code);
->>>>>>> origin/main
     final uri = _authUri(config, 'verify');
     return _session(
       config,
