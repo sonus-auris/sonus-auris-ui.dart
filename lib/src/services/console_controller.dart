@@ -4,7 +4,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart' as interfaces;
+import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
+    as interfaces;
 
 import '../config/console_config.dart';
 import '../models/mfa.dart';
@@ -30,9 +31,15 @@ enum AuthPhase {
   /// First factor cleared but the account requires a second factor.
   mfaRequired,
 
-  /// Fully signed in (aal2 when MFA is enrolled).
+  /// First factor cleared but this account has no verified second factor yet.
+  /// Console data remains inaccessible until enrollment is verified.
+  mfaEnrollmentRequired,
+
+  /// Fully signed in with a verified `aal2` session.
   signedIn,
 }
+
+enum _MfaDisposition { enrollmentRequired, challengeRequired, satisfied }
 
 class ConsoleController extends ChangeNotifier {
   ConsoleController({
@@ -42,12 +49,12 @@ class ConsoleController extends ChangeNotifier {
     DeviceService? deviceService,
     EntitlementsService? entitlementsService,
     EventsService? eventsService,
-  })  : _store = tokenStore ?? createTokenStore(),
-        _auth = authClient ?? AuthClient(config: config),
-        _devices = deviceService ?? DeviceService(config: config),
-        _entitlementsService =
-            entitlementsService ?? EntitlementsService(config: config),
-        _events = eventsService ?? EventsService(config: config);
+  }) : _store = tokenStore ?? createTokenStore(),
+       _auth = authClient ?? AuthClient(config: config),
+       _devices = deviceService ?? DeviceService(config: config),
+       _entitlementsService =
+           entitlementsService ?? EntitlementsService(config: config),
+       _events = eventsService ?? EventsService(config: config);
 
   final ConsoleConfig config;
   final TokenStore _store;
@@ -75,6 +82,7 @@ class ConsoleController extends ChangeNotifier {
 
   bool _busy = false;
   bool get busy => _busy;
+  bool _authCallbackInProgress = false;
 
   List<interfaces.DeviceRecord> _deviceList = const [];
   List<interfaces.DeviceRecord> get devices => _deviceList;
@@ -103,8 +111,8 @@ class ConsoleController extends ChangeNotifier {
 
   /// Recorder devices unlocked under the current plan (limit honored).
   List<interfaces.DeviceRecord> get unlockedRecorders => activeRecorderDevices(
-        _deviceList,
-      ).where((d) => !_lockedDeviceIds.contains(d.deviceId)).toList();
+    _deviceList,
+  ).where((d) => !_lockedDeviceIds.contains(d.deviceId)).toList();
 
   // --- lifecycle ------------------------------------------------------------
 
@@ -119,12 +127,7 @@ class ConsoleController extends ChangeNotifier {
     _session = stored;
     try {
       await _ensureFreshToken();
-      final mfaPending = await _refreshMfaState();
-      if (mfaPending) {
-        _setPhase(AuthPhase.mfaRequired);
-        return;
-      }
-      await _enterConsole();
+      await _continueAfterFirstFactor();
     } catch (_) {
       // A stale/invalid stored session shouldn't strand the app on a spinner.
       await _clearSession();
@@ -136,7 +139,23 @@ class ConsoleController extends ChangeNotifier {
 
   Future<void> sendEmailCode(String email) async {
     await _guard(() async {
-      await _auth.sendEmailOtp(email);
+      final redirect = _auth.magicLinkRedirectUri;
+      if (redirect == null) {
+        throw const FormatException(
+          'Configure an HTTPS magic-link callback before signing in.',
+        );
+      }
+      final verifier = AuthClient.createPkceVerifier();
+      await _store.writePendingMagicLink(
+        PendingMagicLink(
+          codeVerifier: verifier,
+          email: email.trim(),
+          supabaseUrl: config.supabaseUrl.trim(),
+          redirectUrl: redirect.toString(),
+          requestedAtUtc: DateTime.now().toUtc(),
+        ),
+      );
+      await _auth.sendEmailOtp(email, codeVerifier: verifier);
       _pendingEmail = email.trim();
       _message = 'We emailed a sign-in code to ${email.trim()}.';
       _phase = AuthPhase.codeSent;
@@ -146,24 +165,101 @@ class ConsoleController extends ChangeNotifier {
   Future<void> resendEmailCode() async {
     if (_pendingEmail.isEmpty) return;
     await _guard(() async {
-      await _auth.sendEmailOtp(_pendingEmail);
+      final redirect = _auth.magicLinkRedirectUri;
+      if (redirect == null) {
+        throw const FormatException(
+          'Configure an HTTPS magic-link callback before signing in.',
+        );
+      }
+      final verifier = AuthClient.createPkceVerifier();
+      await _store.writePendingMagicLink(
+        PendingMagicLink(
+          codeVerifier: verifier,
+          email: _pendingEmail,
+          supabaseUrl: config.supabaseUrl.trim(),
+          redirectUrl: redirect.toString(),
+          requestedAtUtc: DateTime.now().toUtc(),
+        ),
+      );
+      await _auth.sendEmailOtp(_pendingEmail, codeVerifier: verifier);
       _message = 'Sent a fresh code to $_pendingEmail.';
     });
   }
 
   Future<void> verifyEmailCode(String code) async {
     await _guard(() async {
-      final session = await _auth.verifyEmailOtp(email: _pendingEmail, code: code);
+      final session = await _auth.verifyEmailOtp(
+        email: _pendingEmail,
+        code: code,
+      );
+      await _store.clearPendingMagicLink();
+      await _requireExpectedIdentity(session, _pendingEmail);
       _session = session;
       await _store.writeSession(session);
-      final mfaPending = await _refreshMfaState();
-      if (mfaPending) {
-        _message = 'Enter your two-factor code to finish signing in.';
-        _phase = AuthPhase.mfaRequired;
-        return;
-      }
-      await _enterConsole();
+      await _continueAfterFirstFactor();
     });
+  }
+
+  Future<bool> acceptMagicLink(Uri callback) async {
+    if (!_auth.isExpectedMagicLinkCallback(callback)) {
+      return false;
+    }
+    if (_authCallbackInProgress) {
+      return true;
+    }
+    _authCallbackInProgress = true;
+    try {
+      await _guard(() async {
+        final code = _auth.authorizationCodeFromCallback(callback);
+        final pending = await _store.readPendingMagicLink();
+        final redirect = _auth.magicLinkRedirectUri;
+        if (pending == null) {
+          throw StateError(
+            'This magic link was not requested in this browser. Request a fresh one.',
+          );
+        }
+        if (pending.isExpired() ||
+            pending.supabaseUrl != config.supabaseUrl.trim() ||
+            redirect == null ||
+            pending.redirectUrl != redirect.toString()) {
+          await _store.clearPendingMagicLink();
+          throw StateError(
+            'This sign-in request expired. Request a fresh magic link.',
+          );
+        }
+        final session = await _auth.exchangePkceCode(
+          authorizationCode: code,
+          codeVerifier: pending.codeVerifier,
+        );
+        await _store.clearPendingMagicLink();
+        await _requireExpectedIdentity(session, pending.email);
+        _session = session;
+        _pendingEmail = session.email;
+        await _store.writeSession(session);
+        await _continueAfterFirstFactor(
+          successMessage: 'Signed in with your magic link.',
+        );
+      });
+      return true;
+    } finally {
+      _authCallbackInProgress = false;
+    }
+  }
+
+  Future<void> _requireExpectedIdentity(
+    SupabaseSession session,
+    String expectedEmail,
+  ) async {
+    final expected = expectedEmail.trim().toLowerCase();
+    final verified = session.email.trim().toLowerCase();
+    if (expected.isNotEmpty && verified == expected) {
+      return;
+    }
+    await _auth.signOut(session.accessToken);
+    throw StateError(
+      'The verified account did not match this sign-in request. '
+      'Request a fresh link or code.',
+    );
   }
 
   /// Restarts the sign-in from the email step.
@@ -215,6 +311,7 @@ class ConsoleController extends ChangeNotifier {
       await _auth.signOut(token);
     }
     await _clearSession();
+    await _store.clearPendingMagicLink();
     _deviceList = const [];
     _events_ = const [];
     _factors = const [];
@@ -242,7 +339,10 @@ class ConsoleController extends ChangeNotifier {
       _message = listing.error;
     }
     _deviceList = listing.devices;
-    _lockedDeviceIds = overLimitDeviceIds(_deviceList, _entitlement.deviceLimit);
+    _lockedDeviceIds = overLimitDeviceIds(
+      _deviceList,
+      _entitlement.deviceLimit,
+    );
     notifyListeners();
   }
 
@@ -257,7 +357,9 @@ class ConsoleController extends ChangeNotifier {
     // plan). A null/blank device_id row is always shown.
     final unlocked = unlockedRecorders.map((d) => d.deviceId).toSet();
     _events_ = result.events
-        .where((e) => e.deviceId.trim().isEmpty || unlocked.contains(e.deviceId))
+        .where(
+          (e) => e.deviceId.trim().isEmpty || unlocked.contains(e.deviceId),
+        )
         .toList();
     notifyListeners();
   }
@@ -274,21 +376,9 @@ class ConsoleController extends ChangeNotifier {
     await refreshDevicesAndEntitlements();
   }
 
-  Future<void> setDeviceRevoked(String deviceId, bool revoked) async {
+  Future<void> revokeDevice(String deviceId) async {
     await _guard(() async {
-      final err = await _devices.setRevoked(
-        accessToken: _accessToken,
-        deviceId: deviceId,
-        revoked: revoked,
-      );
-      if (err != null) throw StateError(err);
-    });
-    await refreshDevicesAndEntitlements();
-  }
-
-  Future<void> removeDevice(String deviceId) async {
-    await _guard(() async {
-      final err = await _devices.remove(
+      final err = await _devices.revoke(
         accessToken: _accessToken,
         deviceId: deviceId,
       );
@@ -300,19 +390,25 @@ class ConsoleController extends ChangeNotifier {
   // --- MFA management (Account screen) --------------------------------------
 
   Future<void> refreshFactors() async {
-    if (!isSignedIn && _phase != AuthPhase.mfaRequired) return;
+    if (!isSignedIn &&
+        _phase != AuthPhase.mfaRequired &&
+        _phase != AuthPhase.mfaEnrollmentRequired) {
+      return;
+    }
     await _refreshMfaState();
     notifyListeners();
   }
 
   Future<TotpEnrollment?> enrollTotp({String? name}) async {
-    return _guardValue(() =>
-        _auth.enrollTotp(_accessToken, friendlyName: name));
+    return _guardValue(
+      () => _auth.enrollTotp(_accessToken, friendlyName: name),
+    );
   }
 
   Future<PhoneEnrollment?> enrollPhone(String phone, {String? name}) async {
     return _guardValue(
-        () => _auth.enrollPhone(_accessToken, phone: phone, friendlyName: name));
+      () => _auth.enrollPhone(_accessToken, phone: phone, friendlyName: name),
+    );
   }
 
   Future<String?> startFactorChallenge(String factorId) async {
@@ -335,14 +431,34 @@ class ConsoleController extends ChangeNotifier {
       );
       _session = session;
       await _store.writeSession(session);
-      await _refreshMfaState();
+      final disposition = await _refreshMfaState();
+      if (disposition != _MfaDisposition.satisfied) {
+        throw StateError(
+          'The second factor was not activated. Start enrollment again.',
+        );
+      }
       _message = 'Two-factor authentication is on.';
+      if (_phase == AuthPhase.mfaEnrollmentRequired) {
+        await _enterConsole();
+      }
     });
     return ok;
   }
 
   Future<void> removeFactor(String factorId) async {
     await _guard(() async {
+      final target = _factors
+          .where((factor) => factor.id == factorId)
+          .firstOrNull;
+      final verifiedCount = _factors
+          .where((factor) => factor.isVerified)
+          .length;
+      if (target?.isVerified == true && verifiedCount <= 1) {
+        throw StateError(
+          'Two-factor authentication is mandatory. Add and verify another '
+          'method before removing this one.',
+        );
+      }
       await _auth.unenrollFactor(_accessToken, factorId);
       await _refreshMfaState();
       _message = 'Removed a two-factor method.';
@@ -353,7 +469,35 @@ class ConsoleController extends ChangeNotifier {
 
   String get _accessToken => _session?.accessToken ?? '';
 
+  Future<void> _continueAfterFirstFactor({String? successMessage}) async {
+    final disposition = await _refreshMfaState();
+    switch (disposition) {
+      case _MfaDisposition.enrollmentRequired:
+        _message =
+            'Set up an authenticator app or verified phone to finish creating '
+            'your account.';
+        _setPhase(AuthPhase.mfaEnrollmentRequired);
+        return;
+      case _MfaDisposition.challengeRequired:
+        _message = 'Enter your two-factor code to finish signing in.';
+        _setPhase(AuthPhase.mfaRequired);
+        return;
+      case _MfaDisposition.satisfied:
+        await _enterConsole();
+        if (successMessage != null) {
+          _message = successMessage;
+        }
+        return;
+    }
+  }
+
   Future<void> _enterConsole() async {
+    if ((_session?.aal ?? 'aal1') != 'aal2' ||
+        !_factors.any((factor) => factor.isVerified)) {
+      throw StateError(
+        'A verified second factor is required before entering the console.',
+      );
+    }
     _setPhase(AuthPhase.signedIn);
     // Register this console as a viewer device, then load data.
     unawaited(_registerSelf());
@@ -375,23 +519,27 @@ class ConsoleController extends ChangeNotifier {
     }
   }
 
-  /// Loads factors and decides whether a second factor is still required.
-  Future<bool> _refreshMfaState() async {
+  /// Loads factors and fails closed unless the session has both an enrolled
+  /// factor and the `aal2` claim issued after verifying it.
+  Future<_MfaDisposition> _refreshMfaState() async {
     if (_accessToken.isEmpty) {
-      return false;
+      return _MfaDisposition.enrollmentRequired;
     }
-    try {
-      _factors = await _auth.listFactors(_accessToken);
-    } catch (_) {
-      _factors = const [];
-    }
+    _factors = await _auth.listFactors(_accessToken);
     final hasVerified = _factors.any((f) => f.isVerified);
+    if (!hasVerified) {
+      _challengeFactorId = null;
+      _challengeId = null;
+      return _MfaDisposition.enrollmentRequired;
+    }
     final pending = hasVerified && (_session?.aal ?? 'aal1') != 'aal2';
     if (pending && _challengeFactorId == null) {
       // Default to the first verified factor for the challenge screen.
       _challengeFactorId = _factors.firstWhere((f) => f.isVerified).id;
     }
-    return pending;
+    return pending
+        ? _MfaDisposition.challengeRequired
+        : _MfaDisposition.satisfied;
   }
 
   Future<void> _ensureFreshToken() async {

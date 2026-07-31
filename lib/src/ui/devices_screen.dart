@@ -1,7 +1,8 @@
 // Devices: every install on the account, with the plan's device-limit gate.
 // Recorders beyond the limit render locked (viewable after upgrading).
 import 'package:flutter/material.dart';
-import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart' as interfaces;
+import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
+    as interfaces;
 
 import '../services/console_controller.dart';
 import '../util/platform_info.dart';
@@ -33,7 +34,8 @@ class DevicesScreen extends StatelessWidget {
           if (devices.isEmpty)
             const _Empty(
               icon: Icons.devices_other,
-              text: 'No devices yet. Install the Sonus Auris app on a phone '
+              text:
+                  'No devices yet. Install the Sonus Auris app on a phone '
                   'and sign in with this account.',
             )
           else
@@ -70,16 +72,18 @@ class _UsageBanner extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            Icon(over ? Icons.lock_outline : Icons.check_circle_outline,
-                color: over ? scheme.error : scheme.primary),
+            Icon(
+              over ? Icons.lock_outline : Icons.check_circle_outline,
+              color: over ? scheme.error : scheme.primary,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 over
                     ? '$active recorders on a plan for $limit. The oldest are '
-                        'locked — upgrade to view them all.'
+                          'locked — upgrade to view them all.'
                     : '$active of $limit recorder devices used'
-                        '${isPlus ? ' (Plus)' : ''}.',
+                          '${isPlus ? ' (Plus)' : ''}.',
               ),
             ),
           ],
@@ -110,14 +114,19 @@ class _DeviceCard extends StatelessWidget {
       child: Opacity(
         opacity: locked || _revoked ? 0.6 : 1,
         child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 8,
+          ),
           leading: Icon(_platformIcon(device.platform)),
           title: Row(
             children: [
               Flexible(child: Text(device.displayName)),
               const SizedBox(width: 8),
-              _Badge(_isViewer ? 'This console' : 'Recorder',
-                  color: _isViewer ? scheme.tertiary : scheme.primary),
+              _Badge(
+                _isViewer ? 'This console' : 'Recorder',
+                color: _isViewer ? scheme.tertiary : scheme.primary,
+              ),
               if (locked) ...[
                 const SizedBox(width: 6),
                 _Badge('Locked', color: scheme.error, icon: Icons.lock),
@@ -133,15 +142,16 @@ class _DeviceCard extends StatelessWidget {
           ),
           trailing: _isViewer
               ? null
+              : _revoked
+              ? const Icon(Icons.block)
               : PopupMenuButton<String>(
                   onSelected: (v) => _onAction(context, v),
-                  itemBuilder: (context) => [
-                    const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'rename', child: Text('Rename')),
                     PopupMenuItem(
                       value: 'revoke',
-                      child: Text(_revoked ? 'Restore' : 'Remove from account'),
+                      child: Text('Revoke access'),
                     ),
-                    const PopupMenuItem(value: 'delete', child: Text('Delete')),
                   ],
                 ),
         ),
@@ -157,11 +167,9 @@ class _DeviceCard extends StatelessWidget {
           await controller.renameDevice(device.deviceId, name.trim());
         }
       case 'revoke':
-        await controller.setDeviceRevoked(device.deviceId, !_revoked);
-      case 'delete':
-        final ok = await _confirmDelete(context, device.displayName);
+        final ok = await _confirmRevoke(context, device.displayName);
         if (ok) {
-          await controller.removeDevice(device.deviceId);
+          await controller.revokeDevice(device.deviceId);
         }
     }
   }
@@ -191,14 +199,15 @@ class _DeviceCard extends StatelessWidget {
     );
   }
 
-  Future<bool> _confirmDelete(BuildContext context, String name) async {
+  Future<bool> _confirmRevoke(BuildContext context, String name) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Delete "$name"?'),
+        title: Text('Revoke "$name"?'),
         content: const Text(
-          'This removes the device row. The device re-registers itself the '
-          'next time it signs in.',
+          'This is one-way for this install. It stops syncing on its next '
+          'authorization check; local recordings are not deleted. Rejoining '
+          'requires a fresh device identity.',
         ),
         actions: [
           TextButton(
@@ -207,7 +216,7 @@ class _DeviceCard extends StatelessWidget {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
+            child: const Text('Revoke access'),
           ),
         ],
       ),
@@ -249,7 +258,10 @@ class _Badge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (icon != null) ...[Icon(icon, size: 12, color: color), const SizedBox(width: 4)],
+          if (icon != null) ...[
+            Icon(icon, size: 12, color: color),
+            const SizedBox(width: 4),
+          ],
           Text(label, style: TextStyle(color: color, fontSize: 12)),
         ],
       ),

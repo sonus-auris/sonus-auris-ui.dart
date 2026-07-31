@@ -66,6 +66,8 @@ test('[playwright] the passwordless sign-in screen renders', async () => {
   );
   assert.match(text, /Sign in/i);
   assert.match(text, /Email me a code/i);
+  assert.match(text, /magic link/i);
+  assert.match(text, /new accounts are created automatically/i);
 });
 
 test('[playwright] there is no password field (passwordless by design)', async () => {
@@ -75,6 +77,22 @@ test('[playwright] there is no password field (passwordless by design)', async (
     .split('\n')
     .map((s) => s.trim().toLowerCase());
   assert.ok(!labels.includes('password'), 'no field should be labelled Password');
+  assert.equal(
+    await page.locator('input[type="password"]').count(),
+    0,
+    'the rendered app must not contain a password input',
+  );
+});
+
+test('[playwright] passwordless sign-in remains usable at a phone viewport', async () => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const text = await waitForSemanticText(
+    () => page.evaluate(READ_SEMANTICS_TEXT),
+    /Email me a code/i,
+  );
+  assert.match(text, /No password needed/i);
+  assert.equal(await page.locator('input[type="password"]').count(), 0);
+  await page.screenshot({ path: join(ARTIFACT_DIR, 'playwright-signin-mobile.png') });
 });
 
 test('[playwright] no fatal console or page errors during boot', async () => {

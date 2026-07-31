@@ -27,7 +27,10 @@ class SupabaseSession {
 
   /// True within [skew] of expiry, so the console refreshes proactively rather
   /// than letting a request fail.
-  bool needsRefresh({DateTime? now, Duration skew = const Duration(minutes: 2)}) {
+  bool needsRefresh({
+    DateTime? now,
+    Duration skew = const Duration(minutes: 2),
+  }) {
     final reference = (now ?? DateTime.now()).toUtc();
     return reference.isAfter(expiresAtUtc.subtract(skew));
   }
@@ -35,7 +38,9 @@ class SupabaseSession {
   factory SupabaseSession.fromJson(Map<String, Object?> json) {
     final accessToken = (json['access_token'] as String? ?? '').trim();
     if (accessToken.isEmpty) {
-      throw const FormatException('Sign-in response contained no access token.');
+      throw const FormatException(
+        'Sign-in response contained no access token.',
+      );
     }
     final claims = decodeJwtClaims(accessToken);
     final user = json['user'];
@@ -44,18 +49,20 @@ class SupabaseSession {
       accessToken: accessToken,
       refreshToken: (json['refresh_token'] as String? ?? '').trim(),
       expiresAtUtc: _expiry(json, claims),
-      userId:
-          (userMap['id'] as String? ?? claims['sub']?.toString() ?? '').trim(),
-      email:
-          (userMap['email'] as String? ?? claims['email']?.toString() ?? '')
-              .trim(),
+      userId: (userMap['id'] as String? ?? claims['sub']?.toString() ?? '')
+          .trim(),
+      email: (userMap['email'] as String? ?? claims['email']?.toString() ?? '')
+          .trim(),
     );
   }
 
   /// Prefers an absolute `expires_at` (epoch seconds); falls back to
   /// `expires_in` (seconds from now), then the token's own `exp` claim, then a
   /// conservative one-hour default.
-  static DateTime _expiry(Map<String, Object?> json, Map<String, Object?> claims) {
+  static DateTime _expiry(
+    Map<String, Object?> json,
+    Map<String, Object?> claims,
+  ) {
     final expiresAt = json['expires_at'];
     if (expiresAt is num) {
       return DateTime.fromMillisecondsSinceEpoch(

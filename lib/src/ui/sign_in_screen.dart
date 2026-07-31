@@ -2,6 +2,7 @@
 // There is no password field anywhere in this flow.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../models/mfa.dart';
 import '../services/console_controller.dart';
@@ -38,6 +39,8 @@ class SignInScreen extends StatelessWidget {
         return _CodeStep(controller: controller);
       case AuthPhase.mfaRequired:
         return _MfaStep(controller: controller);
+      case AuthPhase.mfaEnrollmentRequired:
+        return _MfaEnrollmentStep(controller: controller);
       case AuthPhase.loading:
       case AuthPhase.signedOut:
       case AuthPhase.signedIn:
@@ -60,10 +63,12 @@ class _Header extends StatelessWidget {
           children: [
             const Icon(Icons.graphic_eq, color: sonusTeal, size: 28),
             const SizedBox(width: 8),
-            Text('Sonus Auris',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    )),
+            Text(
+              'Sonus Auris',
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
           ],
         ),
         const SizedBox(height: 20),
@@ -116,8 +121,10 @@ class _EmailStepState extends State<_EmailStep> {
       children: [
         const _Header(
           title: 'Sign in',
-          subtitle: 'Enter your email and we\'ll send a one-time code. No '
-              'password needed — new accounts are created automatically.',
+          subtitle:
+              'Enter your email and we\'ll send a 6-digit one-time code. '
+              'No password needed — new accounts are created automatically. '
+              'The email link is a fallback.',
         ),
         TextField(
           controller: _email,
@@ -172,8 +179,9 @@ class _CodeStepState extends State<_CodeStep> {
       children: [
         _Header(
           title: 'Check your email',
-          subtitle: 'Enter the 6-digit code we sent to ${controller.pendingEmail}, '
-              'or tap the magic link in the email.',
+          subtitle:
+              'Enter the 6-digit code we sent to ${controller.pendingEmail}, '
+              'or use the one-time link in the email as a fallback.',
         ),
         TextField(
           controller: _code,
@@ -216,6 +224,214 @@ class _CodeStepState extends State<_CodeStep> {
   }
 
   void _submit() => widget.controller.verifyEmailCode(_code.text);
+}
+
+class _MfaEnrollmentStep extends StatefulWidget {
+  const _MfaEnrollmentStep({required this.controller});
+  final ConsoleController controller;
+
+  @override
+  State<_MfaEnrollmentStep> createState() => _MfaEnrollmentStepState();
+}
+
+class _MfaEnrollmentStepState extends State<_MfaEnrollmentStep> {
+  final _phone = TextEditingController();
+  final _code = TextEditingController();
+  TotpEnrollment? _totp;
+  PhoneEnrollment? _phoneEnrollment;
+  String? _challengeId;
+  bool _working = false;
+
+  @override
+  void dispose() {
+    _phone.dispose();
+    _code.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    final enrollment = _totp ?? _phoneEnrollment;
+    final canVerify =
+        enrollment != null &&
+        _challengeId != null &&
+        _code.text.trim().length == 6 &&
+        !_working &&
+        !controller.busy;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _Header(
+          title: 'Protect your account',
+          subtitle:
+              'Two-factor authentication is required. Set up an authenticator '
+              'app or a phone number before entering Sonus Auris.',
+        ),
+        if (enrollment == null) ...[
+          FilledButton.icon(
+            key: const ValueKey('enroll-totp-button'),
+            onPressed: _working || controller.busy ? null : _startTotp,
+            icon: const Icon(Icons.qr_code_2),
+            label: const Text('Use authenticator app'),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            key: const ValueKey('mfa-phone-field'),
+            controller: _phone,
+            enabled: !_working && !controller.busy,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+              labelText: 'Phone number',
+              hintText: '+15551234567',
+              prefixIcon: Icon(Icons.phone_outlined),
+            ),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const ValueKey('enroll-phone-button'),
+            onPressed: _working || controller.busy ? null : _startPhone,
+            icon: const Icon(Icons.sms_outlined),
+            label: const Text('Send verification text'),
+          ),
+        ] else ...[
+          if (_totp != null) ...[
+            const Text(
+              'Scan this code with your authenticator app, or enter the secret '
+              'manually. Then enter its 6-digit code.',
+            ),
+            const SizedBox(height: 12),
+            if (_totp!.uri.isNotEmpty)
+              Center(
+                child: ColoredBox(
+                  color: Colors.white,
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: QrImageView(data: _totp!.uri, size: 170),
+                  ),
+                ),
+              ),
+            if (_totp!.secret.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              SelectableText(
+                _totp!.secret,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontFamily: 'monospace'),
+              ),
+            ],
+          ] else
+            Text('Enter the 6-digit code sent to ${_phoneEnrollment!.phone}.'),
+          const SizedBox(height: 12),
+          TextField(
+            key: const ValueKey('mfa-enrollment-code-field'),
+            controller: _code,
+            autofocus: true,
+            enabled: !_working && !controller.busy,
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: const InputDecoration(
+              labelText: 'Verification code',
+              counterText: '',
+              prefixIcon: Icon(Icons.verified_user_outlined),
+            ),
+            onChanged: (_) => setState(() {}),
+            onSubmitted: (_) => canVerify ? _verify : null,
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            key: const ValueKey('verify-mfa-enrollment-button'),
+            onPressed: canVerify ? _verify : null,
+            child: _working || controller.busy
+                ? const _ButtonSpinner()
+                : const Text('Verify and continue'),
+          ),
+          TextButton(
+            onPressed: _working ? null : _restart,
+            child: const Text('Choose another method'),
+          ),
+        ],
+        TextButton(
+          onPressed: _working ? null : controller.signOut,
+          child: const Text('Sign out'),
+        ),
+        _message(context, controller),
+      ],
+    );
+  }
+
+  Future<void> _startTotp() async {
+    setState(() => _working = true);
+    final enrollment = await widget.controller.enrollTotp(
+      name: 'Authenticator',
+    );
+    final challenge = enrollment == null
+        ? null
+        : await widget.controller.startFactorChallenge(enrollment.factorId);
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _totp = challenge == null ? null : enrollment;
+      _challengeId = challenge;
+    });
+  }
+
+  Future<void> _startPhone() async {
+    final phone = _phone.text.trim();
+    if (!RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(phone)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Enter a phone number with country code, like +15551234567.',
+          ),
+        ),
+      );
+      return;
+    }
+    setState(() => _working = true);
+    final enrollment = await widget.controller.enrollPhone(
+      phone,
+      name: 'Phone',
+    );
+    final challenge = enrollment == null
+        ? null
+        : await widget.controller.startFactorChallenge(enrollment.factorId);
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _phoneEnrollment = challenge == null ? null : enrollment;
+      _challengeId = challenge;
+    });
+  }
+
+  Future<void> _verify() async {
+    final enrollment = _totp ?? _phoneEnrollment;
+    final challenge = _challengeId;
+    if (enrollment == null || challenge == null) return;
+    setState(() => _working = true);
+    final factorId = enrollment is TotpEnrollment
+        ? enrollment.factorId
+        : (enrollment as PhoneEnrollment).factorId;
+    final ok = await widget.controller.confirmFactorEnrollment(
+      factorId: factorId,
+      challengeId: challenge,
+      code: _code.text,
+    );
+    if (!mounted) return;
+    setState(() => _working = !ok);
+    if (!ok) {
+      setState(() => _working = false);
+    }
+  }
+
+  void _restart() {
+    setState(() {
+      _totp = null;
+      _phoneEnrollment = null;
+      _challengeId = null;
+      _code.clear();
+    });
+  }
 }
 
 class _MfaStep extends StatefulWidget {

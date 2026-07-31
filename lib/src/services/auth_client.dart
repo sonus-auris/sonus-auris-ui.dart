@@ -6,7 +6,10 @@
 // token, so nothing here is a trust boundary.
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
+import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 import '../config/console_config.dart';
@@ -25,15 +28,149 @@ class AuthClient {
   final http.Client _http;
   final Duration requestTimeout;
 
-  /// Emails a one-time sign-in code + magic link. Same call for sign-in and
-  /// sign-up (`create_user: true` creates the account on first verified code).
-  Future<void> sendEmailOtp(String email) async {
+  static String createPkceVerifier() {
+    final random = Random.secure();
+    return base64UrlEncode(
+      List<int>.generate(56, (_) => random.nextInt(256)),
+    ).replaceAll('=', '');
+  }
+
+  static String pkceChallengeForVerifier(String codeVerifier) {
+    _validatePkceVerifier(codeVerifier);
+    return base64UrlEncode(
+      sha256.convert(ascii.encode(codeVerifier)).bytes,
+    ).replaceAll('=', '');
+  }
+
+  /// Emails a six-digit sign-in code plus a PKCE-bound link fallback. Same
+  /// call for sign-in and sign-up; unknown users are created on verification.
+  Future<void> sendEmailOtp(
+    String email, {
+    required String codeVerifier,
+  }) async {
     _requireEmail(email);
+    final redirect = _magicLinkRedirect();
+    if (redirect == null) {
+      throw const FormatException(
+        'Configure an HTTPS magic-link callback before signing in.',
+      );
+    }
     await _post(
       'otp',
-      {'email': email.trim(), 'create_user': true},
+      {
+        'email': email.trim(),
+        'create_user': true,
+        'code_challenge': pkceChallengeForVerifier(codeVerifier),
+        'code_challenge_method': 's256',
+      },
       'Sending the sign-in code failed.',
+      query: {'redirect_to': redirect},
+      exposeServerError: false,
     );
+  }
+
+  String? _magicLinkRedirect() {
+    final configured = config.authRedirectUrl.trim();
+    final candidate = configured.isNotEmpty
+        ? Uri.tryParse(configured)
+        : kIsWeb
+        ? Uri.base
+        : Uri.parse(kNativeConsoleAuthRedirect);
+    if (candidate == null ||
+        candidate.host.isEmpty ||
+        candidate.userInfo.isNotEmpty ||
+        !_isAllowedRedirect(candidate)) {
+      return null;
+    }
+    return _withoutQueryOrFragment(candidate).toString();
+  }
+
+  static bool _isAllowedRedirect(Uri candidate) {
+    if (candidate.scheme == 'sonusauris-console') {
+      return candidate.host == 'auth' &&
+          candidate.path == '/callback' &&
+          !candidate.hasPort &&
+          candidate.query.isEmpty &&
+          candidate.fragment.isEmpty;
+    }
+    return candidate.scheme == 'https' ||
+        (candidate.scheme == 'http' &&
+            (candidate.host == 'localhost' || candidate.host == '127.0.0.1'));
+  }
+
+  Uri? get magicLinkRedirectUri {
+    final redirect = _magicLinkRedirect();
+    return redirect == null ? null : Uri.parse(redirect);
+  }
+
+  bool isExpectedMagicLinkCallback(Uri callback) {
+    final expected = magicLinkRedirectUri;
+    if (expected == null) {
+      return false;
+    }
+    return callback.scheme == expected.scheme &&
+        callback.host == expected.host &&
+        callback.path == expected.path &&
+        callback.userInfo.isEmpty &&
+        _samePort(callback, expected);
+  }
+
+  String authorizationCodeFromCallback(Uri callback) {
+    if (!isExpectedMagicLinkCallback(callback)) {
+      throw const FormatException(
+        'The sign-in link was sent to an unexpected callback.',
+      );
+    }
+    if (callback.fragment.isNotEmpty ||
+        callback.queryParameters.containsKey('access_token') ||
+        callback.queryParameters.containsKey('refresh_token')) {
+      throw const FormatException(
+        'This older sign-in link is not accepted. Request a fresh magic link.',
+      );
+    }
+    if (callback.queryParameters.containsKey('error') ||
+        callback.queryParameters.containsKey('error_code') ||
+        callback.queryParameters.containsKey('error_description')) {
+      throw StateError(
+        'This sign-in link is invalid or expired. Request a fresh one.',
+      );
+    }
+    final codes = callback.queryParametersAll['code'] ?? const <String>[];
+    if (codes.length != 1) {
+      throw const FormatException(
+        'The sign-in link did not contain one authorization code.',
+      );
+    }
+    final code = codes.single.trim();
+    if (code.isEmpty ||
+        code.length > 2048 ||
+        code.runes.any((rune) => rune <= 0x20 || rune == 0x7f)) {
+      throw const FormatException(
+        'The sign-in link contained an invalid authorization code.',
+      );
+    }
+    return code;
+  }
+
+  Future<SupabaseSession> exchangePkceCode({
+    required String authorizationCode,
+    required String codeVerifier,
+  }) async {
+    final code = authorizationCode.trim();
+    if (code.isEmpty || code.length > 2048) {
+      throw const FormatException(
+        'The magic link authorization code is invalid.',
+      );
+    }
+    _validatePkceVerifier(codeVerifier);
+    final json = await _post(
+      'token',
+      {'auth_code': code, 'code_verifier': codeVerifier},
+      'This sign-in link is invalid or expired. Request a fresh one.',
+      query: {'grant_type': 'pkce'},
+      exposeServerError: false,
+    );
+    return SupabaseSession.fromJson(json);
   }
 
   /// Redeems an emailed code for a session.
@@ -42,13 +179,16 @@ class AuthClient {
     required String code,
   }) async {
     _requireEmail(email);
-    if (code.trim().isEmpty) {
-      throw const FormatException('Enter the code from the email.');
+    final trimmedCode = code.trim();
+    if (trimmedCode.length != 6 ||
+        !trimmedCode.runes.every((rune) => rune >= 0x30 && rune <= 0x39)) {
+      throw const FormatException('Enter the 6-digit code from the email.');
     }
     final json = await _post(
       'verify',
-      {'type': 'email', 'email': email.trim(), 'token': code.trim()},
+      {'type': 'email', 'email': email.trim(), 'token': trimmedCode},
       'That code was not accepted. Request a fresh one and try again.',
+      exposeServerError: false,
     );
     return SupabaseSession.fromJson(json);
   }
@@ -86,7 +226,11 @@ class AuthClient {
   // --- MFA ------------------------------------------------------------------
 
   Future<List<MfaFactor>> listFactors(String accessToken) async {
-    final json = await _get('user', accessToken, 'Reading MFA settings failed.');
+    final json = await _get(
+      'user',
+      accessToken,
+      'Reading MFA settings failed.',
+    );
     return MfaFactor.listFromUserJson(json);
   }
 
@@ -197,12 +341,17 @@ class AuthClient {
     String? accessToken,
     Map<String, String>? query,
     bool allowEmptyBody = false,
+    bool exposeServerError = true,
   }) async {
     final uri = _authUri(path, query: query);
     final http.Response response;
     try {
       response = await _http
-          .post(uri, headers: _headers(accessToken: accessToken), body: jsonEncode(body))
+          .post(
+            uri,
+            headers: _headers(accessToken: accessToken),
+            body: jsonEncode(body),
+          )
           .timeout(requestTimeout);
     } on TimeoutException {
       throw StateError('Supabase did not respond in time. Try again.');
@@ -210,7 +359,11 @@ class AuthClient {
       throw StateError('Could not reach Supabase. Check your connection.');
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(_describe(response, failureMessage));
+      throw StateError(
+        exposeServerError
+            ? _describe(response, failureMessage)
+            : failureMessage,
+      );
     }
     return _decode(response.body, allowEmpty: allowEmptyBody);
   }
@@ -264,6 +417,13 @@ class AuthClient {
         'Supabase URL must use HTTPS except localhost development.',
       );
     }
+    if (base.userInfo.isNotEmpty ||
+        base.query.isNotEmpty ||
+        base.fragment.isNotEmpty) {
+      throw const FormatException(
+        'Supabase URL must not contain credentials, a query, or a fragment.',
+      );
+    }
     final baseSegments = base.pathSegments.where((p) => p.isNotEmpty);
     return base.replace(
       pathSegments: [...baseSegments, 'auth', 'v1', ...path.split('/')],
@@ -283,7 +443,12 @@ class AuthClient {
 
   void _requireEmail(String email) {
     final trimmed = email.trim();
-    if (trimmed.isEmpty || !trimmed.contains('@')) {
+    final at = trimmed.indexOf('@');
+    if (at <= 0 ||
+        at != trimmed.lastIndexOf('@') ||
+        at == trimmed.length - 1 ||
+        trimmed.length > 320 ||
+        trimmed.runes.any((rune) => rune <= 0x20 || rune == 0x7f)) {
       throw const FormatException('Enter a valid email address.');
     }
   }
@@ -300,7 +465,8 @@ class AuthClient {
     try {
       final decoded = jsonDecode(response.body);
       if (decoded is Map) {
-        final msg = decoded['msg'] ??
+        final msg =
+            decoded['msg'] ??
             decoded['error_description'] ??
             decoded['error'] ??
             decoded['message'];
@@ -317,4 +483,30 @@ class AuthClient {
   void close() {
     _http.close();
   }
+}
+
+void _validatePkceVerifier(String codeVerifier) {
+  final verifier = codeVerifier.trim();
+  if (verifier.length < 43 ||
+      verifier.length > 128 ||
+      !RegExp(r'^[A-Za-z0-9._~-]+$').hasMatch(verifier)) {
+    throw const FormatException('The PKCE code verifier is invalid.');
+  }
+}
+
+bool _samePort(Uri first, Uri second) {
+  if (first.hasPort != second.hasPort) {
+    return false;
+  }
+  return !first.hasPort || first.port == second.port;
+}
+
+Uri _withoutQueryOrFragment(Uri uri) {
+  return Uri(
+    scheme: uri.scheme,
+    userInfo: uri.userInfo,
+    host: uri.host,
+    port: uri.hasPort ? uri.port : null,
+    path: uri.path,
+  );
 }

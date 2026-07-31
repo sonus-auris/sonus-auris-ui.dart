@@ -12,8 +12,9 @@ Both suites: serve `../build/web` on an ephemeral port, boot Flutter, enable the
 accessibility (semantics) tree — Flutter web paints to canvas, so text only
 becomes queryable once semantics are on — then assert the app boots, the title
 is correct, the **passwordless** sign-in screen renders (with **no password
-field**), and nothing throws during boot. Each run drops a screenshot in
-`artifacts/`.
+field** at both desktop and phone viewports), confirm the magic-link/new-account
+copy, and verify nothing throws during boot. Each run drops desktop and mobile
+screenshots in `artifacts/`.
 
 ## Run locally
 

@@ -4,7 +4,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
-import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart' as interfaces;
+import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
+    as interfaces;
 
 import '../config/console_config.dart';
 import 'key_policy.dart';
@@ -50,7 +51,10 @@ Set<String> overLimitDeviceIds(
   return {for (final d in active.skip(limit)) d.deviceId};
 }
 
-typedef DevicesResult = ({List<interfaces.DeviceRecord> devices, String? error});
+typedef DevicesResult = ({
+  List<interfaces.DeviceRecord> devices,
+  String? error,
+});
 
 /// Reads and mutates the account's `devices` rows (RLS confines everything to
 /// the signed-in owner). The console lists all rows, registers itself as a
@@ -96,7 +100,9 @@ class DeviceService {
       for (final row in decoded) {
         if (row is Map) {
           try {
-            devices.add(interfaces.DeviceRecord.fromJson(row.cast<String, Object?>()));
+            devices.add(
+              interfaces.DeviceRecord.fromJson(row.cast<String, Object?>()),
+            );
           } catch (_) {
             // skip a malformed row rather than fail the whole listing
           }
@@ -104,7 +110,10 @@ class DeviceService {
       }
       return (devices: devices, error: null);
     } catch (e) {
-      return (devices: const <interfaces.DeviceRecord>[], error: 'Devices read error: $e');
+      return (
+        devices: const <interfaces.DeviceRecord>[],
+        error: 'Devices read error: $e',
+      );
     }
   }
 
@@ -119,7 +128,9 @@ class DeviceService {
     String? appVersion,
     DateTime? nowUtc,
   }) async {
-    final lastSeen = (nowUtc ?? DateTime.now().toUtc()).toUtc().toIso8601String();
+    final lastSeen = (nowUtc ?? DateTime.now().toUtc())
+        .toUtc()
+        .toIso8601String();
     final Uri uri;
     try {
       uri = _restUri().replace(
@@ -135,7 +146,8 @@ class DeviceService {
       'display_name': displayName,
       'platform': platform,
       'role': 'viewer',
-      if ((appVersion ?? '').trim().isNotEmpty) 'app_version': appVersion!.trim(),
+      if ((appVersion ?? '').trim().isNotEmpty)
+        'app_version': appVersion!.trim(),
       'last_seen_at': lastSeen,
     };
     try {
@@ -158,39 +170,38 @@ class DeviceService {
     return _patch(accessToken, deviceId, {'display_name': displayName.trim()});
   }
 
-  Future<String?> setRevoked({
+  /// One-way removal. A revoked install cannot clear `revoked_at`; rejoining
+  /// requires a fresh install identity so a removed client cannot restore
+  /// itself with an old session.
+  Future<String?> revoke({
     required String accessToken,
     required String deviceId,
-    required bool revoked,
     DateTime? nowUtc,
-  }) {
-    return _patch(accessToken, deviceId, {
-      'revoked_at': revoked
-          ? (nowUtc ?? DateTime.now().toUtc()).toUtc().toIso8601String()
-          : null,
-    });
-  }
-
-  Future<String?> remove({
-    required String accessToken,
-    required String deviceId,
   }) async {
-    final Uri uri;
-    try {
-      uri = _restUri().replace(
-        queryParameters: {'device_id': 'eq.$deviceId'},
-      );
-    } on FormatException catch (e) {
-      return e.message;
+    if (config.backendBaseUrl.trim().isNotEmpty) {
+      try {
+        final response = await _http
+            .post(
+              _backendRevokeUri(deviceId),
+              headers: {
+                'x-supabase-auth': 'Bearer ${accessToken.trim()}',
+                'content-type': 'application/json',
+                'accept': 'application/json',
+              },
+            )
+            .timeout(requestTimeout);
+        if (!_ok(response)) {
+          return 'Revoking the device server token failed (${response.statusCode}).';
+        }
+      } catch (e) {
+        return 'Revoking the device server token failed: $e';
+      }
     }
-    try {
-      final response = await _http
-          .delete(uri, headers: _headers(accessToken))
-          .timeout(requestTimeout);
-      return _ok(response) ? null : 'Removing the device failed (${response.statusCode}).';
-    } catch (e) {
-      return 'Removing the device failed: $e';
-    }
+    return _patch(accessToken, deviceId, {
+      'revoked_at': (nowUtc ?? DateTime.now().toUtc())
+          .toUtc()
+          .toIso8601String(),
+    });
   }
 
   Future<String?> _patch(
@@ -208,7 +219,9 @@ class DeviceService {
       final response = await _http
           .patch(uri, headers: _headers(accessToken), body: jsonEncode(patch))
           .timeout(requestTimeout);
-      return _ok(response) ? null : 'Updating the device failed (${response.statusCode}).';
+      return _ok(response)
+          ? null
+          : 'Updating the device failed (${response.statusCode}).';
     } catch (e) {
       return 'Updating the device failed: $e';
     }
@@ -232,6 +245,33 @@ class DeviceService {
     final baseSegments = base.pathSegments.where((p) => p.isNotEmpty);
     return base.replace(
       pathSegments: [...baseSegments, 'rest', 'v1', interfaces.devicesTable],
+    );
+  }
+
+  Uri _backendRevokeUri(String deviceId) {
+    final base = Uri.parse(config.backendBaseUrl.trim());
+    if (base.host.trim().isEmpty) {
+      throw const FormatException('Backend URL must include a host.');
+    }
+    if (base.scheme != 'https' &&
+        base.host != 'localhost' &&
+        base.host != '127.0.0.1') {
+      throw const FormatException(
+        'Backend URL must use HTTPS except localhost development.',
+      );
+    }
+    return base.replace(
+      pathSegments: [
+        ...base.pathSegments.where((part) => part.isNotEmpty),
+        'api',
+        'mobile',
+        'v1',
+        'devices',
+        deviceId.trim(),
+        'revoke',
+      ],
+      query: '',
+      fragment: '',
     );
   }
 
