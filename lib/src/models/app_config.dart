@@ -601,11 +601,8 @@ class AppConfig {
       'keywords': keywords,
       'safeWords': safeWords,
       'keywordQualityBoostMinutes': keywordQualityBoostMinutes,
-<<<<<<< HEAD
-=======
       'collisionRemindersEnabled': collisionRemindersEnabled,
       'collisionSensitivityG': collisionSensitivityG,
->>>>>>> origin/main
       'sttEnabled': sttEnabled,
       'sttEndpoint': sttEndpoint,
       'voiceIdEnabled': voiceIdEnabled,
