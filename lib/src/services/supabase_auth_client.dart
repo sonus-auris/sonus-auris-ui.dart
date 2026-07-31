@@ -662,7 +662,6 @@ class SupabaseAuthClient {
     }
   }
 
-<<<<<<< HEAD
   String _validateAuthRedirect(String value) {
     final normalized = value.trim();
     if (normalized.isEmpty) {
