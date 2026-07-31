@@ -214,7 +214,6 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
       email: email,
       code: code,
     );
-<<<<<<< HEAD
     await _clearPendingAuth();
     await _requireExpectedIdentity(config, session, email);
     await _adoptSession(config, session, status: 'Signed in.');

@@ -150,24 +150,18 @@ your country, and we do not knowingly collect their data.
 
 ## Security
 
-<<<<<<< HEAD
-Local rolling files remain inside private, OS-protected app storage. Recordings
-are sealed on-device before supported cloud upload; transport uses TLS/HTTPS.
-Tokens and keys are stored using platform secure storage (iOS Keychain /
-Android Keystore). iCloud copies are decrypted locally into the user's own
-iCloud Drive and never pass through Sonus Auris servers as plaintext.
-=======
 Local working audio is isolated in the app-private sandbox and excluded from app
 backup, but it may be plaintext during the configured rolling period. Every
 outbound backup/sync audio object is encrypted on-device using authenticated
 envelope encryption. Private keys and tokens use platform secure storage (iOS
-Keychain / Android Keystore), and network transport uses TLS/HTTPS.
+Keychain / Android Keystore), and network transport uses TLS/HTTPS. iCloud
+copies are decrypted locally into the user's own iCloud Drive and never pass
+through Sonus Auris servers as plaintext.
 
 No system can eliminate all risk. A person who can unlock or compromise your
 device may be able to access the local working window while it exists. Use device
 lock, current operating-system updates, a shorter retention setting when
 appropriate, and account/device-revocation controls.
->>>>>>> origin/main
 
 ## Recording responsibly
 
