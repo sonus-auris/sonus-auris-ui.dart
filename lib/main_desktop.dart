@@ -479,10 +479,7 @@ class _DesktopRootState extends State<_DesktopRoot> {
       ),
     );
     email.dispose();
-<<<<<<< HEAD
-=======
     code.dispose();
->>>>>>> origin/main
   }
 }
 
