@@ -383,10 +383,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   @override
   void dispose() {
     _emailController.dispose();
-<<<<<<< HEAD
-=======
     _codeController.dispose();
->>>>>>> origin/main
     _supabaseUrlController.dispose();
     _supabaseAnonKeyController.dispose();
     super.dispose();
