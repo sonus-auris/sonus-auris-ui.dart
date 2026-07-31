@@ -597,9 +597,6 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     );
   }
 
-<<<<<<< HEAD
-  Future<bool> _requestMagicLink(AppViewModel? viewModel, String email) async {
-=======
   Future<bool> _requestCode(AppViewModel? viewModel, String email) async {
     if (viewModel == null) {
       return false;
@@ -620,26 +617,9 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     String email,
     String code,
   ) async {
->>>>>>> origin/main
     if (viewModel == null) {
-      return false;
+      return;
     }
-<<<<<<< HEAD
-    await _saveSupabaseProject(viewModel);
-    return widget.controller.requestSupabaseEmailOtp(email: email);
-  }
-
-  Future<bool> _verifyEmailCode(
-    AppViewModel? viewModel,
-    String email,
-    String code,
-  ) async {
-    if (viewModel == null) {
-      return false;
-    }
-    await _saveSupabaseProject(viewModel);
-    return widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
-=======
     setState(() => _busy = true);
     try {
       await _saveSupabaseProject(viewModel);
@@ -649,7 +629,6 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         setState(() => _busy = false);
       }
     }
->>>>>>> origin/main
   }
 
   Widget _consentStep(BuildContext context) {
