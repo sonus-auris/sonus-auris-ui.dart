@@ -2873,9 +2873,6 @@ class AppController {
         await _recorder.start(_config.value);
         // Capture is live: from here a dropped stream should be auto-resumed.
         _intendRecording = true;
-        if (_config.value.sleepMotionSensorConsent) {
-          await _collisionSensors.start();
-        }
         _diagnostics.add('PCM microphone stream started.');
         _startCollisionMonitoring();
         unawaited(_feedback.say('Recording started'));
