@@ -2429,13 +2429,8 @@ class _AccountSection extends StatefulWidget {
     required this.isAwaitingDeviceRegistration,
     required this.supabaseUrlController,
     required this.supabaseAnonKeyController,
-<<<<<<< HEAD
-    required this.onSendMagicLink,
-    required this.onVerifyCode,
-=======
     required this.onRequestCode,
     required this.onSubmitCode,
->>>>>>> origin/main
     required this.onSignOut,
     required this.onDeleteAccount,
   });
