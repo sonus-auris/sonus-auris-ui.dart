@@ -29,7 +29,9 @@ void main() {
 
       final barrier = coordinator.revokeAndClear(
         reason: RetentionRevocationReason.consentRevocation,
-        clearLocalState: () async => events.add('clear'),
+        clearLocalState: () async {
+          events.add('clear');
+        },
       );
 
       expect(coordinator.acceptsWork, isFalse);
@@ -49,44 +51,47 @@ void main() {
     },
   );
 
-  test('new uploader and exporter work is rejected once a barrier starts', () async {
-    final coordinator = RetentionWorkerCoordinator();
-    final clearBlock = Completer<void>();
-    final barrier = coordinator.revokeAndClear(
-      reason: RetentionRevocationReason.consentRevocation,
-      clearLocalState: () => clearBlock.future,
-    );
+  test(
+    'new uploader and exporter work is rejected once a barrier starts',
+    () async {
+      final coordinator = RetentionWorkerCoordinator();
+      final clearBlock = Completer<void>();
+      final barrier = coordinator.revokeAndClear(
+        reason: RetentionRevocationReason.consentRevocation,
+        clearLocalState: () => clearBlock.future,
+      );
 
-    await expectLater(
-      coordinator.runWorker(
-        RetentionWorkerKind.uploader,
-        (_) async => 'uploaded',
-      ),
-      throwsA(
-        isA<RetentionAccessRevoked>()
-            .having(
-              (error) => error.reason,
-              'reason',
-              RetentionRevocationReason.consentRevocation,
-            )
-            .having(
-              (error) => error.worker,
-              'worker',
-              RetentionWorkerKind.uploader,
-            ),
-      ),
-    );
-    await expectLater(
-      coordinator.runWorker(
-        RetentionWorkerKind.exporter,
-        (_) async => 'exported',
-      ),
-      throwsA(isA<RetentionAccessRevoked>()),
-    );
+      await expectLater(
+        coordinator.runWorker(
+          RetentionWorkerKind.uploader,
+          (_) async => 'uploaded',
+        ),
+        throwsA(
+          isA<RetentionAccessRevoked>()
+              .having(
+                (error) => error.reason,
+                'reason',
+                RetentionRevocationReason.consentRevocation,
+              )
+              .having(
+                (error) => error.worker,
+                'worker',
+                RetentionWorkerKind.uploader,
+              ),
+        ),
+      );
+      await expectLater(
+        coordinator.runWorker(
+          RetentionWorkerKind.exporter,
+          (_) async => 'exported',
+        ),
+        throwsA(isA<RetentionAccessRevoked>()),
+      );
 
-    clearBlock.complete();
-    await barrier;
-  });
+      clearBlock.complete();
+      await barrier;
+    },
+  );
 
   test('consent can resume only after destructive cleanup completes', () async {
     final coordinator = RetentionWorkerCoordinator();
@@ -119,7 +124,9 @@ void main() {
 
     await coordinator.revokeAndClear(
       reason: RetentionRevocationReason.accountDeletion,
-      clearLocalState: () async => clearCount += 1,
+      clearLocalState: () async {
+        clearCount += 1;
+      },
     );
 
     expect(coordinator.permanentlyClosed, isTrue);
@@ -146,7 +153,9 @@ void main() {
     // Repeated deletion is idempotent and does not run a second local clear.
     await coordinator.revokeAndClear(
       reason: RetentionRevocationReason.accountDeletion,
-      clearLocalState: () async => clearCount += 1,
+      clearLocalState: () async {
+        clearCount += 1;
+      },
     );
     expect(clearCount, 1);
   });
@@ -165,7 +174,9 @@ void main() {
     );
     final accountBarrier = coordinator.revokeAndClear(
       reason: RetentionRevocationReason.accountDeletion,
-      clearLocalState: () async => clearCount += 1,
+      clearLocalState: () async {
+        clearCount += 1;
+      },
     );
 
     expect(identical(consentBarrier, accountBarrier), isTrue);
@@ -204,8 +215,10 @@ void main() {
       clearLocalState: () async {},
     );
 
-    expect(() => lease.commit(() => durableWrites += 1),
-        throwsA(isA<RetentionAccessRevoked>()));
+    expect(
+      () => lease.commit(() => durableWrites += 1),
+      throwsA(isA<RetentionAccessRevoked>()),
+    );
     release.complete();
     await expectLater(worker, throwsA(isA<RetentionAccessRevoked>()));
     await barrier;
