@@ -207,11 +207,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     return true;
   }
 
-<<<<<<< HEAD
   Future<bool> _verifyEmailCode(String email, String code) async {
-=======
-  Future<void> _submitCode(String email, String code) async {
->>>>>>> origin/main
     final config = _currentConfig();
     final session = await _auth.verifyEmailOtp(
       config: config,
