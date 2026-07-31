@@ -3404,21 +3404,8 @@ class _AcousticSectionState extends State<_AcousticSection> {
       .toList();
 
   void _apply() {
-<<<<<<< HEAD
-    final keywords = _keywordsController.text
-        .split(',')
-        .map((k) => k.trim())
-        .where((k) => k.isNotEmpty)
-        .toList();
-    final safeWords = _safeWordsController.text
-        .split(',')
-        .map((phrase) => phrase.trim())
-        .where((phrase) => phrase.isNotEmpty)
-        .toList();
-=======
     final keywords = _parseWordList(_keywordsController.text);
     final safeWords = _parseWordList(_safeWordsController.text);
->>>>>>> origin/main
     widget.onChanged(
       widget.config.copyWith(
         acousticAnalysisEnabled: _enabled,
