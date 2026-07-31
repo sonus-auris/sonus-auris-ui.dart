@@ -36,12 +36,8 @@ import 'src/services/supabase_device_presence_client.dart';
 import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
 import 'src/widgets/supabase_auth_form.dart';
-<<<<<<< HEAD
-import 'src/widgets/mandatory_mfa_gate.dart';
-=======
 import 'src/widgets/supabase_mfa_gate.dart';
 import 'src/widgets/retention_expiry_banner.dart';
->>>>>>> origin/main
 
 const String _privacyPolicyUrl = 'https://sonusauris.app/privacy/';
 const String _accountDeletionUrl = 'https://sonusauris.app/account-deletion/';
