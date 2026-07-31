@@ -741,7 +741,6 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
               onPressed: _busy ? null : () => setState(() => _step -= 1),
               child: const Text('Back'),
             ),
-<<<<<<< HEAD
           if (onAccountStep &&
               !(vm?.isSignedIn ?? false) &&
               _offlineModeEnabled)
@@ -752,13 +751,6 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
           FilledButton(
             onPressed:
                 _busy || !accountReady || (_step == 2 && !_requiredAccepted)
-=======
-          FilledButton(
-            onPressed:
-                _busy ||
-                    (_step == 2 && !_requiredAccepted) ||
-                    (onAccountStep && !(vm?.isSignedIn ?? false))
->>>>>>> origin/main
                 ? null
                 : () {
                     if (isLast) {
