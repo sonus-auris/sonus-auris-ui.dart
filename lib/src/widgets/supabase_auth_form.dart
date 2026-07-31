@@ -3,31 +3,22 @@ import 'package:flutter/services.dart';
 
 import '../services/supabase_key_policy.dart';
 
-<<<<<<< HEAD
-/// Shared passwordless Supabase magic-link form used by every app surface.
-///
-/// The same request signs in an existing address or creates a new account.
-/// A code field is retained as an optional fallback for projects whose Supabase
-/// email template includes `{{ .Token }}` as well as the confirmation link.
-=======
 /// Shared, validated passwordless Supabase sign-in form used during onboarding
 /// and from Configure. A single email-code flow covers both sign-in and
 /// sign-up (an unknown address gets an account the moment its first code is
 /// verified), so keeping both entry points on one widget prevents the first-run
 /// and returning-user flows from drifting apart.
->>>>>>> origin/main
+///
+/// The code step requires the Supabase email template to include
+/// `{{ .Token }}`; the confirmation link in the same email remains available
+/// as a fallback.
 class SupabaseAuthForm extends StatefulWidget {
   const SupabaseAuthForm({
     super.key,
     required this.emailController,
-<<<<<<< HEAD
-    required this.onSendMagicLink,
-    required this.onVerifyCode,
-=======
     required this.codeController,
     required this.onRequestCode,
     required this.onSubmitCode,
->>>>>>> origin/main
     this.supabaseUrlController,
     this.supabaseAnonKeyController,
     this.showProjectConfiguration = false,
@@ -35,12 +26,6 @@ class SupabaseAuthForm extends StatefulWidget {
   });
 
   final TextEditingController emailController;
-<<<<<<< HEAD
-  final TextEditingController? supabaseUrlController;
-  final TextEditingController? supabaseAnonKeyController;
-  final Future<bool> Function(String email) onSendMagicLink;
-  final Future<bool> Function(String email, String code) onVerifyCode;
-=======
   final TextEditingController codeController;
   final TextEditingController? supabaseUrlController;
   final TextEditingController? supabaseAnonKeyController;
@@ -54,7 +39,6 @@ class SupabaseAuthForm extends StatefulWidget {
   /// first use).
   final Future<void> Function(String email, String code) onSubmitCode;
 
->>>>>>> origin/main
   final bool showProjectConfiguration;
   final bool enabled;
 
@@ -62,16 +46,6 @@ class SupabaseAuthForm extends StatefulWidget {
   State<SupabaseAuthForm> createState() => _SupabaseAuthFormState();
 }
 
-<<<<<<< HEAD
-enum _AuthAction { sendLink, verifyCode }
-
-class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
-  final _formKey = GlobalKey<FormState>();
-  final _codeController = TextEditingController();
-  _AuthAction? _busyAction;
-  String? _inlineError;
-  bool _linkSent = false;
-=======
 enum _Busy { none, request, verify }
 
 class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
@@ -80,128 +54,14 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
   bool _codeSent = false;
   _Busy _busy = _Busy.none;
   String? _inlineError;
->>>>>>> origin/main
 
   bool get _isBusy => _busy != _Busy.none;
-
-  @override
-  void dispose() {
-    _codeController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
     final enabled = widget.enabled && !_isBusy;
     return Form(
       key: _formKey,
-<<<<<<< HEAD
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (widget.showProjectConfiguration) ...[
-            _ProjectConfigurationFields(
-              urlController: widget.supabaseUrlController,
-              anonKeyController: widget.supabaseAnonKeyController,
-              enabled: enabled,
-            ),
-            const SizedBox(height: 16),
-          ],
-          TextFormField(
-            key: const ValueKey('supabase-email-field'),
-            controller: widget.emailController,
-            enabled: enabled,
-            autofillHints: const [AutofillHints.email],
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.emailAddress,
-            textInputAction: TextInputAction.done,
-            validator: validateAccountEmail,
-            onFieldSubmitted: enabled ? (_) => _submitLink() : null,
-            decoration: const InputDecoration(
-              labelText: 'Email',
-              hintText: 'you@example.com',
-              prefixIcon: Icon(Icons.alternate_email),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'We’ll email a 6-digit Supabase sign-in code. The same code creates '
-            'your account on first use—there is no password.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          if (_linkSent) ...[
-            const SizedBox(height: 14),
-            TextFormField(
-              key: const ValueKey('supabase-code-field'),
-              controller: _codeController,
-              enabled: enabled,
-              keyboardType: TextInputType.number,
-              textInputAction: TextInputAction.done,
-              autofillHints: const [AutofillHints.oneTimeCode],
-              validator: (value) => _linkSent ? validateEmailCode(value) : null,
-              onFieldSubmitted: enabled ? (_) => _verifyCode() : null,
-              decoration: const InputDecoration(
-                labelText: '6-digit email code',
-                helperText: 'Enter the code from your Sonus Auris email.',
-                prefixIcon: Icon(Icons.pin_outlined),
-              ),
-            ),
-          ],
-          if (_inlineError != null) ...[
-            const SizedBox(height: 12),
-            Semantics(
-              liveRegion: true,
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.errorContainer,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  _inlineError!,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onErrorContainer,
-                  ),
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            key: const ValueKey('supabase-send-link-button'),
-            onPressed: enabled ? _submitLink : null,
-            icon: _actionIcon(_AuthAction.sendLink, Icons.mark_email_read),
-            label: Text(
-              _busyAction == _AuthAction.sendLink
-                  ? 'Sending…'
-                  : _linkSent
-                  ? 'Send a fresh code'
-                  : 'Email me a 6-digit code',
-            ),
-          ),
-          if (_linkSent) ...[
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              key: const ValueKey('supabase-verify-code-button'),
-              onPressed: enabled ? _verifyCode : null,
-              icon: _actionIcon(_AuthAction.verifyCode, Icons.login),
-              label: Text(
-                _busyAction == _AuthAction.verifyCode
-                    ? 'Verifying…'
-                    : 'Verify email code',
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Check your inbox and enter the 6-digit code. The one-time link '
-              'in the same email is a fallback. You can close '
-              'this screen while the email opens Sonus Auris.',
-            ),
-          ],
-        ],
-=======
       autovalidateMode: _attempted
           ? AutovalidateMode.onUserInteraction
           : AutovalidateMode.disabled,
@@ -212,7 +72,6 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
               ? _codeStep(context, enabled)
               : _emailStep(context, enabled),
         ),
->>>>>>> origin/main
       ),
     );
   }
@@ -371,40 +230,19 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
     );
   }
 
-<<<<<<< HEAD
-  bool _validateBaseFields() {
-    return _formKey.currentState?.validate() ?? false;
-  }
-
-  Future<void> _submitLink() async {
-    if (_busy || !widget.enabled) {
-=======
   Future<void> _requestCode() async {
     if (_isBusy || !widget.enabled) {
->>>>>>> origin/main
       return;
     }
-    _codeController.clear();
+    // Drop any stale code from a previous attempt before starting a new flow.
+    widget.codeController.clear();
     setState(() {
-<<<<<<< HEAD
-      _linkSent = false;
-=======
       _attempted = true;
->>>>>>> origin/main
       _inlineError = null;
     });
-    if (!_validateBaseFields()) {
+    if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
-<<<<<<< HEAD
-    setState(() => _busyAction = _AuthAction.sendLink);
-    try {
-      final sent = await widget.onSendMagicLink(
-        widget.emailController.text.trim(),
-      );
-      if (mounted && sent) {
-        setState(() => _linkSent = true);
-=======
     await _sendCode();
   }
 
@@ -427,7 +265,6 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
           // Don't flag the freshly revealed, still-empty code field as invalid.
           _attempted = false;
         });
->>>>>>> origin/main
       }
     } catch (error) {
       if (mounted) {
@@ -440,25 +277,6 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
     }
   }
 
-<<<<<<< HEAD
-  Future<void> _verifyCode() async {
-    if (_busy || !widget.enabled) {
-      return;
-    }
-    setState(() => _inlineError = null);
-    final emailError = validateAccountEmail(widget.emailController.text);
-    final codeError = validateEmailCode(_codeController.text);
-    if (emailError != null || codeError != null) {
-      _formKey.currentState?.validate();
-      return;
-    }
-    setState(() => _busyAction = _AuthAction.verifyCode);
-    try {
-      await widget.onVerifyCode(
-        widget.emailController.text.trim(),
-        _codeController.text.trim(),
-      );
-=======
   Future<void> _submitCode() async {
     if (_isBusy || !widget.enabled) {
       return;
@@ -475,19 +293,12 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
     final code = widget.codeController.text.trim();
     try {
       await widget.onSubmitCode(email, code);
->>>>>>> origin/main
     } catch (error) {
       if (mounted) {
         setState(() => _inlineError = describeAuthError(error));
       }
     } finally {
       if (mounted) {
-<<<<<<< HEAD
-        setState(() => _busyAction = null);
-      }
-    }
-  }
-=======
         setState(() => _busy = _Busy.none);
       }
     }
@@ -504,7 +315,6 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
       _inlineError = null;
     });
   }
->>>>>>> origin/main
 }
 
 class _ProjectConfigurationFields extends StatelessWidget {
@@ -594,24 +404,14 @@ String? validateAccountEmail(String? value) {
   return null;
 }
 
-<<<<<<< HEAD
-String? validateEmailCode(String? value) {
-  final code = value?.trim() ?? '';
-  if (code.isEmpty) {
-    return 'Enter the one-time code from your email.';
-  }
-  if (code.length != 6 ||
-      !code.runes.every((rune) => rune >= 0x30 && rune <= 0x39)) {
-    return 'Enter the 6-digit code from your email.';
-=======
 String? validateEmailOtpCode(String? value) {
   final code = value?.trim() ?? '';
   if (code.isEmpty) {
     return 'Enter the 6-digit code from the email.';
   }
-  if (code.length != 6 || int.tryParse(code) == null) {
+  if (code.length != 6 ||
+      !code.runes.every((rune) => rune >= 0x30 && rune <= 0x39)) {
     return 'Enter the 6-digit code from the email.';
->>>>>>> origin/main
   }
   return null;
 }
