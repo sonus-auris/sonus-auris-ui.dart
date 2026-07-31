@@ -127,20 +127,24 @@ class RetentionWorkerCoordinator {
     }
   }
 
-  /// Invalidate workers, drain them, then run one destructive local clear.
+  /// Invalidate workers, drain them, then run one canonical local-retention
+  /// clear. The callback must be idempotent and semantically equivalent for
+  /// consent revocation and account deletion; account-specific remote/token
+  /// deletion belongs outside this local worker barrier.
   ///
   /// Concurrent destructive requests coalesce. Account deletion dominates a
-  /// concurrent consent revocation and prevents any later re-authorization.
-  /// A failed account-deletion clear leaves admission permanently sealed but may
-  /// be retried until [localStateCleared] becomes true.
+  /// concurrent or later consent revocation and prevents re-authorization. A
+  /// failed account clear remains sealed but may be retried until
+  /// [localStateCleared] becomes true.
   Future<void> revokeAndClear({
     required RetentionRevocationReason reason,
     required Future<void> Function() clearLocalState,
   }) {
     final existing = _barrierFuture;
     if (existing != null) {
-      if (reason == RetentionRevocationReason.accountDeletion) {
-        _revokedFor = reason;
+      if (reason == RetentionRevocationReason.accountDeletion ||
+          _permanentlyClosed) {
+        _revokedFor = RetentionRevocationReason.accountDeletion;
         _permanentlyClosed = true;
       }
       return existing;
@@ -149,12 +153,17 @@ class RetentionWorkerCoordinator {
       return Future<void>.value();
     }
 
+    final effectiveReason = _permanentlyClosed
+        ? RetentionRevocationReason.accountDeletion
+        : reason;
+
     // Establish the barrier synchronously. This ordering is the core safety
     // property: no new worker can race in while cleanup waits for existing work.
     _acceptingWork = false;
     _generation += 1;
-    _revokedFor = reason;
-    if (reason == RetentionRevocationReason.accountDeletion) {
+    _revokedFor = effectiveReason;
+    _localStateCleared = false;
+    if (effectiveReason == RetentionRevocationReason.accountDeletion) {
       _permanentlyClosed = true;
     }
 
