@@ -436,11 +436,8 @@ class AppConfig {
     List<String>? keywords,
     List<String>? safeWords,
     int? keywordQualityBoostMinutes,
-<<<<<<< HEAD
-=======
     bool? collisionRemindersEnabled,
     double? collisionSensitivityG,
->>>>>>> origin/main
     bool? sttEnabled,
     String? sttEndpoint,
     bool? voiceIdEnabled,
