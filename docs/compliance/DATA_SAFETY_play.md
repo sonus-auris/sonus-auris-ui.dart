@@ -10,23 +10,17 @@ current Play definitions and the exact shipped integration.
 ## Security practices
 
 - **Encrypted in transit:** Yes (TLS/HTTPS).
-<<<<<<< HEAD
-- **Data protected at rest on device:** Yes. Local rolling files remain in the
-  app's private container and rely on device/OS storage protection; recordings
-  are additionally sealed with AES-256-GCM before supported cloud transfer.
-- **Users can request deletion:** Yes — in-app + web URL (see ACCOUNT_DELETION).
-=======
 - **Encrypted before backup/device sync:** Yes. Each outbound audio object uses
-  authenticated on-device envelope encryption; the server/object store receives
-  ciphertext and wrapped object keys.
+  authenticated on-device envelope encryption (AES-256-GCM); the server/object
+  store receives ciphertext and wrapped object keys.
 - **All data encrypted at rest on the device:** Do **not** claim this while the
   rolling working window remains plaintext in app-private storage. The intended
   default and maximum supported local plaintext window is **100 hours**, with
   user-selected shorter values. App backup is disabled for that cache, and
   expired plaintext/temp/derived files must be deleted deterministically even
   when backup is disabled or failing.
-- **Users can request deletion:** Yes — in-app plus the public account-deletion URL.
->>>>>>> origin/main
+- **Users can request deletion:** Yes — in-app plus the public account-deletion
+  URL (see ACCOUNT_DELETION).
 - **Committed to Play Families policy:** app is not directed to children.
 - **Independent security review:** declare only after a qualifying review exists.
 
