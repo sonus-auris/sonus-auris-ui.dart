@@ -1910,21 +1910,9 @@ class AppController {
     return _authClient.listFactors(config: _config.value, accessToken: token);
   }
 
-<<<<<<< HEAD
-  /// Enforces mandatory MFA after every first-factor sign-in. Returns true
-  /// while either enrollment or a verification challenge still blocks account
-  /// access.
-  Future<bool> _refreshMfaChallengeState() async {
-    final factors = await _listMfaFactorsOrEmpty();
-    final hasVerified = factors.any((factor) => factor.isVerified);
-    final secrets = _secrets.valueOrNull;
-    final aal = secrets == null
-        ? null
-        : decodeSupabaseAal(secrets.supabaseAccessToken);
-    final enrollmentRequired = !hasVerified;
-    final pending = hasVerified && aal != 'aal2';
-=======
   /// Resolves the only safe state after the passwordless first factor.
+  /// Enforces mandatory MFA after every first-factor sign-in: enrollment or a
+  /// verification challenge blocks account access until an AAL2 session exists.
   Future<_MfaGateDecision> _refreshMfaChallengeState() async {
     final factors = await _listMfaFactors();
     final hasVerified = factors.any((factor) => factor.isVerified);
@@ -1934,24 +1922,10 @@ class AppController {
         supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken);
     final enrollmentRequired = !hasVerified;
     final pending = hasVerified && !passwordlessAal2;
->>>>>>> origin/main
     _accountStatus.add(
       _accountStatus.value.copyWith(
         mfaEnrollmentRequired: enrollmentRequired,
         mfaRequired: pending,
-<<<<<<< HEAD
-        mfaEnrollmentRequired: enrollmentRequired,
-        mfaFactors: factors,
-      ),
-    );
-    return enrollmentRequired || pending;
-  }
-
-  String _mandatoryMfaPrompt() {
-    return _accountStatus.value.mfaEnrollmentRequired
-        ? 'Set up an authenticator app or verified phone to finish signing in.'
-        : 'Enter your two-factor code to finish signing in.';
-=======
         mfaCheckFailed: false,
         mfaFactors: factors,
       ),
@@ -1979,7 +1953,6 @@ class AppController {
       'Could not verify two-factor security. Account access remains locked; '
       'check your connection and retry.',
     );
->>>>>>> origin/main
   }
 
   Future<String?> _freshAccessToken() async {
