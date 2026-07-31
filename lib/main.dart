@@ -553,21 +553,13 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         const SizedBox(height: 16),
         SupabaseAuthForm(
           emailController: _emailController,
-<<<<<<< HEAD
-=======
           codeController: _codeController,
->>>>>>> origin/main
           supabaseUrlController: _supabaseUrlController,
           supabaseAnonKeyController: _supabaseAnonKeyController,
           showProjectConfiguration: !configured,
           enabled: !_busy && vm != null,
-<<<<<<< HEAD
-          onSendMagicLink: (email) => _requestMagicLink(vm, email),
-          onVerifyCode: (email, code) => _verifyEmailCode(vm, email, code),
-=======
           onRequestCode: (email) => _requestCode(vm, email),
           onSubmitCode: (email, code) => _submitCode(vm, email, code),
->>>>>>> origin/main
         ),
         if (_offlineModeEnabled) ...[
           const SizedBox(height: 16),
