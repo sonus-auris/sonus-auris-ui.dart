@@ -1779,23 +1779,12 @@ class AppController {
         code: code,
       );
       await _applySupabaseSession(session);
-<<<<<<< HEAD
-      final factors = await _listMfaFactorsOrEmpty();
-      _accountStatus.add(
-        _accountStatus.value.copyWith(
-          mfaRequired: false,
-          mfaEnrollmentRequired: false,
-          mfaFactors: factors,
-        ),
-      );
-=======
       final decision = await _refreshMfaChallengeState();
       if (decision != _MfaGateDecision.authorized) {
         throw StateError(
           'Supabase did not issue an AAL2 session after verification.',
         );
       }
->>>>>>> origin/main
       if (completesSignIn) {
         // Authentication is complete as soon as the AAL2 session and verified
         // factor are persisted. Account/device sync is best-effort background

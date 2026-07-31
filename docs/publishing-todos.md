@@ -74,54 +74,11 @@ signing access.
 
 ## Protected GitHub environments
 
-<<<<<<< HEAD
-- [ ] Populate the existing protected GitHub `mobile-production` environment
-  with the production backend/Supabase values plus Android and Apple signing
-  secrets documented in `docs/mobile-ci.md`. As checked on July 25, 2026, the
-  environment exists but has no configured secrets or variables.
-- [ ] Point `SONUS_BACKEND_BASE_URL` at the Sonus-owned cluster hostname after
-  `api.sonusauris.app` DNS, TLS, and gateway routing are declared through Argo.
-  The hostname did not resolve publicly when checked on July 25, 2026.
-- [ ] Verify the Argo-managed backend readiness endpoint from outside the
-  cluster, then exercise sign-in, consent, upload, deletion, purchases, and
-  client telemetry against production Supabase from a physical Android device
-  and iPhone.
-- [ ] Run the signed Android workflow, upload the AAB to Play internal testing,
-  install it on the physical Android device, and complete a background-recording
-  battery/network-loss test.
-- [ ] Run the signed iOS workflow, upload the IPA to TestFlight, install it on
-  the physical iPhone, and complete lock-screen/background-audio and permission
-  review tests.
-- [ ] Review the GitHub Linux/macOS/Windows desktop artifacts; configure macOS
-  signing/notarization and Windows signing/installers before distributing them.
-  The Rust desktop now links Google Drive/OneDrive/Dropbox and has an explicit,
-  default-off encrypted backup path for finalized WAVs using the same SAC1
-  format as Flutter. Its CI matrix includes the native OS credential-vault
-  dependencies; exercise each packaged build against a real provider before
-  release.
-- [ ] Upgrade or replace Flutter plugins that still apply the legacy Kotlin
-  Gradle plugin or lack Apple Swift Package Manager support before Flutter turns
-  the current build warnings into errors; also track the StoreKit 1 deprecation
-  warnings emitted by `in_app_purchase_storekit` on macOS 15.
-- [ ] Promote the Flutter web console only by updating its exact source pin in
-  `~/codes/ores/k8s-cluster/remote/argocd/dd-next-runtime` and allowing Argo to
-  reconcile it. Run both Puppeteer and Playwright against the deployed URL.
-- [ ] Complete the move to `sonus-auris-monorepo` as the canonical source for
-  every Argo Sonus workload. The console build now consumes and verifies the
-  console revision from the node's pinned monorepo checkout without a personal
-  token. Next, move the Argo application resources and backend build source into
-  the monorepo-owned path after the integration workflow is green and every
-  nested revision is pushed. Prefer repository deploy keys or a short-lived
-  GitHub App token for any remaining private fetch, verify backend and console
-  health, and then retire the temporary `k8s-cluster` deployment definitions.
-
-After the accounts are active, create the store records with the existing
-identifiers (`com.ores.audioDashcam` for iOS and
-`com.ores.sonus_auris` for Android), enroll the signing keys, upload first to
-TestFlight and Play internal testing, and complete the store privacy forms.
-=======
-- [ ] Create `mobile-production`, require reviewer approval, restrict deployment
-  to `main`, and add the mobile values documented in `docs/mobile-ci.md`.
+- [ ] Populate the protected GitHub `mobile-production` environment (require
+  reviewer approval, restrict deployment to `main`) with the production
+  backend/Supabase values plus Android and Apple signing secrets documented in
+  `docs/mobile-ci.md`. As checked on July 25, 2026, the environment exists but
+  has no configured secrets or variables.
 - [ ] Create `desktop-production` with the same branch/reviewer controls; add the
   Windows signing, macOS Developer ID/notarization, R2, and public client values.
 - [ ] Keep all release workflows at `contents: read`, disable persisted checkout
@@ -148,19 +105,33 @@ TestFlight and Play internal testing, and complete the store privacy forms.
 ## Release acceptance
 
 - [ ] Point `SONUS_BACKEND_BASE_URL` at the Sonus-owned production gateway after
-  DNS, TLS, and Argo routing are ready.
-- [ ] Exercise sign-in, consent, RLS isolation, recording, upload/retry,
-  retention, permanent save, purchase/restore, export, and account deletion
-  against production on physical Android and iPhone hardware.
+  `api.sonusauris.app` DNS, TLS, and Argo routing are ready. The hostname did
+  not resolve publicly when checked on July 25, 2026.
+- [ ] Verify the Argo-managed backend readiness endpoint from outside the
+  cluster, then exercise sign-in, consent, RLS isolation, recording,
+  upload/retry, retention, permanent save, purchase/restore, export, client
+  telemetry, and account deletion against production on physical Android and
+  iPhone hardware.
 - [ ] Build Android with an unused versionCode. Publish first to Play internal
-  testing through `.github/workflows/android-release.yml`.
+  testing through `.github/workflows/android-release.yml`, install it on the
+  physical Android device, and complete a background-recording
+  battery/network-loss test.
 - [ ] Build iOS with an unused CFBundleVersion. Upload first for TestFlight
-  processing through `.github/workflows/ios-build.yml`.
+  processing through `.github/workflows/ios-build.yml`, install it on the
+  physical iPhone, and complete lock-screen/background-audio and permission
+  review tests.
 - [ ] Verify background recording under lock, interruption, reboot, battery
   pressure, network loss/recovery, and force-quit constraints on real devices.
 - [ ] Build the three signed desktop installers with
   `.github/workflows/desktop-release.yml`; verify clean install, signature,
   notarization, upgrade, launch-at-login, and uninstall before R2 publication.
+- [ ] Review the GitHub Linux/macOS/Windows desktop artifacts; configure macOS
+  signing/notarization and Windows signing/installers before distributing them.
+  The Rust desktop now links Google Drive/OneDrive/Dropbox and has an explicit,
+  default-off encrypted backup path for finalized WAVs using the same SAC1
+  format as Flutter. Its CI matrix includes the native OS credential-vault
+  dependencies; exercise each packaged build against a real provider before
+  release.
 - [ ] Set the marketing deployment values from `.env.example` in
   `sonus-auris-site.web` after the store listings and R2 custom domain are live.
 - [ ] Promote beyond internal/TestFlight only after reviewing telemetry and
@@ -169,15 +140,27 @@ TestFlight and Play internal testing, and complete the store privacy forms.
 ## Repository and GitOps follow-ups
 
 - [ ] Keep `sonus-auris-monorepo` as the canonical integration source and update
-  pinned nested revisions only after each child PR is green and merged.
+  pinned nested revisions only after each child PR is green and merged. The
+  console build now consumes and verifies the console revision from the node's
+  pinned monorepo checkout without a personal token. Next, move the Argo
+  application resources and backend build source into the monorepo-owned path
+  after the integration workflow is green and every nested revision is pushed,
+  verify backend and console health, and then retire the temporary
+  `k8s-cluster` deployment definitions.
 - [ ] Move any remaining temporary deployment definitions out of personal
   `k8s-cluster` paths into Sonus-owned GitOps repositories, using deploy keys or
   short-lived GitHub App credentials for private source fetches.
-- [ ] Upgrade Flutter plugins that still depend on legacy Kotlin Gradle behavior,
-  lack Apple Swift Package Manager support, or retain StoreKit 1 APIs before a
-  future Flutter/Xcode release turns warnings into build failures.
+- [ ] Promote the Flutter web console only by updating its exact source pin in
+  `~/codes/ores/k8s-cluster/remote/argocd/dd-next-runtime` and allowing Argo to
+  reconcile it. Run both Puppeteer and Playwright against the deployed URL.
+- [ ] Upgrade or replace Flutter plugins that still depend on legacy Kotlin
+  Gradle behavior, lack Apple Swift Package Manager support, or retain StoreKit 1
+  APIs before a future Flutter/Xcode release turns warnings into build failures;
+  also track the StoreKit 1 deprecation warnings emitted by
+  `in_app_purchase_storekit` on macOS 15.
 
-The permanent identifiers remain `com.ores.audioDashcam` for iOS and
-`com.ores.audio_dashcam` for Android. Do not change either after the first store
-upload.
->>>>>>> origin/main
+After the accounts are active, create the store records with the existing
+identifiers (`com.ores.audioDashcam` for iOS and
+`com.ores.sonus_auris` for Android), enroll the signing keys, upload first to
+TestFlight and Play internal testing, and complete the store privacy forms. Do
+not change either identifier after the first store upload.
