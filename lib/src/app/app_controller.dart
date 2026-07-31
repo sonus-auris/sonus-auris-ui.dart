@@ -1819,8 +1819,7 @@ class AppController {
       return false;
     }
     try {
-<<<<<<< HEAD
-      final factors = await _listMfaFactorsOrEmpty();
+      final factors = await _listMfaFactors();
       final target = factors
           .where((factor) => factor.id == factorId)
           .firstOrNull;
@@ -1829,13 +1828,6 @@ class AppController {
         throw StateError(
           'Two-factor authentication is mandatory. Add and verify another '
           'method before removing this one.',
-=======
-      final verified = _accountStatus.value.verifiedMfaFactors;
-      if (verified.length <= 1 &&
-          verified.any((factor) => factor.id == factorId)) {
-        throw StateError(
-          'Add and verify another two-factor method before removing this one.',
->>>>>>> origin/main
         );
       }
       await _authClient.unenrollFactor(
