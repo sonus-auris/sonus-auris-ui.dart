@@ -2115,6 +2115,7 @@ class AppController {
         secrets == null ||
         !config.hasSupabaseAuthConfig ||
         !secrets.hasSupabaseToken ||
+        !supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken) ||
         secrets.supabaseUserId.trim().isEmpty) {
       _devicePresenceClient.close();
       _rustDevicePresenceClient.close();
