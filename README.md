@@ -44,17 +44,8 @@ Compressed AAC at 64 kbps would be about 14.4 GB for 500 hours, but stop/start e
 
 ## Runtime Notes
 
-<<<<<<< HEAD
-- Android uses a foreground microphone service while recording. The app asks for microphone permission and notification permission; it does not request storage, location, contacts, or battery optimization permissions.
-- On Android 11+, microphone capture must be started while the app is
-  foregrounded. After the foreground microphone service is running, the app can
-  move to the background and continue recording under the visible notification.
-  A boot receiver re-arms user schedules, but Android 14+ does not permit a
-  microphone foreground service to cold-start from `BOOT_COMPLETED`.
-=======
 - Android uses a foreground microphone service while recording. The app asks for microphone and notification permission for core capture; location, Bluetooth, nearby-Wi-Fi, and motion capabilities remain separately disclosed and opt-in.
-- On Android 11+, microphone capture must be started while the app is foregrounded. After the foreground microphone service is running, the app can move to the background and continue recording under the visible notification. The app does not try to auto-start microphone capture from boot or from a background-only state.
->>>>>>> origin/main
+- On Android 11+, microphone capture must be started while the app is foregrounded. After the foreground microphone service is running, the app can move to the background and continue recording under the visible notification. A boot receiver re-arms user schedules, but the app does not try to auto-start microphone capture from boot or from a background-only state (Android 14+ does not permit a microphone foreground service to cold-start from `BOOT_COMPLETED`).
 - Android app backup is disabled so app-local audio and cloud configuration are not copied into device backups.
 - iOS uses microphone permission and the `audio` background mode. iOS will still stop capture if the user force-quits the app or the OS terminates it.
 - Segment boundaries are sample-counted. Playback trims the duplicate overlap with `just_audio` clipping so local playback does not repeat the overlap.
