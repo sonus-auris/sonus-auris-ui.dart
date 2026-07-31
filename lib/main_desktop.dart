@@ -343,8 +343,23 @@ class _DesktopRootState extends State<_DesktopRoot> {
         if (vm == null || vm.isInitializing) {
           return const _Loading();
         }
-        if (vm.hasSupabaseSession && !vm.isSignedIn) {
-          return MandatoryMfaGate(controller: widget.controller);
+        if (vm.hasFirstFactorSession && !vm.isSignedIn) {
+          return Scaffold(
+            body: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 460),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(28),
+                      child: SupabaseMfaGate(controller: widget.controller),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
         }
         return Scaffold(
           body: Row(
