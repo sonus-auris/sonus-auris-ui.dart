@@ -362,11 +362,7 @@ class AppConfig {
   bool get s3TargetReady =>
       s3Bucket.trim().isNotEmpty && s3Region.trim().isNotEmpty;
 
-<<<<<<< HEAD
   /// Whether Supabase passwordless sign-in can be attempted.
-=======
-  /// Whether Supabase email-code sign-in can be attempted.
->>>>>>> origin/main
   bool get hasSupabaseAuthConfig =>
       supabaseUrl.trim().isNotEmpty && supabaseAnonKey.trim().isNotEmpty;
 
