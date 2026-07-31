@@ -73,11 +73,7 @@ class AccountStatus {
   AccountStatus copyWith({
     bool? mfaEnrollmentRequired,
     bool? mfaRequired,
-<<<<<<< HEAD
-    bool? mfaEnrollmentRequired,
-=======
     bool? mfaCheckFailed,
->>>>>>> origin/main
     List<MfaFactor>? mfaFactors,
     bool? deviceRevoked,
     int? activeRecorderDeviceCount,

@@ -12,12 +12,9 @@
 	<true/>
 	<key>com.apple.security.network.server</key>
 	<true/>
-<<<<<<< HEAD
-	<key>keychain-access-groups</key>
-	<array/>
-=======
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
->>>>>>> origin/main
+	<key>keychain-access-groups</key>
+	<array/>
 </dict>
 </plist>
