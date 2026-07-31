@@ -103,16 +103,14 @@ const String kConsentVersion = 'audio-dashcam-consent-v2';
 const String kDefaultSupabaseUrl = AppConfig.defaultSupabaseUrl;
 const String kDefaultSupabaseAnonKey = AppConfig.defaultSupabaseAnonKey;
 
-<<<<<<< HEAD
 /// Return URL for Supabase magic links. Add this URL (or the build-time
 /// override) to the project's Supabase Auth redirect allow-list.
 const String kSupabaseAuthRedirectUrl = String.fromEnvironment(
   'SONUS_SUPABASE_AUTH_REDIRECT_URL',
   defaultValue: 'sonusauris://auth/callback',
 );
-=======
+
 enum _MfaGateDecision { enroll, challenge, authorized }
->>>>>>> origin/main
 
 class AppController {
   factory AppController({
