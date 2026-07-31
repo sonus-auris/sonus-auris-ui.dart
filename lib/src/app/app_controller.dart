@@ -2712,23 +2712,14 @@ class AppController {
   }
 
   Future<void> refreshSupabaseSessionForAppResume() async {
-<<<<<<< HEAD
-    await _ensureFreshSupabaseToken();
-    final secrets = _secrets.valueOrNull;
-    if (secrets != null && secrets.hasSupabaseToken) {
-      final blocked = await _refreshMfaChallengeState();
-      if (blocked) {
-        return;
-      }
-=======
     await _ensureSupabaseReady();
     if (accountStatusValue.mfaEnrollmentRequired ||
         accountStatusValue.mfaRequired ||
         accountStatusValue.mfaCheckFailed) {
       return;
->>>>>>> origin/main
     }
     _connectTelemetryRealtime();
+    _connectDevicePresence();
     _scheduleSupabaseTokenRefresh();
   }
 
