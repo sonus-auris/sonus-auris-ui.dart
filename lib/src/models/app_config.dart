@@ -716,10 +716,12 @@ class AppConfig {
             ? (json['safeWords'] as List).map((entry) => entry.toString())
             : const <String>[],
       ),
+      // Persistence tolerates the full 1 minute – 24 hour range; the
+      // controller re-clamps to the effective 15–360 minute runtime bound.
       keywordQualityBoostMinutes: _asInt(
         json['keywordQualityBoostMinutes'],
         90,
-      ).clamp(15, 360),
+      ).clamp(1, 24 * 60),
       collisionRemindersEnabled:
           json['collisionRemindersEnabled'] as bool? ?? false,
       collisionSensitivityG: _asDouble(
