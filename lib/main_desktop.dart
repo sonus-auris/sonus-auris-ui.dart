@@ -42,11 +42,7 @@ import 'src/platform/desktop_autostart.dart';
 import 'src/services/cloud_oauth_flow.dart';
 import 'src/services/supabase_device_presence_client.dart';
 import 'src/widgets/supabase_auth_form.dart';
-<<<<<<< HEAD
-import 'src/widgets/mandatory_mfa_gate.dart';
-=======
 import 'src/widgets/supabase_mfa_gate.dart';
->>>>>>> origin/main
 
 const _green = Color(0xFF1FAA6C);
 const _greenBright = Color(0xFF34C585);
