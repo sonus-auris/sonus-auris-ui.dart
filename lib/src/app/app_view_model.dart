@@ -65,17 +65,14 @@ class AppViewModel {
   bool get isUploadGatePaused =>
       config.uploadEnabled && transferStatus.isPaused && pendingUploads > 0;
 
-<<<<<<< HEAD
   /// Whether a Supabase session (access or refresh token) is held.
   bool get hasSupabaseSession => secrets.hasSupabaseSession;
 
-  /// A held AAL1 token is deliberately not "signed in" for product access.
-  /// Magic-link users become signed in only after a verified second factor
-  /// upgrades the Supabase JWT to AAL2.
-  bool get isSignedIn => hasSupabaseSession && accountStatus.isMfaSatisfied;
-=======
   /// Whether cloud account access is authorized: the passwordless first factor
-  /// plus a verified second factor represented by an `aal2` access token.
+  /// plus a verified second factor represented by an `aal2` access token. A
+  /// held AAL1 token is deliberately not "signed in" for product access —
+  /// magic-link/OTP users become signed in only after a verified second factor
+  /// upgrades the Supabase JWT to AAL2.
   bool get isSignedIn =>
       secrets.hasFreshSupabaseToken() &&
       supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken);
@@ -83,7 +80,6 @@ class AppViewModel {
   /// A first-factor session may exist while mandatory MFA is being enrolled or
   /// challenged. It must not be treated as signed in.
   bool get hasFirstFactorSession => secrets.hasSupabaseSession;
->>>>>>> origin/main
 
   /// Email of the signed-in user, or null when signed out / unknown.
   String? get signedInEmail => secrets.supabaseEmail.trim().isEmpty
