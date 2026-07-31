@@ -2523,13 +2523,6 @@ class AppController {
   Future<void> _ensureSupabaseReady() async {
     await _ensureFreshSupabaseToken();
     final secrets = _secrets.valueOrNull;
-<<<<<<< HEAD
-    if (secrets != null && secrets.hasSupabaseToken) {
-      final blocked = await _refreshMfaChallengeState();
-      if (blocked) {
-        throw StateError(_mandatoryMfaPrompt());
-      }
-=======
     if (secrets == null || !secrets.hasSupabaseToken) {
       return;
     }
@@ -2541,7 +2534,6 @@ class AppController {
     } catch (error) {
       _markMfaCheckFailed(error);
       return;
->>>>>>> origin/main
     }
     await _ensureDeviceRegistered();
     await _syncSupabaseDeviceAndEntitlements();
