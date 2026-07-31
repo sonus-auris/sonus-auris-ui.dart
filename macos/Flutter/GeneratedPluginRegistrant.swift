@@ -21,11 +21,8 @@ import in_app_purchase_storekit
 import just_audio
 import network_info_plus
 import record_macos
-<<<<<<< HEAD
 import screen_retriever_macos
-=======
 import share_plus
->>>>>>> origin/main
 import shared_preferences_foundation
 import tray_manager
 import url_launcher_macos
