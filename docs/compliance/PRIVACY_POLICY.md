@@ -9,32 +9,18 @@ _Last updated: <SET DATE>. Publisher: <LEGAL ENTITY NAME>, contact: <privacy@you
 
 ## Summary
 
-<<<<<<< HEAD
-Sonus Auris records audio you choose to capture. The rolling local files remain
-inside the app's private, OS-protected storage. Before supported cloud backup
-leaves the device, recordings are sealed on-device with AES-256-GCM. Ciphertext
-can be sent to storage **you** connect (your own S3 bucket, Google Drive,
-OneDrive, or Dropbox) or to Sonus Auris backup storage. The encryption keys stay
-on your device, so Sonus Auris servers cannot listen to those backups. For
-iCloud Drive, your Apple device decrypts the recording locally into your own
-iCloud Drive so the file remains usable there; Sonus Auris servers still do not
-receive the plaintext.
-
-## What we collect and why
-
-**Audio recordings** — created only after you tap Start or explicitly arm a
-recording schedule. Stored locally as a rolling window in the app's private,
-OS-protected storage. Before supported cloud transfer, recordings are sealed
-on-device with AES-256-GCM using device-held key material. Purpose: the core
-recording feature.
-=======
 Sonus Auris records audio only after you start recording, accept a recording
 prompt, or explicitly arm a recording schedule. A rolling working window can
 remain plaintext inside the app-private storage on your device for up to **100
 hours**, or a shorter period you configure, so approved local analysis can run.
 Every backup or cross-device-sync object is encrypted on your device before it
-leaves. The Sonus Auris backend and ordinary object-storage providers receive
-ciphertext and cannot decrypt it.
+leaves (AES-256-GCM). Ciphertext can be sent to storage **you** connect (your
+own S3 bucket, Google Drive, OneDrive, or Dropbox) or to Sonus Auris backup
+storage; the encryption keys stay on your device, so the Sonus Auris backend and
+ordinary object-storage providers receive ciphertext and cannot decrypt it. For
+iCloud Drive, your Apple device decrypts the recording locally into your own
+iCloud Drive so the file remains usable there; Sonus Auris servers still do not
+receive the plaintext.
 
 A schedule records your intent, but it cannot override iOS or Android lifecycle
 rules. Force-quitting, force-stopping, or operating-system termination can prevent

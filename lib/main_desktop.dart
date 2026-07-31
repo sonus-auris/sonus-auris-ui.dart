@@ -69,14 +69,11 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
     with WidgetsBindingObserver, WindowListener, TrayListener {
   late final AppController _controller;
   late final Future<void> _ready;
-<<<<<<< HEAD
   Future<void>? _controllerDisposal;
-=======
   late final AppLinks _appLinks;
   StreamSubscription<Uri>? _authLinkSubscription;
   Uri? _pendingAuthLink;
   bool _controllerReady = false;
->>>>>>> origin/main
   FlutterExceptionHandler? _previousFlutterOnError;
   ui.ErrorCallback? _previousPlatformOnError;
   bool _trayReady = false;
