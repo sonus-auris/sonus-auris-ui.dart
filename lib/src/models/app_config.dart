@@ -71,11 +71,8 @@ class AppConfig {
     this.keywords = const [],
     this.safeWords = const [],
     this.keywordQualityBoostMinutes = 90,
-<<<<<<< HEAD
-=======
     this.collisionRemindersEnabled = false,
     this.collisionSensitivityG = 2.5,
->>>>>>> origin/main
     this.sttEnabled = false,
     this.sttEndpoint = '',
     this.voiceIdEnabled = false,
