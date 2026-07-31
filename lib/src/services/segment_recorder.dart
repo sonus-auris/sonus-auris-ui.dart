@@ -119,14 +119,11 @@ class SegmentRecorder {
   _Pcm16Downsampler? _storeDownsampler;
   int _storedOverlapSamples = 0;
   double? _recentDb; // EMA of slice loudness, drives the per-segment decision.
-<<<<<<< HEAD
-  DateTime? _forceHighQualityUntilUtc;
-=======
-  // A heard keyword/safe word forces full quality for a sustained window even
-  // while the audio is quiet, so the stretch after a caught phrase isn't
-  // downsampled. Extended by [boostQualityForKeyword].
+  // A heard keyword/safe word (or an explicit [forceHighQualityFor] call)
+  // forces full quality for a sustained window even while the audio is quiet,
+  // so the stretch after a caught phrase isn't downsampled. Extended by
+  // [boostQualityForKeyword] and [forceHighQualityFor].
   final KeywordQualityBoost _qualityBoost = KeywordQualityBoost();
->>>>>>> origin/main
 
   // Rolling buffer of recently captured (processed) audio for Shazam / STT.
   final List<Uint8List> _recentChunks = [];
