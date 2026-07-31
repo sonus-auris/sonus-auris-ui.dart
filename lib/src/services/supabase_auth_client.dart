@@ -53,10 +53,9 @@ class SupabaseAuthClient {
     required AppConfig config,
     required String email,
     required String codeVerifier,
-    String redirectTo = '',
+    String redirectTo = kSupabaseAuthRedirectUrl,
   }) async {
     _validateEmail(email);
-<<<<<<< HEAD
     final normalizedRedirect = _validateAuthRedirect(redirectTo);
     if (normalizedRedirect.isEmpty) {
       throw const FormatException(
@@ -83,17 +82,6 @@ class SupabaseAuthClient {
       'Sending the sign-in code failed.',
       exposeServerError: false,
     );
-=======
-    final uri = _authUri(
-      config,
-      'otp',
-      query: {'redirect_to': _authRedirectUri.toString()},
-    );
-    await _post(config, uri, {
-      'email': email.trim(),
-      'create_user': true,
-    }, 'Sending the sign-in code failed.');
->>>>>>> origin/main
   }
 
   /// Redeems an emailed one-time code for a session (passwordless sign-in).
