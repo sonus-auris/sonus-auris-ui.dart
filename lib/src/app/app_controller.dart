@@ -4477,7 +4477,6 @@ class AppController {
       // Speech → keyword scan. Transcription runs on-device by default (audio
       // stays in the local plaintext window); cloud STT is only an explicit
       // opt-in.
-<<<<<<< HEAD
       if (detection.kind == AcousticDetectionKind.speech) {
         // Clear human speech keeps the next segments at full fidelity. If no
         // more speech arrives, adaptive storage naturally returns to its quiet
@@ -4489,11 +4488,6 @@ class AppController {
           // path (let alone capture) wait on a native model or cloud request.
           unawaited(_runSpeechScan(config, detection));
         }
-=======
-      if (detection.kind == AcousticDetectionKind.speech &&
-          (config.keywords.isNotEmpty || config.safeWords.isNotEmpty)) {
-        await _scanSpeechForKeywords(config, detection);
->>>>>>> origin/main
       }
 
       if (_isSleepCycleDetection(enriched)) {
