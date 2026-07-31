@@ -437,10 +437,7 @@ class _DesktopRootState extends State<_DesktopRoot> {
 
   Future<void> _showSignInDialog() async {
     final email = TextEditingController();
-<<<<<<< HEAD
-=======
     final code = TextEditingController();
->>>>>>> origin/main
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
