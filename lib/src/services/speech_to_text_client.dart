@@ -88,7 +88,8 @@ class SpeechToTextClient {
   /// bounded by non-alphanumeric characters to avoid short phrases matching
   /// inside unrelated words.
   KeywordMatch? matchKeyword(AppConfig config, String transcript) {
-<<<<<<< HEAD
+    // Safe words first: if a distress word and an ordinary keyword are both
+    // present, the safe word is the one worth surfacing.
     for (final entry in [
       (phrases: config.safeWords, kind: SpokenPhraseKind.safeWord),
       (phrases: config.keywords, kind: SpokenPhraseKind.keyword),
@@ -102,25 +103,6 @@ class SpeechToTextClient {
             kind: entry.kind,
           );
         }
-=======
-    final lower = transcript.toLowerCase();
-    // Safe words first: if a distress word and an ordinary keyword are both
-    // present, the safe word is the one worth surfacing.
-    for (final word in config.safeWords) {
-      final needle = word.trim().toLowerCase();
-      if (needle.isNotEmpty && lower.contains(needle)) {
-        return KeywordMatch(
-          keyword: word.trim(),
-          transcript: transcript,
-          isSafeWord: true,
-        );
-      }
-    }
-    for (final keyword in config.keywords) {
-      final needle = keyword.trim().toLowerCase();
-      if (needle.isNotEmpty && lower.contains(needle)) {
-        return KeywordMatch(keyword: keyword.trim(), transcript: transcript);
->>>>>>> origin/main
       }
     }
     return null;
