@@ -688,7 +688,8 @@ class SupabaseAuthClient {
       );
     }
     return uri.toString();
-=======
+  }
+
   String _requireSixDigitCode(String code) {
     final normalized = code.trim();
     if (!RegExp(r'^[0-9]{6}$').hasMatch(normalized)) {
