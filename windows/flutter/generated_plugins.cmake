@@ -13,12 +13,9 @@ list(APPEND FLUTTER_PLUGIN_LIST
   geolocator_windows
   permission_handler_windows
   record_windows
-<<<<<<< HEAD
   screen_retriever_windows
-  tray_manager
-=======
   share_plus
->>>>>>> origin/main
+  tray_manager
   url_launcher_windows
   window_manager
   window_to_front
