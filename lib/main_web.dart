@@ -323,9 +323,6 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
       web.document.title,
       location.pathname,
     );
-=======
-    await _adoptSession(config, session, status: 'Signed in.');
->>>>>>> origin/main
   }
 
   Future<void> _adoptSession(

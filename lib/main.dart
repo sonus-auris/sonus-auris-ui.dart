@@ -256,9 +256,6 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
             if (viewModel == null || viewModel.isInitializing) {
               return const LoadingPage();
             }
-            if (viewModel.hasSupabaseSession && !viewModel.isSignedIn) {
-              return MandatoryMfaGate(controller: controller);
-            }
             // Gate the app behind onboarding/consent until it's completed for
             // the current consent version.
             return ValueListenableBuilder<bool>(
@@ -267,10 +264,16 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
                   ? SettingsPage(controller: controller)
                   : OnboardingFlow(
                       controller: controller,
-                      // The MFA gate temporarily replaces onboarding. Resume
-                      // at the account confirmation instead of throwing a
-                      // newly authenticated user back to the welcome screen.
-                      initialStep: viewModel.isSignedIn ? 1 : 0,
+                      // A magic-link/OTP return relaunches the app with a
+                      // session (first factor or full AAL2). Resume at the
+                      // account step — where the mandatory MFA gate lives —
+                      // instead of throwing the user back to the welcome
+                      // screen.
+                      initialStep:
+                          viewModel.isSignedIn ||
+                              viewModel.hasFirstFactorSession
+                          ? 1
+                          : 0,
                     ),
             );
           },
