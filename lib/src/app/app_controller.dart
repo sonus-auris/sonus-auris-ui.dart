@@ -1337,10 +1337,7 @@ class AppController {
     _pendingTelemetry.clear();
     await _persistPendingTelemetry();
     await _persistSecrets(cleared);
-<<<<<<< HEAD
     await _settingsStore.clearPendingSupabaseAuth();
-=======
->>>>>>> origin/main
     _accountStatus.add(const AccountStatus());
     _message.add('Signed out.');
   }
