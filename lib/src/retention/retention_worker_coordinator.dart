@@ -78,6 +78,7 @@ class RetentionWorkerCoordinator {
   int _activeWorkers = 0;
   bool _acceptingWork = true;
   bool _permanentlyClosed = false;
+  bool _localStateCleared = false;
   RetentionRevocationReason? _revokedFor;
   Completer<void>? _idleCompleter;
   Future<void>? _barrierFuture;
@@ -86,6 +87,7 @@ class RetentionWorkerCoordinator {
   int get activeWorkers => _activeWorkers;
   bool get acceptsWork => _acceptingWork;
   bool get permanentlyClosed => _permanentlyClosed;
+  bool get localStateCleared => _localStateCleared;
   RetentionRevocationReason? get revokedFor => _revokedFor;
 
   Future<T> runWorker<T>(
@@ -129,6 +131,8 @@ class RetentionWorkerCoordinator {
   ///
   /// Concurrent destructive requests coalesce. Account deletion dominates a
   /// concurrent consent revocation and prevents any later re-authorization.
+  /// A failed account-deletion clear leaves admission permanently sealed but may
+  /// be retried until [localStateCleared] becomes true.
   Future<void> revokeAndClear({
     required RetentionRevocationReason reason,
     required Future<void> Function() clearLocalState,
@@ -141,7 +145,7 @@ class RetentionWorkerCoordinator {
       }
       return existing;
     }
-    if (_permanentlyClosed) {
+    if (_permanentlyClosed && _localStateCleared) {
       return Future<void>.value();
     }
 
@@ -180,6 +184,7 @@ class RetentionWorkerCoordinator {
       await _idleCompleter!.future;
     }
     await clearLocalState();
+    _localStateCleared = true;
   }
 
   /// Admit a new generation only after consent-revocation cleanup completed.
@@ -192,11 +197,15 @@ class RetentionWorkerCoordinator {
     if (_permanentlyClosed) {
       throw StateError('Account deletion cannot be resumed.');
     }
-    if (_revokedFor != RetentionRevocationReason.consentRevocation) {
-      throw StateError('Retention work is not paused for consent revocation.');
+    if (_revokedFor != RetentionRevocationReason.consentRevocation ||
+        !_localStateCleared) {
+      throw StateError(
+        'Retention work cannot resume before consent cleanup completes.',
+      );
     }
     _generation += 1;
     _revokedFor = null;
+    _localStateCleared = false;
     _acceptingWork = true;
   }
 
