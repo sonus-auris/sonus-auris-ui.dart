@@ -65,22 +65,12 @@ signing access.
   a signed Apple device. The unsigned macOS build uses
   `Runner/Release.entitlements`; the signed iCloud-capable distribution profile
   must use `macos/Runner/Store.entitlements`.
-=======
-- [ ] Create or finish the Sonus Auris App Store Connect app record for
-  `com.ores.audioDashcam`; accept current agreements, tax, and banking terms.
-- [ ] Finish Google Play developer-account registration and create the app record
-  for `com.ores.audio_dashcam`.
-- [ ] Create the Google Play API service account, link it in Play Console, and
-  grant only the Sonus Auris app/track permissions required for publication.
-- [ ] Create an App Store Connect API key with the narrowest role that can upload
-  builds. Retain the `.p8` in the protected GitHub environment only.
 - [ ] Confirm the production Supabase project uses asymmetric signing keys/JWKS,
   email confirmation, redirect allow-lists, short session limits, and RLS on all
   exposed tables. Retain service-role credentials only in server secret stores.
 - [ ] Create the Cloudflare R2 release bucket, scoped API token, custom download
   domain, and cache rules. The public site must not use the rate-limited `r2.dev`
   development URL.
->>>>>>> origin/main
 
 ## Protected GitHub environments
 
