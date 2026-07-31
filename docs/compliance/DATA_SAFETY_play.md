@@ -55,8 +55,21 @@ current Play definitions and the exact shipped integration.
 - Failed or disabled backup does not authorize plaintext retention beyond the
   configured ceiling.
 - Raw audio is not sent to an external AI/transcription provider by default. Any
-  optional provider must be separately enabled and disclosed.
-- No data is sold or used for advertising or cross-app tracking.
+  optional provider must be separately enabled and disclosed. Optional cloud
+  transcription and song identification can send a bounded audio
+  excerpt/fingerprint to the configured recognition provider; keep Audio declared
+  as collected when either feature is present in the shipped build.
+- No data is sold or used for advertising or cross-app tracking. No third-party
+  ads/analytics SDKs are bundled; Supabase, connected object stores, and any
+  explicitly configured recognition endpoint act as service providers or
+  user-directed destinations.
+- Do **not** select "Data is processed ephemerally" for audio unless true for
+  your config; the defaults above assume optional backup.
+- Audio sent to the user's own connected storage (S3/Drive/OneDrive/Dropbox/
+  iCloud) is governed by that provider. Supported outbound backups are sealed
+  on-device, except iCloud copies are decrypted locally into the user's own
+  iCloud Drive. For Play purposes audio is declared "collected" because it can
+  leave the device, and "not shared" because it is not handed to third parties.
 
 ## Release checklist
 
