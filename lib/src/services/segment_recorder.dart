@@ -618,26 +618,10 @@ class SegmentRecorder {
       _storeDownsampler = null;
       return;
     }
-<<<<<<< HEAD
-    final forcedUntil = _forceHighQualityUntilUtc;
-    if (forcedUntil != null && DateTime.now().toUtc().isBefore(forcedUntil)) {
-      _storeRate = _captureRate;
-      _storeFactor = 1;
-      _storeDownsampler = null;
-      return;
-    }
-    if (forcedUntil != null) {
-      _forceHighQualityUntilUtc = null;
-    }
-    // Until we have a trailing-loudness reading, keep full quality (treat the
-    // first segment as loud) rather than needlessly downsampling startup audio.
-    final loud =
-=======
     // A keyword/safe-word boost forces full quality even through quiet audio.
     // Otherwise: until we have a trailing-loudness reading, keep full quality
     // (treat the first segment as loud) rather than downsampling startup audio.
     final loud = _qualityBoost.isActive(DateTime.now()) ||
->>>>>>> origin/main
         (_recentDb ?? config.adaptiveLoudnessDb) >= config.adaptiveLoudnessDb;
     if (loud) {
       _storeRate = _captureRate;
