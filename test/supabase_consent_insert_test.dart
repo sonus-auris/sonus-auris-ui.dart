@@ -14,7 +14,12 @@ void main() {
     supabaseUrl: 'https://proj.supabase.co',
     supabaseAnonKey: 'anon-key',
   );
-  const secrets = CloudSecrets(supabaseAccessToken: 'user-jwt');
+  const aal2Token =
+      'eyJhbGciOiJub25lIn0.eyJhYWwiOiJhYWwyIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAifSx7Im1ldGhvZCI6InRvdHAifV19.signature';
+  const secrets = CloudSecrets(
+    supabaseAccessToken: aal2Token,
+    supabaseAccessTokenExpiresAt: '2099-01-01T00:00:00Z',
+  );
 
   final record = ConsentRecord(
     consentVersion: 'audio-dashcam-consent-v1',
@@ -42,7 +47,7 @@ void main() {
       'https://proj.supabase.co/rest/v1/user_consents',
     );
     expect(captured.headers['apikey'], 'anon-key');
-    expect(captured.headers['authorization'], 'Bearer user-jwt');
+    expect(captured.headers['authorization'], 'Bearer $aal2Token');
     final body = jsonDecode(captured.body) as List;
     final row = body.single as Map<String, dynamic>;
     expect(row['device_id'], 'device-xyz');
@@ -77,5 +82,26 @@ void main() {
       record: record,
     );
     expect(error, contains('403'));
+  });
+
+  test('does not retry an ambiguous append-only consent write', () async {
+    var calls = 0;
+    final client = SupabaseRestClient(
+      maxRetryAttempts: 3,
+      sleep: (_) async {},
+      httpClient: MockClient((_) async {
+        calls += 1;
+        return http.Response('temporarily unavailable', 503);
+      }),
+    );
+
+    final error = await client.insertConsent(
+      config: config,
+      secrets: secrets,
+      record: record,
+    );
+
+    expect(error, contains('503'));
+    expect(calls, 1);
   });
 }

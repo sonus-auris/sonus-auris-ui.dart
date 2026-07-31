@@ -6,30 +6,30 @@ import 'package:flutter_test/flutter_test.dart';
 const double _frameSeconds = 2048 / 2 / 16000; // 0.064s
 
 SpectralFrame _snoreFrame() => const SpectralFrame(
-      rms: 0.3,
-      db: -20,
-      centroidHz: 200,
-      flatness: 0.2,
-      crest: 100,
-      rolloffHz: 350,
-      dominantHz: 180,
-      lowBandRatio: 0.7,
-      speechBandRatio: 0.1,
-      totalPower: 1,
-    );
+  rms: 0.3,
+  db: -20,
+  centroidHz: 200,
+  flatness: 0.2,
+  crest: 100,
+  rolloffHz: 350,
+  dominantHz: 180,
+  lowBandRatio: 0.7,
+  speechBandRatio: 0.1,
+  totalPower: 1,
+);
 
 SpectralFrame _quietFrame() => const SpectralFrame(
-      rms: 0,
-      db: -120,
-      centroidHz: 0,
-      flatness: 1,
-      crest: 1,
-      rolloffHz: 0,
-      dominantHz: 0,
-      lowBandRatio: 0,
-      speechBandRatio: 0,
-      totalPower: 0,
-    );
+  rms: 0,
+  db: -120,
+  centroidHz: 0,
+  flatness: 1,
+  crest: 1,
+  rolloffHz: 0,
+  dominantHz: 0,
+  lowBandRatio: 0,
+  speechBandRatio: 0,
+  totalPower: 0,
+);
 
 void main() {
   late DateTime clock;
@@ -46,9 +46,7 @@ void main() {
     final frames = (seconds / _frameSeconds).round();
     for (var i = 0; i < frames; i++) {
       events.addAll(detector.add(frame, clock));
-      clock = clock.add(
-        Duration(microseconds: (_frameSeconds * 1e6).round()),
-      );
+      clock = clock.add(Duration(microseconds: (_frameSeconds * 1e6).round()));
     }
   }
 
@@ -57,10 +55,12 @@ void main() {
       feed(_snoreFrame(), 1.0);
       feed(_quietFrame(), 3.0);
     }
-    final snores =
-        events.where((e) => e.kind == AcousticDetectionKind.snore).toList();
-    final apneas =
-        events.where((e) => e.kind == AcousticDetectionKind.apneaPattern);
+    final snores = events
+        .where((e) => e.kind == AcousticDetectionKind.snore)
+        .toList();
+    final apneas = events.where(
+      (e) => e.kind == AcousticDetectionKind.apneaPattern,
+    );
     expect(snores.length, greaterThanOrEqualTo(3));
     expect(apneas, isEmpty);
     expect(snores.first.details['durationSeconds'], greaterThan(0.5));
@@ -76,8 +76,9 @@ void main() {
     feed(_snoreFrame(), 1.0);
     feed(_quietFrame(), 1.0);
 
-    final apneas =
-        events.where((e) => e.kind == AcousticDetectionKind.apneaPattern).toList();
+    final apneas = events
+        .where((e) => e.kind == AcousticDetectionKind.apneaPattern)
+        .toList();
     expect(apneas, hasLength(1));
     expect(apneas.first.details['gapSeconds'], greaterThanOrEqualTo(10));
     expect(apneas.first.details['note'], contains('not a medical diagnosis'));

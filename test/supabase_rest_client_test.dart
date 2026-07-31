@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:audio_dashcam/src/models/acoustic_detection.dart';
 import 'package:audio_dashcam/src/models/app_config.dart';
 import 'package:audio_dashcam/src/models/client_telemetry_event.dart';
+import 'package:audio_dashcam/src/models/cloud_provider.dart';
 import 'package:audio_dashcam/src/models/cloud_secrets.dart';
 import 'package:audio_dashcam/src/services/supabase_rest_client.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,7 +16,12 @@ void main() {
     supabaseUrl: 'https://proj.supabase.co',
     supabaseAnonKey: 'anon-key',
   );
-  const secrets = CloudSecrets(supabaseAccessToken: 'user-jwt');
+  const aal2Token =
+      'eyJhbGciOiJub25lIn0.eyJhYWwiOiJhYWwyIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAifSx7Im1ldGhvZCI6InRvdHAifV19.signature';
+  const secrets = CloudSecrets(
+    supabaseAccessToken: aal2Token,
+    supabaseAccessTokenExpiresAt: '2099-01-01T00:00:00Z',
+  );
 
   final detection = AcousticDetection(
     kind: AcousticDetectionKind.snore,
@@ -44,7 +50,7 @@ void main() {
       'https://proj.supabase.co/rest/v1/acoustic_events',
     );
     expect(captured.headers['apikey'], 'anon-key');
-    expect(captured.headers['authorization'], 'Bearer user-jwt');
+    expect(captured.headers['authorization'], 'Bearer $aal2Token');
     expect(captured.headers['prefer'], 'return=minimal');
     final body = jsonDecode(captured.body) as List;
     expect(body, hasLength(1));
@@ -177,12 +183,12 @@ void main() {
     expect(called, isFalse);
   });
 
-  test('posts client telemetry to the RLS-scoped telemetry table', () async {
+  test('posts client telemetry through the guarded organization RPC', () async {
     late http.Request captured;
     final client = SupabaseRestClient(
       httpClient: MockClient((request) async {
         captured = request;
-        return http.Response('', 201);
+        return http.Response('{"success":true,"inserted":1}', 200);
       }),
     );
     final error = await client.insertTelemetry(
@@ -204,19 +210,21 @@ void main() {
     expect(error, isNull);
     expect(
       captured.url.toString(),
-      'https://proj.supabase.co/rest/v1/client_telemetry',
+      'https://proj.supabase.co/rest/v1/rpc/ingest_sonus_log_entries',
     );
     expect(captured.headers['apikey'], 'anon-key');
-    expect(captured.headers['authorization'], 'Bearer user-jwt');
-    final body = jsonDecode(captured.body) as List;
-    expect(body, hasLength(1));
-    final row = body.single as Map<String, dynamic>;
+    expect(captured.headers['authorization'], 'Bearer $aal2Token');
+    final body = jsonDecode(captured.body) as Map<String, dynamic>;
+    final rows = body['entries'] as List;
+    expect(rows, hasLength(1));
+    final row = rows.single as Map<String, dynamic>;
     expect(row['device_id'], 'device-xyz');
+    expect(row['client_event_id'], isNotEmpty);
     expect(row['level'], 'error');
-    expect(row['event'], 'flutter_error');
+    expect(row['category'], 'flutter_error');
     expect(row['message'], 'Widget exploded');
     expect(row['platform'], 'android');
-    expect((row['details'] as Map)['screen'], 'login');
+    expect((row['metadata'] as Map)['details'], {'screen': 'login'});
     expect(row, isNot(contains('user_id')));
   });
 
@@ -237,6 +245,78 @@ void main() {
 
     expect(error, isNull);
     expect(called, isFalse);
+  });
+
+  test(
+    'retries idempotent telemetry with stable event ids and full jitter',
+    () async {
+      var calls = 0;
+      final bodies = <String>[];
+      final delays = <Duration>[];
+      final client = SupabaseRestClient(
+        maxRetryAttempts: 3,
+        retryBaseDelay: const Duration(milliseconds: 10),
+        retryMaxDelay: const Duration(milliseconds: 100),
+        jitter: () => 0.5,
+        sleep: (delay) async => delays.add(delay),
+        httpClient: MockClient((request) async {
+          calls += 1;
+          bodies.add(request.body);
+          return calls == 1
+              ? http.Response('temporarily unavailable', 503)
+              : http.Response('{"success":true,"inserted":1}', 200);
+        }),
+      );
+
+      final error = await client.insertTelemetry(
+        config: config,
+        secrets: secrets,
+        events: [
+          ClientTelemetryEvent(
+            level: 'info',
+            event: 'retry_test',
+            message: 'keep this event stable',
+            occurredAtUtc: DateTime.utc(2026, 7, 18),
+          ),
+        ],
+      );
+
+      expect(error, isNull);
+      expect(calls, 2);
+      expect(delays, [const Duration(milliseconds: 5)]);
+      final first = (jsonDecode(bodies.first) as Map)['entries'] as List;
+      final second = (jsonDecode(bodies.last) as Map)['entries'] as List;
+      expect(
+        (first.single as Map)['client_event_id'],
+        (second.single as Map)['client_event_id'],
+      );
+    },
+  );
+
+  test('caps Retry-After for idempotent settings upserts', () async {
+    var calls = 0;
+    final delays = <Duration>[];
+    final client = SupabaseRestClient(
+      maxRetryAttempts: 2,
+      retryBaseDelay: const Duration(milliseconds: 10),
+      retryMaxDelay: const Duration(seconds: 1),
+      sleep: (delay) async => delays.add(delay),
+      httpClient: MockClient((_) async {
+        calls += 1;
+        return calls == 1
+            ? http.Response('slow down', 429, headers: {'retry-after': '60'})
+            : http.Response('', 201);
+      }),
+    );
+
+    final error = await client.upsertUserSettings(
+      config: config,
+      secrets: secrets,
+    );
+
+    expect(error, isNull);
+    expect(calls, 2);
+    expect(delays, [const Duration(seconds: 1)]);
   });
 
   test('redacts telemetry secrets before upload', () async {
@@ -268,14 +348,15 @@ void main() {
     );
 
     expect(error, isNull);
-    final body = jsonDecode(captured.body) as List;
-    final row = body.single as Map<String, dynamic>;
+    final body = jsonDecode(captured.body) as Map<String, dynamic>;
+    final row = (body['entries'] as List).single as Map<String, dynamic>;
     expect(row['message'], contains('Bearer [redacted]'));
     expect(row['message'], contains('postgresql://[redacted]'));
     expect(row['message'], isNot(contains('abc.def.ghi')));
     expect(row['message'], isNot(contains('postgres:pw')));
     expect(row['stack'], contains('sb_[redacted]'));
-    final details = row['details'] as Map;
+    final metadata = row['metadata'] as Map;
+    final details = metadata['details'] as Map;
     expect(details['accessToken'], '[redacted]');
     expect(details['password'], '[redacted]');
     expect((details['nested'] as Map)['authorization'], '[redacted]');
@@ -343,7 +424,7 @@ void main() {
     );
     expect(error, isNull);
     expect(updateRequest.url.queryParameters['on_conflict'], 'user_id');
-    expect(updateRequest.headers['authorization'], 'Bearer user-jwt');
+    expect(updateRequest.headers['authorization'], 'Bearer $aal2Token');
     expect(updateRequest.headers['prefer'], contains('merge-duplicates'));
     final body = jsonDecode(updateRequest.body) as List;
     final payload = body.single as Map<String, dynamic>;
@@ -351,6 +432,14 @@ void main() {
     expect(payload, isNot(contains('device_id')));
     expect(payload, isNot(contains('supabase_anon_key')));
     expect(payload['device_retention_hours'], 100);
+  });
+
+  test('Dropbox is a valid portable account setting', () {
+    final settings = SupabaseRestClient().userSettingsForUpsert(
+      config.copyWith(cloudProvider: CloudProvider.dropbox),
+    );
+
+    expect(settings.toInsertJson()['cloud_provider'], 'dropbox');
   });
 
   test('merges account settings without touching device-only controls', () {

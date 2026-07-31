@@ -34,9 +34,9 @@
 		<false/>
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Sonus Auris records a rolling audio window only after you start capture.</string>
+	<string>Sonus Auris records audio only after you start recording, accept a prompt, or explicitly arm a schedule. Active recording may continue in the background until you stop it or the scheduled window ends; force-quitting the app prevents future scheduled starts.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>During a sleep session Sonus Auris reads motion to detect stillness, tossing, and getting up, improving sleep-cycle accuracy. This is optional and off by default.</string>
+	<string>While recording, Sonus Auris uses motion to flag possible collisions; during an opted-in sleep session it also detects stillness, tossing, and getting up.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Sonus Auris can tag recordings with their location so a clip can prove where it was captured. Location tagging is optional and off by default.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
@@ -100,6 +100,18 @@
 	<array>
 		<string>com.pravera.flutter_foreground_task.refresh</string>
 	</array>
+	<key>NSUbiquitousContainers</key>
+	<dict>
+		<key>iCloud.com.ores.audioDashcam</key>
+		<dict>
+			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
+			<true/>
+			<key>NSUbiquitousContainerName</key>
+			<string>Sonus Auris</string>
+			<key>NSUbiquitousContainerSupportedFolderLevels</key>
+			<string>Any</string>
+		</dict>
+	</dict>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

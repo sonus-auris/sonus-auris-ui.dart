@@ -2,8 +2,10 @@
 ///
 /// These are *non-diagnostic* heuristic detections. In particular [apneaPattern]
 /// describes a breathing-cessation-like acoustic pattern, and sleep-cycle events
-/// estimate rest timing only; none of these are medical diagnoses. Events are
-/// surfaced in-app and synced to Supabase.
+/// estimate rest timing only; none of these are medical diagnoses. Likewise,
+/// [possibleArgumentPattern] describes repeated raised-voice-like bursts, not
+/// proof that an argument, accident, crime, or particular person was present.
+/// Events are surfaced in-app and synced to Supabase.
 class AcousticDetection {
   const AcousticDetection({
     required this.kind,
@@ -101,6 +103,9 @@ enum AcousticDetectionKind {
   sleepCycleAlarm,
   music,
   speech,
+  suddenLoudNoise,
+  raisedVoice,
+  possibleArgumentPattern,
   keyword;
 
   static AcousticDetectionKind fromName(String? name) {
@@ -125,6 +130,12 @@ enum AcousticDetectionKind {
         return 'Music';
       case AcousticDetectionKind.speech:
         return 'Speech';
+      case AcousticDetectionKind.suddenLoudNoise:
+        return 'Sudden loud noise';
+      case AcousticDetectionKind.raisedVoice:
+        return 'Raised voice / yelling pattern';
+      case AcousticDetectionKind.possibleArgumentPattern:
+        return 'Possible argument pattern';
       case AcousticDetectionKind.keyword:
         return 'Keyword';
     }

@@ -58,31 +58,37 @@ void main() {
     expect(resumes, ['interruption did not resume']);
   });
 
-  test('stays seamless when the plugin resumes within the grace window',
-      () async {
-    coordinator = make();
-    coordinator.start(t0);
-    coordinator.onInterruptionBegin();
-    coordinator.onInterruptionEnd(at(const Duration(seconds: 10)));
-    // Plugin resumed: a chunk arrives before the grace deadline.
-    coordinator.notifyChunk(at(const Duration(seconds: 10, milliseconds: 800)));
-    coordinator.tick(at(const Duration(seconds: 12)));
-    await Future<void>.delayed(Duration.zero);
-    expect(resumes, isEmpty);
-  });
+  test(
+    'stays seamless when the plugin resumes within the grace window',
+    () async {
+      coordinator = make();
+      coordinator.start(t0);
+      coordinator.onInterruptionBegin();
+      coordinator.onInterruptionEnd(at(const Duration(seconds: 10)));
+      // Plugin resumed: a chunk arrives before the grace deadline.
+      coordinator.notifyChunk(
+        at(const Duration(seconds: 10, milliseconds: 800)),
+      );
+      coordinator.tick(at(const Duration(seconds: 12)));
+      await Future<void>.delayed(Duration.zero);
+      expect(resumes, isEmpty);
+    },
+  );
 
-  test('requests resume when capture silently stalls (no interruption)',
-      () async {
-    coordinator = make();
-    coordinator.start(t0);
-    coordinator.notifyChunk(at(const Duration(seconds: 1)));
-    // No chunks for longer than the stall threshold.
-    coordinator.tick(at(const Duration(seconds: 5)));
-    expect(resumes, isEmpty);
-    coordinator.tick(at(const Duration(seconds: 8)));
-    await Future<void>.delayed(Duration.zero);
-    expect(resumes, ['capture stalled']);
-  });
+  test(
+    'requests resume when capture silently stalls (no interruption)',
+    () async {
+      coordinator = make();
+      coordinator.start(t0);
+      coordinator.notifyChunk(at(const Duration(seconds: 1)));
+      // No chunks for longer than the stall threshold.
+      coordinator.tick(at(const Duration(seconds: 5)));
+      expect(resumes, isEmpty);
+      coordinator.tick(at(const Duration(seconds: 8)));
+      await Future<void>.delayed(Duration.zero);
+      expect(resumes, ['capture stalled']);
+    },
+  );
 
   test('requests resume immediately on a capture stream error', () async {
     coordinator = make();

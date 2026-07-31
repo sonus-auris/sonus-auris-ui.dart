@@ -1,28 +1,76 @@
 {
-  description = "Sonus Auris rolling-window Flutter development environment";
+  description = "Agent-first Flutter development environment for Sonus Auris";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
-  outputs = { nixpkgs, ... }:
+  outputs =
+    { self, nixpkgs, ... }:
     let
       systems = [
-        "x86_64-linux"
+        "aarch64-darwin"
         "aarch64-linux"
         "x86_64-darwin"
-        "aarch64-darwin"
+        "x86_64-linux"
       ];
-
-      forAllSystems = f:
-        nixpkgs.lib.genAttrs systems (system:
-          f {
-            pkgs = import nixpkgs { inherit system; };
-          });
+      forAllSystems = nixpkgs.lib.genAttrs systems;
+      pkgsFor = system: import nixpkgs { inherit system; };
     in
     {
-      devShells = forAllSystems ({ pkgs }: {
-        default = import ./.nix/devshell.nix { inherit pkgs; };
+      formatter = forAllSystems (system: (pkgsFor system).nixfmt-rfc-style);
+
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+          agentCheck = pkgs.writeShellApplication {
+            name = "agent-check";
+            runtimeInputs = with pkgs; [
+              actionlint
+              cacert
+              findutils
+              flutter
+              git
+              jdk17
+              jq
+              nix
+              nixfmt-rfc-style
+              shellcheck
+              shfmt
+            ];
+            text = builtins.readFile ./.nix/agent-check.sh;
+          };
+        in
+        {
+          inherit agentCheck;
+          default = agentCheck;
+        }
+      );
+
+      apps = forAllSystems (system: {
+        "agent-check" = {
+          type = "app";
+          program = "${self.packages.${system}.agentCheck}/bin/agent-check";
+        };
+        default = self.apps.${system}."agent-check";
       });
+
+      checks = forAllSystems (system: {
+        agentCheck = self.packages.${system}.agentCheck;
+      });
+
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+        in
+        {
+          default = import ./.nix/devshell.nix {
+            inherit pkgs;
+            agentCheck = self.packages.${system}.agentCheck;
+          };
+        }
+      );
     };
 }

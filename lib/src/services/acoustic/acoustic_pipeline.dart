@@ -1,8 +1,9 @@
-// On-device FFT analysis pipeline: fans decimated audio frames out to the snore/sleep/music/speech detectors per the enabled flags.
+// On-device FFT analysis pipeline: fans decimated audio frames out to the enabled health, media, speech, and safety detectors.
 import 'dart:typed_data';
 
 import '../../models/acoustic_detection.dart';
 import 'music_detector.dart';
+import 'safety_sound_detector.dart';
 import 'sleep_cycle_detector.dart';
 import 'snore_detector.dart';
 import 'speech_detector.dart';
@@ -20,6 +21,7 @@ class AcousticDetectorFlags {
     this.sleepPhoneContextSignal = false,
     this.music = true,
     this.speech = true,
+    this.safety = true,
   });
 
   final bool snore;
@@ -31,8 +33,9 @@ class AcousticDetectorFlags {
   final bool sleepPhoneContextSignal;
   final bool music;
   final bool speech;
+  final bool safety;
 
-  bool get any => snore || sleep || music || speech;
+  bool get any => snore || sleep || music || speech || safety;
 
   Map<String, dynamic> toMap() => {
     'snore': snore,
@@ -44,6 +47,7 @@ class AcousticDetectorFlags {
     'sleepPhoneContextSignal': sleepPhoneContextSignal,
     'music': music,
     'speech': speech,
+    'safety': safety,
   };
 
   factory AcousticDetectorFlags.fromMap(Map<dynamic, dynamic> map) {
@@ -57,6 +61,7 @@ class AcousticDetectorFlags {
       sleepPhoneContextSignal: map['sleepPhoneContextSignal'] as bool? ?? false,
       music: map['music'] as bool? ?? true,
       speech: map['speech'] as bool? ?? true,
+      safety: map['safety'] as bool? ?? true,
     );
   }
 
@@ -117,6 +122,12 @@ class AcousticPipeline {
                frameSeconds: (fftSize ~/ 2) / sampleRate,
                captureSessionId: captureSessionId,
              )
+           : null,
+       _safety = flags.safety
+           ? SafetySoundDetector(
+               frameSeconds: (fftSize ~/ 2) / sampleRate,
+               captureSessionId: captureSessionId,
+             )
            : null;
 
   final int fftSize;
@@ -126,6 +137,7 @@ class AcousticPipeline {
   final SleepCycleDetector? _sleep;
   final MusicDetector? _music;
   final SpeechDetector? _speech;
+  final SafetySoundDetector? _safety;
 
   /// Runs one frame ([fftSize] normalized mono samples) through every enabled
   /// detector and returns whatever they emit.
@@ -136,6 +148,7 @@ class AcousticPipeline {
     final sleep = _sleep;
     final music = _music;
     final speech = _speech;
+    final safety = _safety;
     if (snore != null) {
       out.addAll(snore.add(features, atUtc));
     }
@@ -148,6 +161,9 @@ class AcousticPipeline {
     if (speech != null) {
       out.addAll(speech.add(features, atUtc));
     }
+    if (safety != null) {
+      out.addAll(safety.add(features, atUtc));
+    }
     return out;
   }
 
@@ -156,11 +172,15 @@ class AcousticPipeline {
     final out = <AcousticDetection>[];
     final snore = _snore;
     final sleep = _sleep;
+    final safety = _safety;
     if (snore != null) {
       out.addAll(snore.flush());
     }
     if (sleep != null) {
       out.addAll(sleep.flush());
+    }
+    if (safety != null) {
+      out.addAll(safety.flush());
     }
     return out;
   }

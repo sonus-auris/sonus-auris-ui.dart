@@ -1,6 +1,7 @@
 // Thin PostgREST client that writes user rows into Supabase using only the signed-in user's token (RLS-scoped).
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:http/http.dart' as http;
 import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
@@ -12,6 +13,7 @@ import '../models/client_telemetry_event.dart';
 import '../models/cloud_secrets.dart';
 import '../models/cloud_provider.dart';
 import '../models/consent.dart';
+import '../models/supabase_session.dart';
 import 'supabase_key_policy.dart';
 
 /// Thin PostgREST client for writing user data into Supabase. Only the signed-in
@@ -21,13 +23,31 @@ class SupabaseRestClient {
   SupabaseRestClient({
     http.Client? httpClient,
     this.requestTimeout = const Duration(seconds: 20),
-  }) : _httpClient = httpClient ?? http.Client();
+    this.maxRetryAttempts = 3,
+    this.retryBaseDelay = const Duration(milliseconds: 250),
+    this.retryMaxDelay = const Duration(seconds: 4),
+    Future<void> Function(Duration delay)? sleep,
+    double Function()? jitter,
+  }) : assert(maxRetryAttempts >= 1),
+       assert(!retryBaseDelay.isNegative),
+       assert(!retryMaxDelay.isNegative),
+       _httpClient = httpClient ?? http.Client(),
+       _sleep = sleep ?? _defaultSleep,
+       _jitter = jitter ?? Random.secure().nextDouble;
 
   final http.Client _httpClient;
   final Duration requestTimeout;
+  final int maxRetryAttempts;
+  final Duration retryBaseDelay;
+  final Duration retryMaxDelay;
+  final Future<void> Function(Duration delay) _sleep;
+  final double Function() _jitter;
 
   static const String acousticEventsTable = 'acoustic_events';
-  static const String clientTelemetryTable = 'client_telemetry';
+  static const String clientTelemetryEntriesRpc =
+      'rpc/ingest_sonus_log_entries';
+  static const String clientTelemetrySnapshotRpc =
+      'rpc/ingest_sonus_log_snapshot';
 
   /// Onboarding consent records.
   ///
@@ -72,9 +92,11 @@ class SupabaseRestClient {
       return (settings: null, error: error.message);
     }
     try {
-      final response = await _httpClient
-          .get(uri, headers: _headers(config, secrets))
-          .timeout(requestTimeout);
+      final response = await _retryIdempotent(
+        () => _httpClient
+            .get(uri, headers: _headers(config, secrets))
+            .timeout(requestTimeout),
+      );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return (
           settings: null,
@@ -131,13 +153,15 @@ class SupabaseRestClient {
       ..['prefer'] =
           'resolution=merge-duplicates,missing=default,return=minimal';
     try {
-      final response = await _httpClient
-          .post(
-            uri,
-            headers: headers,
-            body: jsonEncode([userSettingsForUpsert(config).toInsertJson()]),
-          )
-          .timeout(requestTimeout);
+      final response = await _retryIdempotent(
+        () => _httpClient
+            .post(
+              uri,
+              headers: headers,
+              body: jsonEncode([userSettingsForUpsert(config).toInsertJson()]),
+            )
+            .timeout(requestTimeout),
+      );
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return null;
       }
@@ -225,11 +249,15 @@ class SupabaseRestClient {
   bool canInsert(AppConfig config, CloudSecrets secrets) {
     return config.supabaseUrl.trim().isNotEmpty &&
         config.supabaseAnonKey.trim().isNotEmpty &&
-        secrets.hasSupabaseToken;
+        secrets.hasFreshSupabaseToken() &&
+        supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken);
   }
 
   /// Batch-inserts acoustic detections. Returns an error string on failure, or
-  /// null on success (including when there is nothing to insert).
+  /// null on success (including when there is nothing to insert). This is an
+  /// append-only table without a caller-owned idempotency key, so it is
+  /// intentionally *not* retried here; callers can decide whether a later,
+  /// explicit drain is appropriate instead of risking duplicate detections.
   Future<String?> insertDetections({
     required AppConfig config,
     required CloudSecrets secrets,
@@ -271,7 +299,9 @@ class SupabaseRestClient {
   }
 
   /// Inserts the onboarding [record] for the signed-in user. Returns an error
-  /// string on failure, or null on success.
+  /// string on failure, or null on success. Consent is an append-only audit
+  /// trail without a client idempotency key, so this request is deliberately
+  /// not retried after an ambiguous network failure.
   Future<String?> insertConsent({
     required AppConfig config,
     required CloudSecrets secrets,
@@ -304,9 +334,10 @@ class SupabaseRestClient {
     }
   }
 
-  /// Inserts sanitized client-side logs/errors for observability. Telemetry is
-  /// append-only and RLS-scoped to the signed-in user; callers should treat
-  /// failures as non-fatal.
+  /// Inserts sanitized client-side logs/errors through the organization-wide
+  /// validated telemetry RPC. The RPC owns rate limiting, retention shape, and
+  /// idempotency on `(session_id, client_event_id)`; callers should treat a
+  /// failure as non-fatal and retain the event in their local outbox.
   Future<String?> insertTelemetry({
     required AppConfig config,
     required CloudSecrets secrets,
@@ -320,21 +351,38 @@ class SupabaseRestClient {
     }
     final Uri uri;
     try {
-      uri = _restUri(config, clientTelemetryTable);
+      uri = _restUri(config, clientTelemetryEntriesRpc);
     } on FormatException catch (error) {
       return error.message;
     }
     final rows = events
         .map(
-          (event) =>
-              _sanitizeTelemetryRow(event.toSupabaseRow(config.deviceId)),
+          (event) => toOrganizationTelemetryEntry(
+            sanitizeTelemetryRow(event.toSupabaseRow(config.deviceId)),
+          ),
         )
         .toList();
     try {
-      final response = await _httpClient
-          .post(uri, headers: _headers(config, secrets), body: jsonEncode(rows))
-          .timeout(requestTimeout);
+      final response = await _retryIdempotent(
+        () => _httpClient
+            .post(
+              uri,
+              headers: _headers(config, secrets),
+              body: jsonEncode({'entries': rows}),
+            )
+            .timeout(requestTimeout),
+      );
       if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          final body = jsonDecode(response.body);
+          if (body is Map && body['success'] == false) {
+            return 'Supabase telemetry ingest rejected: '
+                '${_shortBody(body['error']?.toString() ?? 'unknown error')}';
+          }
+        } on FormatException {
+          // A successful RPC response can be empty when a reverse proxy strips
+          // the JSON result; the HTTP status remains authoritative.
+        }
         return null;
       }
       return 'Supabase telemetry insert failed (${response.statusCode}): '
@@ -344,8 +392,157 @@ class SupabaseRestClient {
     }
   }
 
+  /// Sends a bounded diagnostic-ring snapshot for the MCP session browser.
+  /// Individual entries are always inserted first through [insertTelemetry]; a
+  /// snapshot failure is intentionally non-fatal and never causes duplicate
+  /// entry delivery. The server enforces the final 500 kB limit as well.
+  Future<String?> insertTelemetrySnapshot({
+    required AppConfig config,
+    required CloudSecrets secrets,
+    required List<ClientTelemetryEvent> events,
+    required String trigger,
+    Map<String, Object?> context = const {},
+  }) async {
+    if (events.isEmpty || !canInsert(config, secrets)) {
+      return null;
+    }
+    final Uri uri;
+    try {
+      uri = _restUri(config, clientTelemetrySnapshotRpc);
+    } on FormatException catch (error) {
+      return error.message;
+    }
+    final entries = _boundedSnapshotEntries(config, events);
+    if (entries.isEmpty) {
+      return null;
+    }
+    final first = entries.first;
+    final payload = <String, Object?>{
+      'device_id': first['device_id'],
+      'session_id': first['session_id'],
+      'platform': first['platform'],
+      'app_version': first['app_version'],
+      'environment': first['environment'],
+      'trigger': {'type': trigger},
+      'context': context,
+      'log_entries': entries,
+      'meta': {
+        'source': 'flutter',
+        'transport': 'rest_outbox+realtime_broadcast',
+      },
+      'snapshot_taken_at': DateTime.now().toUtc().toIso8601String(),
+    };
+    try {
+      final response = await _httpClient
+          .post(
+            uri,
+            headers: _headers(config, secrets),
+            body: jsonEncode({'payload': payload}),
+          )
+          .timeout(requestTimeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return 'Supabase telemetry snapshot failed (${response.statusCode}): '
+            '${_shortBody(response.body)}';
+      }
+      try {
+        final body = jsonDecode(response.body);
+        if (body is Map && body['success'] == false) {
+          return 'Supabase telemetry snapshot rejected: '
+              '${_shortBody(body['error']?.toString() ?? 'unknown error')}';
+        }
+      } on FormatException {
+        // A successful empty RPC response is acceptable.
+      }
+      return null;
+    } catch (error) {
+      return 'Supabase telemetry snapshot error: $error';
+    }
+  }
+
   void close() {
     _httpClient.close();
+  }
+
+  /// Retries only requests whose operation is idempotent at the destination.
+  ///
+  /// Settings are an upsert keyed by `user_id`; telemetry entries carry stable
+  /// `client_event_id`s and the RPC deduplicates `(session_id, client_event_id)`.
+  /// Never use this for sign-in, rotating refresh tokens, or append-only rows
+  /// such as consent and acoustic detections: a timeout can mean the server
+  /// accepted the first request even though the client did not see its response.
+  Future<http.Response> _retryIdempotent(
+    Future<http.Response> Function() request,
+  ) async {
+    var failedAttempts = 0;
+    while (true) {
+      try {
+        final response = await request();
+        if (!_isRetryableResponse(response) ||
+            failedAttempts + 1 >= maxRetryAttempts) {
+          return response;
+        }
+        await _sleep(_retryDelay(failedAttempts, response));
+      } on TimeoutException {
+        if (failedAttempts + 1 >= maxRetryAttempts) {
+          rethrow;
+        }
+        await _sleep(_retryDelay(failedAttempts, null));
+      } on http.ClientException {
+        if (failedAttempts + 1 >= maxRetryAttempts) {
+          rethrow;
+        }
+        await _sleep(_retryDelay(failedAttempts, null));
+      }
+      failedAttempts += 1;
+    }
+  }
+
+  bool _isRetryableResponse(http.Response response) {
+    final status = response.statusCode;
+    return status == 408 ||
+        status == 425 ||
+        status == 429 ||
+        (status >= 500 && status <= 599);
+  }
+
+  Duration _retryDelay(int failedAttempt, http.Response? response) {
+    final retryAfter = response == null ? null : _retryAfter(response);
+    if (retryAfter != null) {
+      return _capRetryDelay(retryAfter);
+    }
+    final multiplier = 1 << failedAttempt.clamp(0, 10).toInt();
+    final ceilingMs = min(
+      retryMaxDelay.inMilliseconds,
+      retryBaseDelay.inMilliseconds * multiplier,
+    );
+    // Full jitter prevents a collection of devices from retrying in lockstep.
+    final jitter = _jitter().clamp(0.0, 1.0);
+    return Duration(milliseconds: max(1, (ceilingMs * jitter).ceil()));
+  }
+
+  Duration? _retryAfter(http.Response response) {
+    final raw = response.headers['retry-after']?.trim();
+    if (raw == null || raw.isEmpty) {
+      return null;
+    }
+    final seconds = int.tryParse(raw);
+    if (seconds != null && seconds >= 0) {
+      return Duration(seconds: seconds);
+    }
+    final at = DateTime.tryParse(raw)?.toUtc();
+    if (at == null) {
+      return null;
+    }
+    final delay = at.difference(DateTime.now().toUtc());
+    return delay.isNegative ? Duration.zero : delay;
+  }
+
+  Duration _capRetryDelay(Duration delay) {
+    return delay > retryMaxDelay ? retryMaxDelay : delay;
+  }
+
+  static Future<void> _defaultSleep(Duration delay) {
+    return Future<void>.delayed(delay);
   }
 
   static bool _isSleepCycleKind(AcousticDetectionKind kind) {
@@ -359,6 +556,11 @@ class SupabaseRestClient {
     if (base.host.trim().isEmpty) {
       throw const FormatException('Supabase URL must include a host.');
     }
+    if (base.userInfo.isNotEmpty) {
+      throw const FormatException(
+        'Supabase URL must not contain embedded credentials.',
+      );
+    }
     if (base.scheme != 'https' &&
         base.host != 'localhost' &&
         base.host != '127.0.0.1') {
@@ -368,7 +570,9 @@ class SupabaseRestClient {
     }
     final baseSegments = base.pathSegments.where((p) => p.isNotEmpty);
     return base
-        .replace(pathSegments: [...baseSegments, 'rest', 'v1', table])
+        .replace(
+          pathSegments: [...baseSegments, 'rest', 'v1', ...table.split('/')],
+        )
         .removeFragment();
   }
 
@@ -387,7 +591,26 @@ class SupabaseRestClient {
     return trimmed.length > 200 ? trimmed.substring(0, 200) : trimmed;
   }
 
-  Map<String, Object?> _sanitizeTelemetryRow(Map<String, Object?> row) {
+  String _orgTelemetryLevel(String? level) {
+    switch (level?.trim().toLowerCase()) {
+      case 'debug':
+        return 'debug';
+      case 'warning':
+        return 'warn';
+      case 'error':
+      case 'fatal':
+        return 'error';
+      case 'trace':
+        return 'trace';
+      default:
+        return 'info';
+    }
+  }
+
+  /// Produces a payload that is safe for both the durable PostgREST outbox and
+  /// the transient Realtime broadcast. Keep all secret redaction here so a new
+  /// telemetry transport cannot accidentally bypass it.
+  Map<String, Object?> sanitizeTelemetryRow(Map<String, Object?> row) {
     return row.map((key, value) {
       if (key == 'message' || key == 'stack') {
         return MapEntry(key, _redactAndTruncate(value?.toString() ?? '', 4000));
@@ -397,6 +620,57 @@ class SupabaseRestClient {
       }
       return MapEntry(key, value);
     });
+  }
+
+  /// Maps the common cross-platform event to the organization-wide RPC contract
+  /// (`sonus_client_log_entries`). Realtime broadcasts reuse this exact payload.
+  Map<String, Object?> toOrganizationTelemetryEntry(
+    Map<String, Object?> sanitizedRow,
+  ) => {
+    'client_event_id': sanitizedRow['client_event_id'],
+    'device_id': sanitizedRow['device_id'],
+    'session_id': sanitizedRow['session_id'],
+    'platform': sanitizedRow['platform'],
+    'app_version': sanitizedRow['app_version'],
+    'environment': const String.fromEnvironment(
+      'SONUS_APP_ENV',
+      defaultValue: 'production',
+    ),
+    'level': _orgTelemetryLevel(sanitizedRow['level']?.toString()),
+    'message': sanitizedRow['message'],
+    'stack': sanitizedRow['stack'],
+    'category': sanitizedRow['event'],
+    'metadata': {
+      'source': sanitizedRow['source'],
+      'transport': sanitizedRow['transport'],
+      'trace_id': sanitizedRow['trace_id'],
+      'span_id': sanitizedRow['span_id'],
+      'parent_span_id': sanitizedRow['parent_span_id'],
+      'details': sanitizedRow['details'],
+    },
+    'client_timestamp': sanitizedRow['occurred_at'],
+  };
+
+  List<Map<String, Object?>> _boundedSnapshotEntries(
+    AppConfig config,
+    List<ClientTelemetryEvent> events,
+  ) {
+    const maxEntries = 100;
+    const maxSerializedBytes = 450000;
+    final entries = <Map<String, Object?>>[];
+    var bytes = 0;
+    for (final event in events.take(maxEntries)) {
+      final entry = toOrganizationTelemetryEntry(
+        sanitizeTelemetryRow(event.toSupabaseRow(config.deviceId)),
+      );
+      final entryBytes = utf8.encode(jsonEncode(entry)).length;
+      if (entries.isNotEmpty && bytes + entryBytes > maxSerializedBytes) {
+        break;
+      }
+      entries.add(entry);
+      bytes += entryBytes;
+    }
+    return entries;
   }
 
   Map<String, Object?> _sanitizeTelemetryDetails(

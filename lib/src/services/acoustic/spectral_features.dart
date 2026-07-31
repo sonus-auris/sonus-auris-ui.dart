@@ -21,6 +21,10 @@ class SpectralFrame {
     required this.lowBandRatio,
     required this.speechBandRatio,
     required this.totalPower,
+    this.peakAmplitude = 0,
+    this.crestFactor = 0,
+    this.highBandRatio = 0,
+    this.clippingFraction = 0,
   });
 
   /// Time-domain RMS of the frame, normalized to 0..1 (full scale == 1).
@@ -28,6 +32,17 @@ class SpectralFrame {
 
   /// RMS expressed in dBFS, clamped to a -120 floor.
   final double db;
+
+  /// Largest absolute time-domain sample, normalized to 0..1.
+  final double peakAmplitude;
+
+  /// Time-domain peak divided by RMS. Impulses have a much larger crest factor
+  /// than sustained tones or continuously loud ambience.
+  final double crestFactor;
+
+  /// Fraction of samples at or above 98% full scale. This is evidence of input
+  /// clipping, which is useful context for loud-event confidence and QA.
+  final double clippingFraction;
 
   /// Power-weighted mean frequency (Hz). Low for rumble/snoring, higher for
   /// hiss/speech consonants.
@@ -53,6 +68,10 @@ class SpectralFrame {
   /// Fraction of total power in the 300–3400 Hz telephone speech band.
   final double speechBandRatio;
 
+  /// Fraction of total power above the speech band (3400 Hz to Nyquist).
+  /// Broadband impacts, shattering sounds, and hiss tend to raise this value.
+  final double highBandRatio;
+
   /// Sum of bin powers — absolute, not normalized.
   final double totalPower;
 }
@@ -63,8 +82,10 @@ class SpectralFrame {
 /// directly unit-testable and safe to run inside an isolate.
 class SpectralAnalyzer {
   SpectralAnalyzer({required this.fftSize, required this.sampleRate})
-    : assert(fftSize > 0 && (fftSize & (fftSize - 1)) == 0,
-          'fftSize must be a power of two'),
+    : assert(
+        fftSize > 0 && (fftSize & (fftSize - 1)) == 0,
+        'fftSize must be a power of two',
+      ),
       _fft = FFT(fftSize),
       _window = _hann(fftSize),
       _binHz = sampleRate / fftSize;
@@ -83,25 +104,35 @@ class SpectralAnalyzer {
   static const double _lowBandHighHz = 300;
   static const double _speechLowHz = 300;
   static const double _speechHighHz = 3400;
+  static const double _clippingAmplitude = 0.98;
 
   /// Analyzes a single frame of normalized (-1..1) mono samples. The frame must
   /// be exactly [fftSize] long.
   SpectralFrame analyze(Float64List frame) {
     if (frame.length != fftSize) {
-      throw ArgumentError(
-        'frame length ${frame.length} != fftSize $fftSize',
-      );
+      throw ArgumentError('frame length ${frame.length} != fftSize $fftSize');
     }
     // Time-domain RMS from the raw (un-windowed) frame.
     var sumSquares = 0.0;
+    var peakAmplitude = 0.0;
+    var clippedSamples = 0;
     for (var i = 0; i < fftSize; i++) {
       final s = frame[i];
+      final magnitude = s.abs();
       sumSquares += s * s;
+      if (magnitude > peakAmplitude) {
+        peakAmplitude = magnitude;
+      }
+      if (magnitude >= _clippingAmplitude) {
+        clippedSamples++;
+      }
     }
     final rms = math.sqrt(sumSquares / fftSize);
     final db = rms <= 0
         ? _dbFloor
         : (20 * math.log(rms) / math.ln10).clamp(_dbFloor, 0.0);
+    final crestFactor = rms <= _epsilon ? 0.0 : peakAmplitude / rms;
+    final clippingFraction = clippedSamples / fftSize;
 
     // Windowed copy for the spectral estimate.
     final windowed = Float64List(fftSize);
@@ -119,6 +150,7 @@ class SpectralAnalyzer {
     var peakIndex = 0;
     var lowBand = 0.0;
     var speechBand = 0.0;
+    var highBand = 0.0;
     for (var i = 0; i < bins; i++) {
       final p = power[i];
       final freq = i * _binHz;
@@ -135,6 +167,9 @@ class SpectralAnalyzer {
       if (freq >= _speechLowHz && freq <= _speechHighHz) {
         speechBand += p;
       }
+      if (freq > _speechHighHz) {
+        highBand += p;
+      }
     }
 
     if (total <= _epsilon) {
@@ -149,6 +184,10 @@ class SpectralAnalyzer {
         lowBandRatio: 0,
         speechBandRatio: 0,
         totalPower: total,
+        peakAmplitude: peakAmplitude,
+        crestFactor: crestFactor,
+        highBandRatio: 0,
+        clippingFraction: clippingFraction,
       );
     }
 
@@ -181,6 +220,10 @@ class SpectralAnalyzer {
       lowBandRatio: lowBand / total,
       speechBandRatio: speechBand / total,
       totalPower: total,
+      peakAmplitude: peakAmplitude,
+      crestFactor: crestFactor,
+      highBandRatio: highBand / total,
+      clippingFraction: clippingFraction,
     );
   }
 

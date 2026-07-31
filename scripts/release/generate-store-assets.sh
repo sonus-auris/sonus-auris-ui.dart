@@ -59,7 +59,7 @@ magick -size 1024x500 'gradient:#0C3B2E-#136F4F' \
   -pointsize 84 -draw "text 72,258 'A dashcam'" \
   -fill '#ff9f43' -draw "text 72,348 'for your ears.'" \
   -fill 'rgba(255,253,248,0.82)' -pointsize 29 -weight 500 \
-  -draw "text 72,430 'Always-on audio  ·  Encrypted backup  ·  Open source'" \
+  -draw "text 72,430 'Rolling audio  ·  Private cloud backup  ·  Open source'" \
   -fill none -stroke 'rgba(255,255,255,0.16)' -strokewidth 24 \
   -draw 'circle 830,238 962,238' \
   -stroke none -fill '#fd7e14' -draw 'circle 830,238 914,238' \

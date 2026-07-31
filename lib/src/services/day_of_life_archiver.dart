@@ -14,7 +14,12 @@ import 'place_resolver.dart';
 import 'soundcloud_client.dart';
 
 class DayArchiveResult {
-  const DayArchiveResult({this.trackUrl, this.noteCount = 0, this.prunedCount = 0, this.note});
+  const DayArchiveResult({
+    this.trackUrl,
+    this.noteCount = 0,
+    this.prunedCount = 0,
+    this.note,
+  });
 
   final String? trackUrl;
   final int noteCount;
@@ -37,10 +42,10 @@ class DayOfLifeArchiver {
     ActivitySummarizer? summarizer,
     AudioEncoder? encoder,
     PlaceResolver? placeResolver,
-  })  : _soundCloud = soundCloud ?? SoundCloudClient(),
-        _summarizer = summarizer ?? const ActivitySummarizer(),
-        _encoder = encoder ?? AudioEncoder(),
-        _placeResolver = placeResolver ?? const PlaceResolver();
+  }) : _soundCloud = soundCloud ?? SoundCloudClient(),
+       _summarizer = summarizer ?? const ActivitySummarizer(),
+       _encoder = encoder ?? AudioEncoder(),
+       _placeResolver = placeResolver ?? const PlaceResolver();
 
   final SoundCloudClient _soundCloud;
   final ActivitySummarizer _summarizer;
@@ -105,16 +110,15 @@ class DayOfLifeArchiver {
     }
     // Sort newest-first by the date parsed from the title; unparseable titles
     // sort oldest so they're the first to be pruned.
-    final dated = tracks
-        .map((t) => (id: t.id, day: _dayFromTitle(t.title)))
-        .toList()
-      ..sort((a, b) {
-        final ad = a.day, bd = b.day;
-        if (ad == null && bd == null) return 0;
-        if (ad == null) return 1;
-        if (bd == null) return -1;
-        return bd.compareTo(ad);
-      });
+    final dated =
+        tracks.map((t) => (id: t.id, day: _dayFromTitle(t.title))).toList()
+          ..sort((a, b) {
+            final ad = a.day, bd = b.day;
+            if (ad == null && bd == null) return 0;
+            if (ad == null) return 1;
+            if (bd == null) return -1;
+            return bd.compareTo(ad);
+          });
 
     var pruned = 0;
     for (final track in dated.skip(DayOfLife.rollingDays)) {

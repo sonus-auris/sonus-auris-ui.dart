@@ -3,9 +3,25 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('microphone is the only required consent item', () {
-    final required =
-        ConsentItem.values.where((i) => i.required).toList();
+    final required = ConsentItem.values.where((i) => i.required).toList();
     expect(required, [ConsentItem.microphone]);
+  });
+
+  test('microphone disclosure states schedule and plaintext boundaries', () {
+    final disclosure = ConsentItem.microphone.rationale.toLowerCase();
+    expect(disclosure, contains('explicitly arm a schedule'));
+    expect(disclosure, contains('force-quitting'));
+    expect(disclosure, contains('force-stopping'));
+    expect(disclosure, contains('plaintext'));
+    expect(disclosure, contains('app-private device sandbox'));
+    expect(disclosure, contains('encrypted on-device before it leaves'));
+  });
+
+  test('cloud consent covers encrypted backup and device sync', () {
+    final disclosure = ConsentItem.cloudBackup.rationale.toLowerCase();
+    expect(ConsentItem.cloudBackup.title.toLowerCase(), contains('device sync'));
+    expect(disclosure, contains('authorized devices'));
+    expect(disclosure, contains('end-to-end encrypted'));
   });
 
   test('fromKey round-trips every item and rejects unknown keys', () {
@@ -17,12 +33,15 @@ void main() {
 
   test('hasRequiredConsents reflects the required grants', () {
     ConsentRecord record(Map<ConsentItem, bool> grants) => ConsentRecord(
-          consentVersion: 'v1',
-          acceptedAtUtc: DateTime.utc(2026, 6, 28),
-          grants: {for (final e in grants.entries) e.key.key: e.value},
-        );
+      consentVersion: 'v1',
+      acceptedAtUtc: DateTime.utc(2026, 6, 28),
+      grants: {for (final e in grants.entries) e.key.key: e.value},
+    );
     expect(record({ConsentItem.microphone: true}).hasRequiredConsents, isTrue);
-    expect(record({ConsentItem.microphone: false}).hasRequiredConsents, isFalse);
+    expect(
+      record({ConsentItem.microphone: false}).hasRequiredConsents,
+      isFalse,
+    );
     expect(record({}).hasRequiredConsents, isFalse);
   });
 
@@ -31,11 +50,7 @@ void main() {
       consentVersion: 'audio-dashcam-consent-v1',
       acceptedAtUtc: DateTime.utc(2026, 6, 28, 7, 30),
       platform: 'ios',
-      grants: const {
-        'microphone': true,
-        'location': false,
-        'motion': true,
-      },
+      grants: const {'microphone': true, 'location': false, 'motion': true},
       synced: true,
     );
     final back = ConsentRecord.fromJson(record.toJson());

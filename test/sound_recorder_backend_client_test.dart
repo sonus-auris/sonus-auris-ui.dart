@@ -132,12 +132,26 @@ void main() {
     var sawPresign = false;
     var sawUpload = false;
     var sawComplete = false;
+    await File('${tempDir.path}/segment.features.json').writeAsString(
+      jsonEncode({
+        'version': 2,
+        'summary': {
+          'heuristic': true,
+          'classificationCounts': {'suddenLoudNoise': 1},
+        },
+      }),
+    );
     final client = SoundRecorderBackendClient(
       httpClient: MockClient((request) async {
         if (request.method == 'POST' && request.url.path.endsWith('/presign')) {
           sawPresign = true;
           final body = jsonDecode(request.body) as Map<String, dynamic>;
           expect(body['byteCount'], 4);
+          final metadata = body['metaData'] as Map<String, dynamic>;
+          expect(metadata['acousticAnalysis'], {
+            'heuristic': true,
+            'classificationCounts': {'suddenLoudNoise': 1},
+          });
           return http.Response(
             jsonEncode({
               'upload': {
@@ -286,6 +300,219 @@ void main() {
     );
 
     client.close();
+  });
+
+  test('posts the durable Rust device heartbeat with the device token', () async {
+    final client = SoundRecorderBackendClient(
+      httpClient: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/api/mobile/v1/devices/heartbeat');
+        expect(request.headers['authorization'], 'Bearer device-token');
+        return http.Response(
+          '{"ok":true,"deviceId":"device-a","serverTime":"2026-07-25T12:00:00Z"}',
+          200,
+        );
+      }),
+    );
+
+    final error = await client.heartbeatDevice(
+      config: config,
+      secrets: secrets,
+    );
+
+    expect(error, isNull);
+    client.close();
+  });
+
+  test('revokes a Rust device token with Supabase identity', () async {
+    final client = SoundRecorderBackendClient(
+      httpClient: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/api/mobile/v1/devices/device-a/revoke');
+        expect(request.headers['x-supabase-auth'], 'Bearer user-jwt');
+        expect(request.headers['authorization'], isNull);
+        return http.Response(
+          '{"ok":true,"installId":"device-a","backendTokensRevoked":1}',
+          200,
+        );
+      }),
+    );
+
+    final error = await client.revokeDevice(
+      config: config,
+      secrets: const CloudSecrets(supabaseAccessToken: 'user-jwt'),
+      installId: 'device-a',
+    );
+
+    expect(error, isNull);
+    client.close();
+  });
+
+  test(
+    'completes the desktop manual cloud OAuth flow with the pinned redirect',
+    () async {
+      var requestNumber = 0;
+      final client = SoundRecorderBackendClient(
+        httpClient: MockClient((request) async {
+          requestNumber += 1;
+          expect(request.method, 'POST');
+          expect(request.headers['authorization'], 'Bearer device-token');
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          if (requestNumber == 1) {
+            expect(
+              request.url.path,
+              '/api/mobile/v1/cloud-connections/oauth/start',
+            );
+            expect(body['provider'], 'microsoft_onedrive');
+            expect(
+              body['redirectUri'],
+              'https://backend.example/oauth/manual-callback',
+            );
+            return http.Response(
+              jsonEncode({
+                'ok': true,
+                'provider': 'microsoft_onedrive',
+                'state': 'state-1',
+                'authorizationUrl':
+                    'https://login.microsoftonline.com/authorize',
+              }),
+              200,
+              headers: const {'content-type': 'application/json'},
+            );
+          }
+          expect(
+            request.url.path,
+            '/api/mobile/v1/cloud-connections/oauth/complete',
+          );
+          expect(body['provider'], 'microsoft_onedrive');
+          expect(body['state'], 'state-1');
+          expect(body['authorizationCode'], 'one-time-code');
+          expect(
+            body['redirectUri'],
+            'https://backend.example/oauth/manual-callback',
+          );
+          return http.Response(
+            jsonEncode({
+              'ok': true,
+              'connection': {
+                'id': 'connection-1',
+                'provider': 'microsoft_onedrive',
+              },
+            }),
+            200,
+            headers: const {'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      final started = await client.startCloudLink(
+        config: config,
+        secrets: secrets,
+        provider: CloudProvider.oneDrive,
+        redirectUri: 'https://backend.example/oauth/manual-callback',
+      );
+      expect(started['state'], 'state-1');
+
+      final completed = await client.completeCloudLink(
+        config: config,
+        secrets: secrets,
+        provider: CloudProvider.oneDrive,
+        state: started['state'] as String,
+        authorizationCode: 'one-time-code',
+        redirectUri: 'https://backend.example/oauth/manual-callback',
+      );
+      expect(
+        (completed['connection'] as Map<String, dynamic>)['id'],
+        'connection-1',
+      );
+      expect(requestNumber, 2);
+      client.close();
+    },
+  );
+
+  test(
+    'records R2 account status without sending direct storage credentials',
+    () async {
+      var requestNumber = 0;
+      final client = SoundRecorderBackendClient(
+        httpClient: MockClient((request) async {
+          requestNumber += 1;
+          expect(request.headers['authorization'], 'Bearer device-token');
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          expect(body['provider'], 'cloudflare_r2');
+          expect(request.body, isNot(contains('r2-secret')));
+          expect(request.body, isNot(contains('r2-access')));
+          if (requestNumber == 1) {
+            expect(
+              request.url.path,
+              '/api/mobile/v1/cloud-connections/oauth/start',
+            );
+            expect(body['displayName'], 'sonus-backups');
+            expect(body['folderPath'], 'recordings');
+            return http.Response(
+              jsonEncode({
+                'ok': true,
+                'provider': 'cloudflare_r2',
+                'clientManaged': true,
+                'state': 'r2-state',
+              }),
+              200,
+              headers: const {'content-type': 'application/json'},
+            );
+          }
+          expect(
+            request.url.path,
+            '/api/mobile/v1/cloud-connections/oauth/complete',
+          );
+          expect(body['state'], 'r2-state');
+          expect(body['clientManagedAcknowledged'], isTrue);
+          return http.Response(
+            jsonEncode({
+              'ok': true,
+              'connection': {
+                'id': 'r2-connection',
+                'provider': 'cloudflare_r2',
+              },
+            }),
+            200,
+            headers: const {'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      final result = await client.registerClientManagedStorageConnection(
+        config: config,
+        secrets: secrets.copyWith(
+          s3AccessKeyId: 'r2-access',
+          s3SecretAccessKey: 'r2-secret',
+        ),
+        provider: 'cloudflare_r2',
+        displayName: 'sonus-backups',
+        folderPath: 'recordings',
+      );
+
+      expect(
+        (result['connection'] as Map<String, dynamic>)['id'],
+        'r2-connection',
+      );
+      expect(requestNumber, 2);
+      client.close();
+    },
+  );
+
+  test('detects Cloudflare R2 endpoints without misclassifying S3', () {
+    expect(
+      SoundRecorderBackendClient.directStorageProviderName(
+        'https://account.r2.cloudflarestorage.com',
+      ),
+      'cloudflare_r2',
+    );
+    expect(
+      SoundRecorderBackendClient.directStorageProviderName(
+        'https://s3.us-east-1.amazonaws.com',
+      ),
+      'amazon_s3',
+    );
   });
 
   test('posts permanent save requests and maps storage keys', () async {

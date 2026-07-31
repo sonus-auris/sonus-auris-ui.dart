@@ -11,6 +11,7 @@ import 'package:uuid/uuid.dart';
 import '../models/acoustic_detection.dart';
 import '../models/audio_trigger_event.dart';
 import '../models/app_config.dart';
+import 'keyword_quality_boost.dart';
 import '../models/recorder_snapshot.dart';
 import '../models/recording_segment.dart';
 import 'acoustic/acoustic_pipeline.dart';
@@ -55,6 +56,7 @@ class SegmentRecorder {
   );
 
   final AudioRecorder _recorder;
+  InputDevice? _preferredInputDevice;
   final SegmentIndex _segmentIndex;
   final AcousticAnalyzer _analyzer;
   final Uuid _uuid;
@@ -117,6 +119,14 @@ class SegmentRecorder {
   _Pcm16Downsampler? _storeDownsampler;
   int _storedOverlapSamples = 0;
   double? _recentDb; // EMA of slice loudness, drives the per-segment decision.
+<<<<<<< HEAD
+  DateTime? _forceHighQualityUntilUtc;
+=======
+  // A heard keyword/safe word forces full quality for a sustained window even
+  // while the audio is quiet, so the stretch after a caught phrase isn't
+  // downsampled. Extended by [boostQualityForKeyword].
+  final KeywordQualityBoost _qualityBoost = KeywordQualityBoost();
+>>>>>>> origin/main
 
   // Rolling buffer of recently captured (processed) audio for Shazam / STT.
   final List<Uint8List> _recentChunks = [];
@@ -134,10 +144,44 @@ class SegmentRecorder {
   /// (app controller) decides whether to act, applying its own back-off.
   Stream<String> get resumeRequests => _resume.resumeRequests;
 
+  /// Connected microphones reported by the native desktop audio stack.
+  Future<List<InputDevice>> listInputDevices() => _recorder.listInputDevices();
+
+  /// Chooses a connected microphone for the next capture start. Passing null
+  /// restores the operating-system default input.
+  Future<void> selectInputDevice(String? deviceId) async {
+    if (deviceId == null || deviceId.trim().isEmpty) {
+      _preferredInputDevice = null;
+      return;
+    }
+    final devices = await _recorder.listInputDevices();
+    _preferredInputDevice = devices
+        .where((device) => device.id == deviceId)
+        .firstOrNull;
+    if (_preferredInputDevice == null) {
+      throw StateError('The selected microphone is no longer connected.');
+    }
+  }
+
   /// Acoustic-intelligence detections from the on-device FFT engine.
   Stream<AcousticDetection> get detections => _analyzer.detections;
 
   bool get isRecording => _running;
+
+  /// Forces newly opened segments to remain at the full capture rate until the
+  /// deadline. Used for clear speech and the configured recognition-phrase
+  /// window.
+  void forceHighQualityFor(Duration duration) {
+    final candidate = DateTime.now().toUtc().add(duration);
+    final current = _forceHighQualityUntilUtc;
+    if (current == null || candidate.isAfter(current)) {
+      _forceHighQualityUntilUtc = candidate;
+    }
+  }
+
+  void clearForcedHighQuality() {
+    _forceHighQualityUntilUtc = null;
+  }
 
   /// The most recent [window] of captured audio (processed PCM16), or null when
   /// nothing has been captured yet. Used to fingerprint music / transcribe
@@ -161,6 +205,13 @@ class SegmentRecorder {
       bytes = Uint8List.sublistView(bytes, bytes.length - wanted);
     }
     return (bytes: bytes, sampleRate: _captureRate, channels: channels);
+  }
+
+  /// Opens (or extends) a full-quality window after a keyword/safe word is
+  /// heard, so the following [window] of audio keeps full fidelity even while
+  /// quiet. No-op-safe to call repeatedly; overlapping calls only lengthen it.
+  void boostQualityForKeyword(Duration window) {
+    _qualityBoost.trigger(DateTime.now(), window);
   }
 
   Future<void> start(AppConfig config) async {
@@ -213,6 +264,7 @@ class SegmentRecorder {
           noiseSuppress: config.noiseSuppress,
           audioInterruption: AudioInterruptionMode.pauseResume,
           streamBufferSize: _streamBufferSize(config),
+          device: _preferredInputDevice,
         ),
       );
       _streamDone = Completer<void>();
@@ -573,9 +625,26 @@ class SegmentRecorder {
       _storeDownsampler = null;
       return;
     }
+<<<<<<< HEAD
+    final forcedUntil = _forceHighQualityUntilUtc;
+    if (forcedUntil != null && DateTime.now().toUtc().isBefore(forcedUntil)) {
+      _storeRate = _captureRate;
+      _storeFactor = 1;
+      _storeDownsampler = null;
+      return;
+    }
+    if (forcedUntil != null) {
+      _forceHighQualityUntilUtc = null;
+    }
     // Until we have a trailing-loudness reading, keep full quality (treat the
     // first segment as loud) rather than needlessly downsampling startup audio.
     final loud =
+=======
+    // A keyword/safe-word boost forces full quality even through quiet audio.
+    // Otherwise: until we have a trailing-loudness reading, keep full quality
+    // (treat the first segment as loud) rather than downsampling startup audio.
+    final loud = _qualityBoost.isActive(DateTime.now()) ||
+>>>>>>> origin/main
         (_recentDb ?? config.adaptiveLoudnessDb) >= config.adaptiveLoudnessDb;
     if (loud) {
       _storeRate = _captureRate;
@@ -685,9 +754,9 @@ class SegmentRecorder {
     _recentDb = _recentDb == null ? db : (0.9 * _recentDb! + 0.1 * db);
   }
 
-  /// Implements the "kick in once decibels get consistently high" gate and feeds
-  /// the analysis isolate while it is open (including quiet stretches, so gaps
-  /// between snores are observed for apnea detection).
+  /// Implements the sustained-loudness gate, plus an immediate transient path
+  /// so a one-off crash or bang is not discarded before the FFT sees it. While
+  /// open, quiet stretches are retained so gaps between snores are observable.
   void _runAcousticGate(
     Uint8List slice,
     int samples,
@@ -703,13 +772,14 @@ class SegmentRecorder {
     }
     final db = _dbForRms(power.averagePower);
     final loud = db >= _gateActivationDb;
+    final immediateTransient = _isImmediateTransient(power);
     if (!_gateOpen) {
       if (loud) {
         _gateLoudSamples += samples;
       } else {
         _gateLoudSamples = math.max(0, _gateLoudSamples - samples);
       }
-      if (_gateLoudSamples >= _gateSustainSamples) {
+      if (immediateTransient || _gateLoudSamples >= _gateSustainSamples) {
         _gateOpen = true;
         _gateQuietSamples = 0;
         _analyzer.resyncFeed();
@@ -729,6 +799,15 @@ class SegmentRecorder {
         _analyzer.flush();
       }
     }
+  }
+
+  bool _isImmediateTransient(_PcmPower power) {
+    if (power.peakPower < 0.94) {
+      return false;
+    }
+    final rms = math.max(power.averagePower, 0.0001);
+    final crestFactor = power.peakPower / rms;
+    return power.averagePower >= 0.316 || crestFactor >= 2.8;
   }
 
   void _feedAnalyzer(Uint8List slice, AppConfig config) {

@@ -129,7 +129,8 @@ class CaptureResumeCoordinator {
       _resumeDeadline = null;
       final lastChunk = _lastChunkAt;
       final resumed =
-          lastChunk != null && now.difference(lastChunk) < postInterruptionGrace;
+          lastChunk != null &&
+          now.difference(lastChunk) < postInterruptionGrace;
       if (!resumed) {
         _emit('interruption did not resume');
         return;

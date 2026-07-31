@@ -1,14 +1,18 @@
 // Immutable snapshot of everything the UI renders (config, secrets, segments, recorder/playback state, detections), emitted by the AppController.
 import '../models/acoustic_detection.dart';
+import '../models/account_status.dart';
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
 import '../models/context_trigger.dart';
 import '../models/cloud_provider.dart';
+import '../models/local_retention_warning.dart';
 import '../models/playback_snapshot.dart';
 import '../models/recorder_snapshot.dart';
 import '../models/recording_segment.dart';
 import '../models/storage_estimate.dart';
+import '../models/supabase_session.dart';
 import '../models/transfer_gate_status.dart';
+import '../retention/local_retention_policy.dart';
 
 class AppViewModel {
   const AppViewModel({
@@ -20,6 +24,7 @@ class AppViewModel {
     required this.diagnosticEntries,
     required this.isInitializing,
     required this.isUploading,
+    this.accountStatus = const AccountStatus(),
     this.isStarting = false,
     this.transferStatus = const TransferGateStatus.unknown(),
     this.message,
@@ -35,6 +40,7 @@ class AppViewModel {
   final List<String> diagnosticEntries;
   final bool isInitializing;
   final bool isUploading;
+  final AccountStatus accountStatus;
 
   /// True from the moment "Start" is tapped until capture is live (or fails) —
   /// covers the wait while the OS permission prompts load, so the button can show
@@ -59,8 +65,25 @@ class AppViewModel {
   bool get isUploadGatePaused =>
       config.uploadEnabled && transferStatus.isPaused && pendingUploads > 0;
 
+<<<<<<< HEAD
   /// Whether a Supabase session (access or refresh token) is held.
-  bool get isSignedIn => secrets.hasSupabaseSession;
+  bool get hasSupabaseSession => secrets.hasSupabaseSession;
+
+  /// A held AAL1 token is deliberately not "signed in" for product access.
+  /// Magic-link users become signed in only after a verified second factor
+  /// upgrades the Supabase JWT to AAL2.
+  bool get isSignedIn => hasSupabaseSession && accountStatus.isMfaSatisfied;
+=======
+  /// Whether cloud account access is authorized: the passwordless first factor
+  /// plus a verified second factor represented by an `aal2` access token.
+  bool get isSignedIn =>
+      secrets.hasFreshSupabaseToken() &&
+      supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken);
+
+  /// A first-factor session may exist while mandatory MFA is being enrolled or
+  /// challenged. It must not be treated as signed in.
+  bool get hasFirstFactorSession => secrets.hasSupabaseSession;
+>>>>>>> origin/main
 
   /// Email of the signed-in user, or null when signed out / unknown.
   String? get signedInEmail => secrets.supabaseEmail.trim().isEmpty
@@ -134,6 +157,40 @@ class AppViewModel {
   int get failedUploads => segments
       .where((segment) => segment.uploadStatus == SegmentUploadStatus.failed)
       .length;
+
+  /// Safe retention policy for UI projection. Older persisted values above the
+  /// current product ceiling are reduced to 100 hours rather than allowing a
+  /// stale configuration to extend plaintext lifetime or crash the dashboard.
+  LocalRetentionPolicy get localRetentionPolicy => LocalRetentionPolicy(
+    retentionHours: config.deviceRetentionHours
+        .clamp(1, LocalRetentionPolicy.maxPlaintextRetentionHours)
+        .toInt(),
+  );
+
+  List<LocalRetentionWarning> localRetentionWarnings({
+    required DateTime nowUtc,
+    Duration? horizon,
+    bool includeOverdue = true,
+  }) => localRetentionPolicy.warnings(
+    segments: segments,
+    nowUtc: nowUtc,
+    horizon: horizon,
+    includeOverdue: includeOverdue,
+  );
+
+  LocalRetentionWarning? earliestLocalRetentionWarning({
+    required DateTime nowUtc,
+    Duration? horizon,
+    bool includeOverdue = true,
+  }) => localRetentionPolicy.earliestWarning(
+    segments: segments,
+    nowUtc: nowUtc,
+    horizon: horizon,
+    includeOverdue: includeOverdue,
+  );
+
+  int overdueLocalRetentionCount(DateTime nowUtc) =>
+      localRetentionPolicy.overdueCount(segments: segments, nowUtc: nowUtc);
 
   int get uploadedSegments =>
       segments.where((segment) => segment.isUploaded).length;

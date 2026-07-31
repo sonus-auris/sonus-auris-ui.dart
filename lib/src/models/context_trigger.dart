@@ -62,7 +62,7 @@ class ContextTriggerEvent {
 /// context trigger fires inside an active schedule window while idle.
 class ConsentRequest {
   ConsentRequest({required this.event, DateTime? requestedAt})
-      : requestedAt = requestedAt ?? DateTime.now();
+    : requestedAt = requestedAt ?? DateTime.now();
 
   final ContextTriggerEvent event;
   final DateTime requestedAt;
@@ -75,6 +75,5 @@ class ConsentRequest {
       other.requestedAt == requestedAt;
 
   @override
-  int get hashCode =>
-      Object.hash(event.kind, event.description, requestedAt);
+  int get hashCode => Object.hash(event.kind, event.description, requestedAt);
 }

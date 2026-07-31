@@ -15,21 +15,25 @@ void main() {
   group('spotify intent gating', () {
     test('off unless the setting is on AND the account is linked', () {
       expect(publisher.wantsSpotify(cfg(), const CloudSecrets()), isFalse);
-      expect(publisher.wantsSpotify(cfg(spotify: true), const CloudSecrets()),
-          isFalse);
+      expect(
+        publisher.wantsSpotify(cfg(spotify: true), const CloudSecrets()),
+        isFalse,
+      );
       expect(publisher.wantsSpotify(cfg(), linked), isFalse);
       expect(publisher.wantsSpotify(cfg(spotify: true), linked), isTrue);
     });
 
-    test('publishing nothing when not opted in returns an empty result',
-        () async {
-      final result = await publisher.publishRecognisedSongs(
-        config: cfg(),
-        secrets: linked,
-        recognisedSongs: const [RecognisedSong(title: 'x')],
-      );
-      expect(result.didAnything, isFalse);
-    });
+    test(
+      'publishing nothing when not opted in returns an empty result',
+      () async {
+        final result = await publisher.publishRecognisedSongs(
+          config: cfg(),
+          secrets: linked,
+          recognisedSongs: const [RecognisedSong(title: 'x')],
+        );
+        expect(result.didAnything, isFalse);
+      },
+    );
   });
 
   group('spotify search query', () {

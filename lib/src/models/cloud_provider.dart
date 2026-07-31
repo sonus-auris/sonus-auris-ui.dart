@@ -1,9 +1,10 @@
-// Enum of supported user-owned cloud destinations (S3, Google Drive, OneDrive, iCloud) with display labels and backend routing.
+// Supported user-owned cloud destinations with display labels and backend routing.
 enum CloudProvider {
   s3,
   googleDrive,
   oneDrive,
-  iCloudDrive;
+  iCloudDrive,
+  dropbox;
 
   String get label {
     switch (this) {
@@ -15,6 +16,8 @@ enum CloudProvider {
         return 'Microsoft OneDrive';
       case CloudProvider.iCloudDrive:
         return 'Apple iCloud Drive';
+      case CloudProvider.dropbox:
+        return 'Dropbox';
     }
   }
 

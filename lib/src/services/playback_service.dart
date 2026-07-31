@@ -97,21 +97,28 @@ class PlaybackService {
     final start = startUtc.toUtc();
     final end = endUtc.toUtc();
     if (!end.isAfter(start)) {
-      _emit(_snapshot.value.copyWith(error: 'End time must be after start time.'));
+      _emit(
+        _snapshot.value.copyWith(error: 'End time must be after start time.'),
+      );
       return;
     }
-    final matching = segments
-        .where((s) =>
-            s.localPath != null &&
-            s.endedAtUtc.isAfter(start) &&
-            s.startedAtUtc.isBefore(end))
-        .toList()
-      ..sort((a, b) => a.startedAtUtc.compareTo(b.startedAtUtc));
+    final matching =
+        segments
+            .where(
+              (s) =>
+                  s.localPath != null &&
+                  s.endedAtUtc.isAfter(start) &&
+                  s.startedAtUtc.isBefore(end),
+            )
+            .toList()
+          ..sort((a, b) => a.startedAtUtc.compareTo(b.startedAtUtc));
     if (matching.isEmpty) {
-      _emit(_snapshot.value.copyWith(
-        isLoaded: false,
-        error: 'No local audio in that time range.',
-      ));
+      _emit(
+        _snapshot.value.copyWith(
+          isLoaded: false,
+          error: 'No local audio in that time range.',
+        ),
+      );
       return;
     }
     try {
@@ -122,7 +129,9 @@ class PlaybackService {
         matching.map((s) => _rangeSourceForSegment(s, start, end)).toList(),
         preload: false,
       );
-      _emit(_snapshot.value.copyWith(isLoaded: true, error: null, currentIndex: 0));
+      _emit(
+        _snapshot.value.copyWith(isLoaded: true, error: null, currentIndex: 0),
+      );
       await _player.play();
     } catch (error) {
       _emit(_snapshot.value.copyWith(error: error.toString()));

@@ -51,8 +51,7 @@ class PowerNetworkGate {
     }
     try {
       final state = await _battery.batteryState;
-      isCharging =
-          state == BatteryState.charging || state == BatteryState.full;
+      isCharging = state == BatteryState.charging || state == BatteryState.full;
     } catch (_) {
       isCharging = false;
     }

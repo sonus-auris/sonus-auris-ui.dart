@@ -2,6 +2,6 @@
 name: sonus_auris_interfaces
 description: Generated Dart adapters for the Sonus Auris Supabase schema.
 publish_to: none
-version: 20260713.0.0
+version: 20260717.0.0
 environment:
   sdk: ^3.0.0

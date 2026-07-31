@@ -1,4 +1,5 @@
-// SchedulePlatform implementation registering Android exact alarms / iOS local notifications for schedule-window transitions.
+// SchedulePlatform implementation registering Android alarm state journals and
+// user-visible local notifications for schedule-window transitions.
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
@@ -39,6 +40,8 @@ ScheduleHostPlatform _currentHostPlatform() {
   return ScheduleHostPlatform.other;
 }
 
+Future<bool> _exactAlarmUnavailable() async => false;
+
 /// Narrow seam around the static plugin API so readiness and operation ordering
 /// can be verified without starting an Android service in a host-side test.
 abstract interface class AndroidScheduleAlarmClient {
@@ -70,12 +73,14 @@ class PluginAndroidScheduleAlarmClient implements AndroidScheduleAlarmClient {
   );
 }
 
-/// Real [SchedulePlatform] backed by exact OS alarms on Android and local
-/// notifications on iOS (the latter via the shared [LocalNotificationsService]).
-/// A no-op on desktop, where the in-app timer covers scheduling.
+/// Real [SchedulePlatform] backed by user-visible local notifications on Android
+/// and iOS, plus a small Android exact-alarm journal. The Android callback never
+/// starts capture or a foreground service; it only persists the desired state.
+/// The notification tap or an already-foreground app provides the user-visible
+/// boundary before microphone capture can begin.
 class PluginSchedulePlatform implements SchedulePlatform {
   PluginSchedulePlatform({
-    required LocalNotificationsService notifications,
+    required ScheduleReminderClient notifications,
     DiagnosticLog? diagnostics,
     AndroidScheduleAlarmClient? androidAlarmClient,
     ScheduleHostPlatform? hostPlatform,
@@ -86,7 +91,9 @@ class PluginSchedulePlatform implements SchedulePlatform {
        _hostPlatform = hostPlatform ?? _currentHostPlatform(),
        _exactAlarmPermissionRequester =
            exactAlarmPermissionRequester ??
-           notifications.requestExactAlarmPermission {
+           (notifications is LocalNotificationsService
+               ? notifications.requestExactAlarmPermission
+               : _exactAlarmUnavailable) {
     final client =
         androidAlarmClient ?? const PluginAndroidScheduleAlarmClient();
     _androidAlarmClient = client;
@@ -96,7 +103,7 @@ class PluginSchedulePlatform implements SchedulePlatform {
     );
   }
 
-  final LocalNotificationsService _notifications;
+  final ScheduleReminderClient _notifications;
   final DiagnosticLog? _diagnostics;
   final ScheduleHostPlatform _hostPlatform;
   final Future<bool> Function() _exactAlarmPermissionRequester;
@@ -111,23 +118,45 @@ class PluginSchedulePlatform implements SchedulePlatform {
     switch (_hostPlatform) {
       case ScheduleHostPlatform.android:
         // Claim the revision before the first await: caller order defines the
-        // "latest desired state", so a cancelAll() issued after this register()
-        // must observe a newer revision even while the permission prompt or
-        // alarm-manager initialization is still pending.
+        // latest desired state, even while permission prompts or native alarm
+        // initialization are pending.
         final revision = ++_androidOperationRevision;
-        if (transitions.isNotEmpty && !await _exactAlarmPermissionRequester()) {
+        final snapshot = List<ScheduleTransition>.unmodifiable(transitions);
+
+        final notificationsAllowed =
+            snapshot.isEmpty || await _notifications.requestPermission();
+        if (!notificationsAllowed && snapshot.isNotEmpty) {
           _diagnostics?.add(
-            'Exact-alarm access was not granted; schedule transitions will '
-            'still run while Sonus Auris is alive, but Android may not wake '
-            'the app at a boundary.',
+            'Notification permission was not granted; scheduled starts remain '
+            'foreground-only and Android cannot display the boundary prompt.',
+          );
+        }
+
+        final exactAlarmAllowed =
+            snapshot.isEmpty || await _exactAlarmPermissionRequester();
+        // Always schedule a visible reminder. If exact-alarm access is declined,
+        // use an inexact notification instead of keeping a microphone foreground
+        // service alive during standby.
+        await _enqueueAndroidOperation(
+          revision,
+          () => _notifications.scheduleTransitions(
+            snapshot,
+            exact: exactAlarmAllowed,
+          ),
+        );
+
+        if (!exactAlarmAllowed && snapshot.isNotEmpty) {
+          _diagnostics?.add(
+            'Exact-alarm access was not granted; Android will use inexact '
+            'schedule reminders and capture will start only after foreground '
+            'user interaction.',
           );
           return;
         }
-        final snapshot = List<ScheduleTransition>.unmodifiable(transitions);
         await _runAndroidWhenReady(
           revision: revision,
           operationName: 'registration',
-          operation: () => _registerAndroid(snapshot),
+          operation: () => _registerAndroidAlarms(snapshot),
         );
         return;
       case ScheduleHostPlatform.ios:
@@ -143,13 +172,15 @@ class PluginSchedulePlatform implements SchedulePlatform {
     switch (_hostPlatform) {
       case ScheduleHostPlatform.android:
         final revision = ++_androidOperationRevision;
-        // Make any already-delivered stale callback harmless immediately, even
-        // if the native alarm service is still lagging after a reboot.
+        // Make any delivered stale callback harmless immediately and remove its
+        // user-visible reminder even if the native alarm service is still
+        // lagging after a reboot.
         await _clearAndroidActions();
+        await _notifications.cancelScheduled();
         await _runAndroidWhenReady(
           revision: revision,
           operationName: 'cancellation',
-          operation: _cancelAndroid,
+          operation: _cancelAndroidAlarms,
         );
         return;
       case ScheduleHostPlatform.ios:
@@ -246,8 +277,10 @@ class PluginSchedulePlatform implements SchedulePlatform {
     return next;
   }
 
-  Future<void> _registerAndroid(List<ScheduleTransition> transitions) async {
-    await _cancelAndroid();
+  Future<void> _registerAndroidAlarms(
+    List<ScheduleTransition> transitions,
+  ) async {
+    await _cancelAndroidAlarms();
     final capped = transitions.take(_maxAlarms).toList();
     final actions = <String, bool>{};
     final prefs = await SharedPreferences.getInstance();
@@ -263,10 +296,12 @@ class PluginSchedulePlatform implements SchedulePlatform {
         _diagnostics?.add('Failed to register exact alarm $id.');
       }
     }
-    _diagnostics?.add('Registered ${capped.length} exact alarm(s).');
+    _diagnostics?.add(
+      'Registered ${capped.length} exact schedule-state alarm(s).',
+    );
   }
 
-  Future<void> _cancelAndroid() async {
+  Future<void> _cancelAndroidAlarms() async {
     for (var i = 0; i < _maxAlarms; i++) {
       await _androidAlarmClient.cancel(_alarmBaseId + i);
     }
@@ -279,15 +314,12 @@ class PluginSchedulePlatform implements SchedulePlatform {
   }
 }
 
-/// Background-isolate callback fired by an exact alarm. It runs in a separate
-/// isolate that can NOT drive the main-isolate recorder, so it deliberately does
-/// not touch capture or the foreground service: doing so could stop a *manual*
-/// recording (bypassing the ownership guard) or try to create microphone capture
-/// from Android background state, which modern Android blocks for while-in-use
-/// permissions. Instead it only records the commanded state; the main isolate
-/// reconciles against the schedule (the authoritative `isActiveAt`) whenever it
-/// is next alive. Reliable Android scheduled capture depends on the user-visible
-/// schedule/recording foreground service staying alive after the user arms it.
+/// Background-isolate callback fired by an exact alarm. It cannot and must not
+/// drive the microphone, create a microphone foreground service, or stop a
+/// manual recording. It persists only the commanded state. The independently
+/// scheduled local notification gives the user a visible start boundary; the
+/// foreground main isolate later reconciles against authoritative wall-clock
+/// schedule state.
 @pragma('vm:entry-point')
 Future<void> scheduleAlarmFired(int id) async {
   final prefs = await SharedPreferences.getInstance();

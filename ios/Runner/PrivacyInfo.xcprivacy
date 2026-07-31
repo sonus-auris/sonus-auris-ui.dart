@@ -20,6 +20,20 @@
 			<key>NSPrivacyAccessedAPITypeReasons</key>
 			<array><string>C617.1</string></array>
 		</dict>
+		<!--
+			ios/Runner/DeviceStorageBridge.swift reads
+			volumeAvailableCapacityForImportantUsageKey and
+			attributesOfFileSystem(...)[.systemFreeSize]. The only consumer is
+			SegmentIndex.enforceFreeSpaceFloor, which deletes old segments when
+			the device is running low — i.e. 85F4.1. The value is never shown to
+			the user, so E174.1 does not apply.
+		-->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array><string>85F4.1</string></array>
+		</dict>
 	</array>
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array>

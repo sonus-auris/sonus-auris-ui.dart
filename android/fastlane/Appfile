@@ -4,4 +4,4 @@
 # Console (Setup > API access), grant "Release to testing tracks", download the
 # JSON to android/fastlane/play-service-account.json (gitignored).
 json_key_file("fastlane/play-service-account.json")
-package_name("com.ores.audio_dashcam")
+package_name("com.ores.sonus_auris")

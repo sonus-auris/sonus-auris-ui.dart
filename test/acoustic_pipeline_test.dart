@@ -10,7 +10,9 @@ const int _fftSize = 2048;
 
 /// Builds a mono signal by concatenating segments, each described by a sample
 /// generator over its local time `t` (seconds).
-Float64List _build(List<({double seconds, double Function(double t) gen})> parts) {
+Float64List _build(
+  List<({double seconds, double Function(double t) gen})> parts,
+) {
   final samples = <double>[];
   for (final part in parts) {
     final n = (part.seconds * _sampleRate).round();
@@ -25,10 +27,7 @@ double _tone(double t, double freq, {double amp = 0.5}) =>
     amp * math.sin(2 * math.pi * freq * t);
 
 /// Feeds a full signal through the slicer + pipeline in 0.1s chunks.
-List<AcousticDetection> _drive(
-  Float64List signal,
-  AcousticPipeline pipeline,
-) {
+List<AcousticDetection> _drive(Float64List signal, AcousticPipeline pipeline) {
   final slicer = FrameSlicer(fftSize: _fftSize, sampleRate: _sampleRate);
   final base = DateTime.utc(2026, 1, 1, 3, 0, 0);
   final out = <AcousticDetection>[];
@@ -48,22 +47,30 @@ List<AcousticDetection> _drive(
 }
 
 void main() {
-  test('low-frequency tonal bursts are detected as snoring through real FFT', () {
-    final parts = <({double seconds, double Function(double t) gen})>[];
-    for (var i = 0; i < 4; i++) {
-      parts.add((seconds: 1.0, gen: (t) => _tone(t, 150)));
-      parts.add((seconds: 3.0, gen: (_) => 0.0));
-    }
-    final pipeline = AcousticPipeline(
-      fftSize: _fftSize,
-      sampleRate: _sampleRate,
-      flags: const AcousticDetectorFlags(snore: true, music: false, speech: false),
-    );
-    final events = _drive(_build(parts), pipeline);
-    final snores =
-        events.where((e) => e.kind == AcousticDetectionKind.snore).toList();
-    expect(snores.length, greaterThanOrEqualTo(3));
-  });
+  test(
+    'low-frequency tonal bursts are detected as snoring through real FFT',
+    () {
+      final parts = <({double seconds, double Function(double t) gen})>[];
+      for (var i = 0; i < 4; i++) {
+        parts.add((seconds: 1.0, gen: (t) => _tone(t, 150)));
+        parts.add((seconds: 3.0, gen: (_) => 0.0));
+      }
+      final pipeline = AcousticPipeline(
+        fftSize: _fftSize,
+        sampleRate: _sampleRate,
+        flags: const AcousticDetectorFlags(
+          snore: true,
+          music: false,
+          speech: false,
+        ),
+      );
+      final events = _drive(_build(parts), pipeline);
+      final snores = events
+          .where((e) => e.kind == AcousticDetectionKind.snore)
+          .toList();
+      expect(snores.length, greaterThanOrEqualTo(3));
+    },
+  );
 
   test('pitched harmonic audio with a ~2 Hz beat is detected as music', () {
     // Three harmonics (tonal) gated by a 2 Hz pulse envelope.
@@ -71,7 +78,8 @@ void main() {
       final beat = (t * 2).floor() % 1 == 0 && (t * 2 - (t * 2).floor()) < 0.5
           ? 1.0
           : 0.2;
-      final tone = _tone(t, 440, amp: 0.3) +
+      final tone =
+          _tone(t, 440, amp: 0.3) +
           _tone(t, 880, amp: 0.2) +
           _tone(t, 1320, amp: 0.1);
       return beat * tone;
@@ -81,7 +89,11 @@ void main() {
     final pipeline = AcousticPipeline(
       fftSize: _fftSize,
       sampleRate: _sampleRate,
-      flags: const AcousticDetectorFlags(snore: false, music: true, speech: false),
+      flags: const AcousticDetectorFlags(
+        snore: false,
+        music: true,
+        speech: false,
+      ),
     );
     final events = _drive(signal, pipeline);
     expect(
@@ -92,7 +104,74 @@ void main() {
 
   test('silence produces no detections', () {
     final signal = _build([(seconds: 10.0, gen: (_) => 0.0)]);
-    final pipeline = AcousticPipeline(fftSize: _fftSize, sampleRate: _sampleRate);
+    final pipeline = AcousticPipeline(
+      fftSize: _fftSize,
+      sampleRate: _sampleRate,
+    );
     expect(_drive(signal, pipeline), isEmpty);
+  });
+
+  test('a single full-scale impulse survives the FFT pipeline', () {
+    final signal = Float64List(_sampleRate);
+    signal[_sampleRate ~/ 2] = 1;
+    final pipeline = AcousticPipeline(
+      fftSize: _fftSize,
+      sampleRate: _sampleRate,
+      flags: const AcousticDetectorFlags(
+        snore: false,
+        sleep: false,
+        music: false,
+        speech: false,
+        safety: true,
+      ),
+    );
+
+    final events = _drive(signal, pipeline);
+    expect(
+      events.where(
+        (event) => event.kind == AcousticDetectionKind.suddenLoudNoise,
+      ),
+      hasLength(1),
+    );
+  });
+
+  test('repeated loud voice-like bursts form a possible argument pattern', () {
+    double raisedVoice(double t) {
+      return 0.32 * _tone(t, 440) +
+          0.24 * _tone(t, 660) +
+          0.16 * _tone(t, 880) +
+          0.1 * _tone(t, 1760) +
+          0.08 * _tone(t, 3520);
+    }
+
+    final signal = _build([
+      for (var i = 0; i < 3; i++) ...[
+        (seconds: 0.8, gen: raisedVoice),
+        (seconds: 0.4, gen: (_) => 0.0),
+      ],
+    ]);
+    final pipeline = AcousticPipeline(
+      fftSize: _fftSize,
+      sampleRate: _sampleRate,
+      flags: const AcousticDetectorFlags(
+        snore: false,
+        sleep: false,
+        music: false,
+        speech: false,
+        safety: true,
+      ),
+    );
+
+    final events = _drive(signal, pipeline);
+    expect(
+      events.where((event) => event.kind == AcousticDetectionKind.raisedVoice),
+      hasLength(3),
+    );
+    expect(
+      events.where(
+        (event) => event.kind == AcousticDetectionKind.possibleArgumentPattern,
+      ),
+      hasLength(1),
+    );
   });
 }

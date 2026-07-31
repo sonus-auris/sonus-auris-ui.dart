@@ -9,6 +9,15 @@ void main() {
     expect(secrets.supabaseTokenNeedsRefresh(now: now), isTrue);
   });
 
+  test('needs refresh when access-token expiry is unknown', () {
+    const secrets = CloudSecrets(
+      supabaseAccessToken: 'access',
+      supabaseRefreshToken: 'refresh',
+    );
+    expect(secrets.supabaseTokenNeedsRefresh(now: now), isTrue);
+    expect(secrets.hasFreshSupabaseToken(now: now), isFalse);
+  });
+
   test('does not need refresh well before expiry', () {
     final secrets = CloudSecrets(
       supabaseAccessToken: 'access',
@@ -18,6 +27,7 @@ void main() {
           .toIso8601String(),
     );
     expect(secrets.supabaseTokenNeedsRefresh(now: now), isFalse);
+    expect(secrets.hasFreshSupabaseToken(now: now), isTrue);
   });
 
   test('needs refresh within the skew window of expiry', () {
@@ -29,6 +39,10 @@ void main() {
           .toIso8601String(),
     );
     expect(secrets.supabaseTokenNeedsRefresh(now: now), isTrue);
+    expect(
+      secrets.hasFreshSupabaseToken(now: now.add(const Duration(minutes: 1))),
+      isFalse,
+    );
   });
 
   test('no session means nothing to refresh', () {
@@ -36,19 +50,22 @@ void main() {
     expect(secrets.supabaseTokenNeedsRefresh(now: now), isFalse);
   });
 
-  test('withoutSupabaseSession clears identity but keeps cloud credentials', () {
-    const secrets = CloudSecrets(
-      s3AccessKeyId: 'akid',
-      s3SecretAccessKey: 'secret',
-      backendDeviceToken: 'device',
-      supabaseAccessToken: 'access',
-      supabaseRefreshToken: 'refresh',
-      supabaseEmail: 'user@example.com',
-    );
-    final cleared = secrets.withoutSupabaseSession();
-    expect(cleared.hasSupabaseSession, isFalse);
-    expect(cleared.supabaseEmail, isEmpty);
-    expect(cleared.s3AccessKeyId, 'akid');
-    expect(cleared.backendDeviceToken, 'device');
-  });
+  test(
+    'withoutSupabaseSession clears identity but keeps cloud credentials',
+    () {
+      const secrets = CloudSecrets(
+        s3AccessKeyId: 'akid',
+        s3SecretAccessKey: 'secret',
+        backendDeviceToken: 'device',
+        supabaseAccessToken: 'access',
+        supabaseRefreshToken: 'refresh',
+        supabaseEmail: 'user@example.com',
+      );
+      final cleared = secrets.withoutSupabaseSession();
+      expect(cleared.hasSupabaseSession, isFalse);
+      expect(cleared.supabaseEmail, isEmpty);
+      expect(cleared.s3AccessKeyId, 'akid');
+      expect(cleared.backendDeviceToken, 'device');
+    },
+  );
 }

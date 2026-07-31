@@ -13,6 +13,7 @@ import '../models/cloud_provider.dart';
 import '../models/cloud_secrets.dart';
 import '../models/recording_segment.dart';
 import 'crypto/segment_encryptor.dart';
+import 'spectral_sidecar.dart';
 
 class BackendUploadSession {
   const BackendUploadSession({
@@ -164,6 +165,7 @@ class SoundRecorderBackendClient {
       );
     }
     try {
+      final acousticAnalysis = await _readAcousticSummary(file.path);
       final plaintext = await file.readAsBytes();
       // Seal on-device before anything leaves the phone. The hash, byte count,
       // and PUT body below all operate on the ciphertext the cloud stores.
@@ -196,6 +198,7 @@ class SoundRecorderBackendClient {
                 'sampleRate': segment.sampleRate,
                 'channels': segment.channels,
                 if (segment.geoTag != null) 'geo': segment.geoTag!.toJson(),
+                'acousticAnalysis': ?acousticAnalysis,
               },
             }),
           )
@@ -426,6 +429,66 @@ class SoundRecorderBackendClient {
     );
   }
 
+  /// Durable Rust API heartbeat. Supabase Presence remains the primary
+  /// "online now" signal; this updates server-owned last_seen_at for fallback
+  /// and detects a revoked backend device token.
+  Future<String?> heartbeatDevice({
+    required AppConfig config,
+    required CloudSecrets secrets,
+  }) async {
+    if (config.backendBaseUrl.trim().isEmpty ||
+        !secrets.hasBackendDeviceToken) {
+      return null;
+    }
+    try {
+      final response = await _httpClient
+          .post(
+            _apiUri(config, '/api/mobile/v1/devices/heartbeat'),
+            headers: _jsonHeaders(secrets),
+          )
+          .timeout(requestTimeout);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return _errorMessage(_decode(response), 'Device heartbeat failed.');
+    } catch (error) {
+      return 'Device heartbeat failed: $error';
+    }
+  }
+
+  /// Invalidates every Rust API token issued for [installId]. The Rust server
+  /// authorizes this through the caller's Supabase device view, so it works for
+  /// both a device owner and an account-group owner without sharing a session.
+  Future<String?> revokeDevice({
+    required AppConfig config,
+    required CloudSecrets secrets,
+    required String installId,
+  }) async {
+    final normalized = installId.trim();
+    if (config.backendBaseUrl.trim().isEmpty ||
+        !secrets.hasSupabaseToken ||
+        normalized.isEmpty) {
+      return null;
+    }
+    try {
+      final response = await _httpClient
+          .post(
+            _apiUri(
+              config,
+              '/api/mobile/v1/devices/${Uri.encodeComponent(normalized)}/revoke',
+            ),
+            headers: _identityHeaders(secrets),
+          )
+          .timeout(requestTimeout);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return null;
+      }
+      return _errorMessage(_decode(response), 'Rust device revocation failed.');
+    } catch (error) {
+      return 'Rust device revocation failed: $error';
+    }
+  }
+
   Future<void> deleteAccount({
     required AppConfig config,
     required CloudSecrets secrets,
@@ -601,6 +664,91 @@ class SoundRecorderBackendClient {
     return body;
   }
 
+  /// Records a client-managed S3/R2 destination in the account connection
+  /// ledger without ever sending its access key, secret, session token, or
+  /// endpoint to the Sonus backend.
+  Future<Map<String, dynamic>> registerClientManagedStorageConnection({
+    required AppConfig config,
+    required CloudSecrets secrets,
+    required String provider,
+    required String displayName,
+    required String folderPath,
+  }) async {
+    if (provider != 'amazon_s3' && provider != 'cloudflare_r2') {
+      throw ArgumentError.value(
+        provider,
+        'provider',
+        'Client-managed storage must be amazon_s3 or cloudflare_r2.',
+      );
+    }
+    final startUri = _apiUri(
+      config,
+      '/api/mobile/v1/cloud-connections/oauth/start',
+    );
+    final startResponse = await _httpClient
+        .post(
+          startUri,
+          headers: _jsonHeaders(secrets),
+          body: jsonEncode({
+            'provider': provider,
+            'displayName': displayName,
+            'folderPath': folderPath,
+          }),
+        )
+        .timeout(requestTimeout);
+    final startBody = _decode(startResponse);
+    if (startResponse.statusCode < 200 || startResponse.statusCode >= 300) {
+      throw StateError(
+        _errorMessage(
+          startBody,
+          'Starting client-managed storage link failed.',
+        ),
+      );
+    }
+    final state = (startBody['state'] as String? ?? '').trim();
+    if (state.isEmpty || startBody['clientManaged'] != true) {
+      throw StateError(
+        'Backend did not return a client-managed storage link state.',
+      );
+    }
+
+    final completeUri = _apiUri(
+      config,
+      '/api/mobile/v1/cloud-connections/oauth/complete',
+    );
+    final completeResponse = await _httpClient
+        .post(
+          completeUri,
+          headers: _jsonHeaders(secrets),
+          body: jsonEncode({
+            'provider': provider,
+            'state': state,
+            'clientManagedAcknowledged': true,
+            'displayName': displayName,
+            'folderPath': folderPath,
+          }),
+        )
+        .timeout(requestTimeout);
+    final completeBody = _decode(completeResponse);
+    if (completeResponse.statusCode < 200 ||
+        completeResponse.statusCode >= 300) {
+      throw StateError(
+        _errorMessage(
+          completeBody,
+          'Completing client-managed storage link failed.',
+        ),
+      );
+    }
+    return completeBody;
+  }
+
+  static String directStorageProviderName(String endpoint) {
+    final host = Uri.tryParse(endpoint.trim())?.host.toLowerCase() ?? '';
+    return host.endsWith('.r2.cloudflarestorage.com')
+        ? 'cloudflare_r2'
+        : 'amazon_s3';
+  }
+
   /// Lists iCloud client-managed copy jobs the iOS client must mirror into the
   /// user's iCloud container, each with a short-lived S3 download link.
   Future<List<Map<String, dynamic>>> listCloudCopyJobs({
@@ -729,6 +877,8 @@ class SoundRecorderBackendClient {
         return 'microsoft_onedrive';
       case CloudProvider.iCloudDrive:
         return 'apple_icloud';
+      case CloudProvider.dropbox:
+        return 'dropbox';
       case CloudProvider.s3:
         return 's3';
     }
@@ -816,6 +966,26 @@ class SoundRecorderBackendClient {
     }
     final value = jsonDecode(response.body);
     return value is Map<String, dynamic> ? value : const {};
+  }
+
+  /// Reads only the compact, on-device classification summary. The full FFT
+  /// frame track remains a separate sidecar (and is uploaded alongside audio
+  /// for direct S3). A missing or malformed sidecar must never block audio.
+  Future<Map<String, dynamic>?> _readAcousticSummary(String audioPath) async {
+    try {
+      final sidecar = File(SpectralSidecar.sidecarPathFor(audioPath));
+      if (!await sidecar.exists()) {
+        return null;
+      }
+      final decoded = jsonDecode(await sidecar.readAsString());
+      if (decoded is! Map<String, dynamic>) {
+        return null;
+      }
+      final summary = decoded['summary'];
+      return summary is Map<String, dynamic> ? summary : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Returns [value] as a JSON object, or throws a clean [StateError] (rather

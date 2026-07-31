@@ -68,11 +68,29 @@ void main() {
     expect(f.lowBandRatio, lessThan(0.1));
   });
 
+  test('high-frequency tone lands above the speech band', () {
+    final f = analyzer.analyze(_sine(6000, sampleRate, fftSize));
+    expect(f.dominantHz, closeTo(6000, binHz));
+    expect(f.highBandRatio, greaterThan(0.8));
+    expect(f.speechBandRatio, lessThan(0.1));
+  });
+
+  test('time-domain peak, crest factor, and clipping expose impulses', () {
+    final impulse = Float64List(fftSize)..[fftSize ~/ 2] = 1;
+    final f = analyzer.analyze(impulse);
+    expect(f.peakAmplitude, 1);
+    expect(f.crestFactor, closeTo(math.sqrt(fftSize), 0.01));
+    expect(f.clippingFraction, closeTo(1 / fftSize, 1e-9));
+  });
+
   test('dBFS tracks amplitude; silence hits the floor', () {
     final loud = analyzer.analyze(_sine(440, sampleRate, fftSize, amp: 0.9));
     final quiet = analyzer.analyze(_sine(440, sampleRate, fftSize, amp: 0.05));
     expect(loud.db, greaterThan(quiet.db));
     expect(loud.db, lessThanOrEqualTo(0));
+    expect(loud.peakAmplitude, closeTo(0.9, 0.001));
+    expect(loud.crestFactor, closeTo(math.sqrt(2), 0.01));
+    expect(loud.clippingFraction, 0);
     final silent = analyzer.analyze(Float64List(fftSize));
     expect(silent.db, -120.0);
     expect(silent.rms, 0.0);

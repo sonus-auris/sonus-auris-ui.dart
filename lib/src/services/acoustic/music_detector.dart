@@ -60,7 +60,9 @@ class MusicDetector {
 
   List<AcousticDetection> add(SpectralFrame frame, DateTime atUtc) {
     _env.add(frame.rms);
-    _pitched.add(frame.flatness <= config.pitchedFlatnessMax && frame.db >= config.loudDb);
+    _pitched.add(
+      frame.flatness <= config.pitchedFlatnessMax && frame.db >= config.loudDb,
+    );
     _times.add(atUtc);
     if (_env.length > _capacity) {
       _env.removeAt(0);
@@ -74,8 +76,7 @@ class MusicDetector {
       return const [];
     }
 
-    final pitchedFraction =
-        _pitched.where((p) => p).length / _pitched.length;
+    final pitchedFraction = _pitched.where((p) => p).length / _pitched.length;
     if (pitchedFraction < config.pitchedFractionMin) {
       return const [];
     }
@@ -127,8 +128,14 @@ class MusicDetector {
     if (mean <= 0 || energy / n < _minModulationDepthSq * mean * mean) {
       return 0;
     }
-    final minLag = (config.minBeatPeriodSeconds / frameSeconds).floor().clamp(1, n - 1);
-    final maxLag = (config.maxBeatPeriodSeconds / frameSeconds).ceil().clamp(minLag, n - 1);
+    final minLag = (config.minBeatPeriodSeconds / frameSeconds).floor().clamp(
+      1,
+      n - 1,
+    );
+    final maxLag = (config.maxBeatPeriodSeconds / frameSeconds).ceil().clamp(
+      minLag,
+      n - 1,
+    );
     var best = 0.0;
     for (var lag = minLag; lag <= maxLag; lag++) {
       var sum = 0.0;

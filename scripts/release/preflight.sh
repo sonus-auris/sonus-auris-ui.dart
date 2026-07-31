@@ -37,6 +37,13 @@ else
 fi
 grep -q 'foregroundServiceType="microphone"' android/app/src/main/AndroidManifest.xml && ok "microphone foreground-service type declared" || bad "microphone foreground-service type missing"
 
+echo "== Store listing assets =="
+if scripts/release/verify-store-assets.sh >/tmp/sa-preflight-store-assets.log 2>&1; then
+  ok "store graphics have valid dimensions and passwordless auth copy"
+else
+  bad "store graphics failed verification (see /tmp/sa-preflight-store-assets.log)"
+fi
+
 echo "== iOS export config =="
 [[ -f ios/ExportOptions.plist ]] && ok "ios/ExportOptions.plist present" || soft "ios/ExportOptions.plist missing"
 if grep -q ITSAppUsesNonExemptEncryption ios/Runner/Info.plist; then ok "export-compliance key set in Info.plist"
@@ -48,10 +55,47 @@ else
   soft "Apple Distribution identity unavailable — signed IPA requires the Apple account"
 fi
 
+echo "== macOS store export config =="
+[[ -x scripts/release/macos-archive-store.sh ]] && ok "signed macOS archive script present" || bad "scripts/release/macos-archive-store.sh missing or not executable"
+[[ -f macos/ExportOptions.plist ]] && ok "macos/ExportOptions.plist present" || bad "macos/ExportOptions.plist missing"
+if grep -q 'com.apple.developer.icloud-container-identifiers' macos/Runner/Store.entitlements &&
+   grep -q 'iCloud.com.ores.audioDashcam' macos/Runner/Store.entitlements; then
+  ok "macOS store entitlements include the Sonus Auris iCloud container"
+else
+  bad "macOS store iCloud entitlements are incomplete"
+fi
+[[ -n "${APPLE_DEVELOPMENT_TEAM:-}" ]] && ok "APPLE_DEVELOPMENT_TEAM set" || soft "APPLE_DEVELOPMENT_TEAM missing — signed macOS archive requires the Apple team"
+
 echo "== Release auth config =="
 [[ -n "${SONUS_BACKEND_BASE_URL:-}" ]] && ok "SONUS_BACKEND_BASE_URL set" || bad "SONUS_BACKEND_BASE_URL missing — account deletion cannot ship broken"
 [[ -n "${SONUS_SUPABASE_URL:-}" ]] && ok "SONUS_SUPABASE_URL set" || bad "SONUS_SUPABASE_URL missing — sign-in would expose developer project fields"
 [[ -n "${SONUS_SUPABASE_ANON_KEY:-}" ]] && ok "SONUS_SUPABASE_ANON_KEY set" || bad "SONUS_SUPABASE_ANON_KEY missing — sign-in would expose developer project fields"
+if [[ -n "${SONUS_SUPABASE_URL:-}" && -n "${SONUS_SUPABASE_ANON_KEY:-}" ]]; then
+  auth_settings_url="${SONUS_SUPABASE_URL%/}/auth/v1/settings"
+  if curl -fsS --max-time 15 \
+      -H "apikey: ${SONUS_SUPABASE_ANON_KEY}" \
+      "$auth_settings_url" >/tmp/sa-preflight-auth-settings.json 2>/dev/null; then
+    ok "Supabase Auth accepts the configured public client key"
+  else
+    bad "Supabase Auth rejected or could not reach the configured project/key"
+  fi
+fi
+if [[ -n "${SONUS_BACKEND_BASE_URL:-}" ]]; then
+  if curl -fsS --max-time 15 \
+      "${SONUS_BACKEND_BASE_URL%/}/healthz" \
+      >/tmp/sa-preflight-backend-health.json 2>/dev/null; then
+    ok "Sonus Auris backend health endpoint reachable"
+  else
+    bad "Sonus Auris backend health endpoint is not reachable"
+  fi
+  if curl -fsS --max-time 15 \
+      "${SONUS_BACKEND_BASE_URL%/}/readyz" \
+      >/tmp/sa-preflight-backend-ready.json 2>/dev/null; then
+    ok "Sonus Auris backend reports ready"
+  else
+    soft "backend is healthy but not ready — inspect storage/Supabase/OAuth readiness"
+  fi
+fi
 
 echo "== Compliance artifacts (store gates) =="
 for f in PRIVACY_POLICY ACCOUNT_DELETION DATA_SAFETY_play PRIVACY_LABELS_appstore PERMISSIONS_RATIONALE EXPORT_COMPLIANCE; do

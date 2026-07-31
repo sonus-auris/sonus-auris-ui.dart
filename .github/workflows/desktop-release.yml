@@ -1,0 +1,375 @@
+name: Signed desktop installers and R2 publication
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SemVer release version, for example 1.0.1
+        type: string
+        required: true
+      publish_to_r2:
+        description: Publish versioned installers and /latest aliases to Cloudflare R2
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-production
+  cancel-in-progress: false
+
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+
+jobs:
+  linux-installer:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment:
+      name: desktop-production
+    env:
+      SONUS_BACKEND_BASE_URL: ${{ secrets.SONUS_BACKEND_BASE_URL }}
+      SONUS_SUPABASE_URL: ${{ secrets.SONUS_SUPABASE_URL }}
+      SONUS_SUPABASE_ANON_KEY: ${{ secrets.SONUS_SUPABASE_ANON_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validate release inputs
+        run: |
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9][A-Za-z0-9.-]*)?$ ]] || {
+            echo "::error::version must be SemVer-like"
+            exit 1
+          }
+          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
+            [[ -n "${!name:-}" ]] || { echo "::error::desktop-production is missing $name"; exit 1; }
+          done
+      - name: Install Linux desktop and packaging toolchain
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+          libsecret-1-dev libwebkit2gtk-4.1-dev dpkg-dev
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+      - run: flutter pub get
+      - name: Build Linux release
+        run: >-
+          flutter build linux --release -t lib/main_desktop.dart
+          --build-name "$RELEASE_VERSION"
+          "--dart-define=SONUS_BACKEND_BASE_URL=${SONUS_BACKEND_BASE_URL}"
+          "--dart-define=SONUS_SUPABASE_URL=${SONUS_SUPABASE_URL}"
+          "--dart-define=SONUS_SUPABASE_ANON_KEY=${SONUS_SUPABASE_ANON_KEY}"
+      - name: Package Debian installer
+        run: |
+          bundle="build/linux/x64/release/bundle"
+          [[ -x "$bundle/audio_dashcam" ]] || { echo "::error::Linux executable is missing"; exit 1; }
+          root="$RUNNER_TEMP/sonus-auris-deb"
+          rm -rf "$root" dist
+          mkdir -p "$root/DEBIAN" "$root/opt/sonus-auris" "$root/usr/share/applications" dist
+          cp -a "$bundle/." "$root/opt/sonus-auris/"
+          cat > "$root/DEBIAN/control" <<EOF
+          Package: sonus-auris
+          Version: $RELEASE_VERSION
+          Section: sound
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Sonus Auris <support@sonusauris.app>
+          Depends: libgtk-3-0, libsecret-1-0, libwebkit2gtk-4.1-0
+          Description: Sonus Auris desktop audio recorder and console
+           A privacy-first rolling audio recorder with encrypted cloud synchronization.
+          EOF
+          sed -i 's/^          //' "$root/DEBIAN/control"
+          cat > "$root/usr/share/applications/sonus-auris.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Sonus Auris
+          Comment=Privacy-first rolling audio recorder
+          Exec=/opt/sonus-auris/audio_dashcam
+          Terminal=false
+          Categories=AudioVideo;Audio;Recorder;
+          EOF
+          sed -i 's/^          //' "$root/usr/share/applications/sonus-auris.desktop"
+          chmod 0755 "$root/opt/sonus-auris/audio_dashcam"
+          dpkg-deb --root-owner-group --build "$root" dist/sonus-auris-linux-x86_64.deb
+          dpkg-deb --info dist/sonus-auris-linux-x86_64.deb
+          sha256sum dist/sonus-auris-linux-x86_64.deb
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonus-auris-linux-installer
+          path: dist/sonus-auris-linux-x86_64.deb
+          if-no-files-found: error
+          retention-days: 30
+
+  windows-installer:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    environment:
+      name: desktop-production
+    env:
+      SONUS_BACKEND_BASE_URL: ${{ secrets.SONUS_BACKEND_BASE_URL }}
+      SONUS_SUPABASE_URL: ${{ secrets.SONUS_SUPABASE_URL }}
+      SONUS_SUPABASE_ANON_KEY: ${{ secrets.SONUS_SUPABASE_ANON_KEY }}
+      WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+      WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validate release inputs
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_VERSION -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9][A-Za-z0-9.-]*)?$') { throw 'version must be SemVer-like' }
+          @('SONUS_BACKEND_BASE_URL','SONUS_SUPABASE_URL','SONUS_SUPABASE_ANON_KEY','WINDOWS_SIGNING_PFX_BASE64','WINDOWS_SIGNING_PFX_PASSWORD') | ForEach-Object {
+            if ([string]::IsNullOrWhiteSpace((Get-Item "env:$_").Value)) { throw "desktop-production is missing $_" }
+          }
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+      - run: flutter pub get
+      - name: Build Windows release
+        shell: pwsh
+        run: |
+          flutter build windows --release -t lib/main_desktop.dart --build-name "$env:RELEASE_VERSION" `
+            "--dart-define=SONUS_BACKEND_BASE_URL=$env:SONUS_BACKEND_BASE_URL" `
+            "--dart-define=SONUS_SUPABASE_URL=$env:SONUS_SUPABASE_URL" `
+            "--dart-define=SONUS_SUPABASE_ANON_KEY=$env:SONUS_SUPABASE_ANON_KEY"
+      - name: Sign application and build signed installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Resolve-Path 'build/windows/x64/runner/Release'
+          $appExe = Join-Path $release 'audio_dashcam.exe'
+          if (-not (Test-Path $appExe)) { throw "Windows executable is missing: $appExe" }
+
+          $pfx = Join-Path $env:RUNNER_TEMP 'sonus-auris-signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGNING_PFX_BASE64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+            Where-Object FullName -Match '\\x64\\signtool\.exe$' |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { throw 'signtool.exe was not found in the Windows SDK' }
+          & $signtool sign /fd SHA256 /td SHA256 /tr https://timestamp.digicert.com /f $pfx /p $env:WINDOWS_SIGNING_PFX_PASSWORD $appExe
+          & $signtool verify /pa /v $appExe
+
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          if (-not (Test-Path $iscc)) { throw 'Inno Setup compiler was not found' }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $iss = Join-Path $env:RUNNER_TEMP 'sonus-auris.iss'
+          @"
+          [Setup]
+          AppId={{9B6C4157-75D3-4DB0-A181-83CF206D4EA8}
+          AppName=Sonus Auris
+          AppVersion=$env:RELEASE_VERSION
+          AppPublisher=Sonus Auris
+          DefaultDirName={autopf}\Sonus Auris
+          DefaultGroupName=Sonus Auris
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+          Compression=lzma2
+          SolidCompression=yes
+          OutputDir=$((Resolve-Path dist).Path)
+          OutputBaseFilename=sonus-auris-windows-x64
+          UninstallDisplayIcon={app}\audio_dashcam.exe
+          WizardStyle=modern
+          [Files]
+          Source: "$release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+          [Icons]
+          Name: "{autoprograms}\Sonus Auris"; Filename: "{app}\audio_dashcam.exe"
+          Name: "{autodesktop}\Sonus Auris"; Filename: "{app}\audio_dashcam.exe"; Tasks: desktopicon
+          [Tasks]
+          Name: desktopicon; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
+          "@ | Set-Content -LiteralPath $iss -Encoding UTF8
+          & $iscc $iss
+
+          $installer = Resolve-Path 'dist/sonus-auris-windows-x64.exe'
+          & $signtool sign /fd SHA256 /td SHA256 /tr https://timestamp.digicert.com /f $pfx /p $env:WINDOWS_SIGNING_PFX_PASSWORD $installer
+          & $signtool verify /pa /v $installer
+          Get-FileHash -Algorithm SHA256 $installer
+          Remove-Item -Force $pfx
+      - name: Remove signing certificate
+        if: always()
+        shell: pwsh
+        run: Remove-Item -Force "$env:RUNNER_TEMP/sonus-auris-signing.pfx" -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonus-auris-windows-installer
+          path: dist/sonus-auris-windows-x64.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  macos-installer:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: macos-15
+    timeout-minutes: 55
+    environment:
+      name: desktop-production
+    env:
+      SONUS_BACKEND_BASE_URL: ${{ secrets.SONUS_BACKEND_BASE_URL }}
+      SONUS_SUPABASE_URL: ${{ secrets.SONUS_SUPABASE_URL }}
+      SONUS_SUPABASE_ANON_KEY: ${{ secrets.SONUS_SUPABASE_ANON_KEY }}
+      MACOS_DEVELOPER_ID_P12_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
+      MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+      APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validate release inputs
+        run: |
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9][A-Za-z0-9.-]*)?$ ]] || { echo "::error::version must be SemVer-like"; exit 1; }
+          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY MACOS_DEVELOPER_ID_P12_BASE64 MACOS_DEVELOPER_ID_P12_PASSWORD APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER_ID APPLE_NOTARY_API_KEY_P8_BASE64; do
+            [[ -n "${!name:-}" ]] || { echo "::error::desktop-production is missing $name"; exit 1; }
+          done
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+      - run: flutter pub get
+      - name: Build macOS release
+        run: >-
+          flutter build macos --release -t lib/main_desktop.dart
+          --build-name "$RELEASE_VERSION"
+          "--dart-define=SONUS_BACKEND_BASE_URL=${SONUS_BACKEND_BASE_URL}"
+          "--dart-define=SONUS_SUPABASE_URL=${SONUS_SUPABASE_URL}"
+          "--dart-define=SONUS_SUPABASE_ANON_KEY=${SONUS_SUPABASE_ANON_KEY}"
+      - name: Sign, notarize, and staple DMG
+        run: |
+          set -euo pipefail
+          source_app="build/macos/Build/Products/Release/audio_dashcam.app"
+          [[ -d "$source_app" ]] || { echo "::error::macOS app bundle is missing"; exit 1; }
+          keychain="$RUNNER_TEMP/sonus-auris-desktop.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          p12="$RUNNER_TEMP/developer-id.p12"
+          notary_key="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+          printf '%s' "$MACOS_DEVELOPER_ID_P12_BASE64" | base64 -D > "$p12"
+          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 -D > "$notary_key"
+          chmod 600 "$p12" "$notary_key"
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$p12" -k "$keychain" -P "$MACOS_DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)"
+          [[ -n "$identity" ]] || { echo "::error::Developer ID Application identity not found"; exit 1; }
+
+          stage="$RUNNER_TEMP/sonus-auris-dmg"
+          rm -rf "$stage" dist
+          mkdir -p "$stage" dist
+          ditto "$source_app" "$stage/Sonus Auris.app"
+          ln -s /Applications "$stage/Applications"
+          codesign --force --deep --options runtime --timestamp --sign "$identity" "$stage/Sonus Auris.app"
+          codesign --verify --deep --strict --verbose=2 "$stage/Sonus Auris.app"
+          hdiutil create -volname "Sonus Auris" -srcfolder "$stage" -ov -format UDZO dist/sonus-auris-macos-universal.dmg
+          codesign --force --timestamp --sign "$identity" dist/sonus-auris-macos-universal.dmg
+          xcrun notarytool submit dist/sonus-auris-macos-universal.dmg --key "$notary_key" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER_ID" --wait
+          xcrun stapler staple dist/sonus-auris-macos-universal.dmg
+          xcrun stapler validate dist/sonus-auris-macos-universal.dmg
+          shasum -a 256 dist/sonus-auris-macos-universal.dmg
+          {
+            echo "SIGNING_KEYCHAIN_PATH=$keychain"
+            echo "SIGNING_P12_PATH=$p12"
+            echo "NOTARY_KEY_PATH=$notary_key"
+          } >> "$GITHUB_ENV"
+      - name: Remove signing assets
+        if: always()
+        run: |
+          [[ -z "${SIGNING_KEYCHAIN_PATH:-}" ]] || security delete-keychain "$SIGNING_KEYCHAIN_PATH" || true
+          [[ -z "${SIGNING_P12_PATH:-}" ]] || rm -f "$SIGNING_P12_PATH"
+          [[ -z "${NOTARY_KEY_PATH:-}" ]] || rm -f "$NOTARY_KEY_PATH"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonus-auris-macos-installer
+          path: dist/sonus-auris-macos-universal.dmg
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: [linux-installer, windows-installer, macos-installer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: desktop-production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: sonus-auris-*-installer
+          path: dist
+          merge-multiple: true
+      - name: Validate complete release set
+        run: |
+          set -euo pipefail
+          for artifact in \
+            dist/sonus-auris-windows-x64.exe \
+            dist/sonus-auris-macos-universal.dmg \
+            dist/sonus-auris-linux-x86_64.deb; do
+            [[ -s "$artifact" ]] || { echo "::error::missing $artifact"; exit 1; }
+          done
+          python3 scripts/release/publish_desktop_r2.py \
+            --dry-run \
+            --version "$RELEASE_VERSION" \
+            --dist dist \
+            --bucket validation-bucket \
+            --endpoint-url https://example.r2.cloudflarestorage.com \
+            --public-base-url https://downloads.example.test
+      - name: Require scoped R2 credentials only when publishing
+        if: ${{ inputs.publish_to_r2 }}
+        env:
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          missing=()
+          for name in R2_ENDPOINT_URL R2_BUCKET R2_PUBLIC_BASE_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::desktop-production is missing R2 values: ${missing[*]}"
+            exit 1
+          fi
+      - name: Install R2 client dependency
+        if: ${{ inputs.publish_to_r2 }}
+        run: python3 -m pip install --disable-pip-version-check --no-cache-dir 'boto3>=1.40,<2'
+      - name: Publish immutable and latest R2 objects
+        if: ${{ inputs.publish_to_r2 }}
+        env:
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python3 scripts/release/publish_desktop_r2.py --version "$RELEASE_VERSION" --dist dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonus-auris-desktop-release-${{ inputs.version }}
+          path: |
+            dist/sonus-auris-windows-x64.exe
+            dist/sonus-auris-macos-universal.dmg
+            dist/sonus-auris-linux-x86_64.deb
+            dist/SHA256SUMS
+            dist/latest.json
+          if-no-files-found: error
+          retention-days: 90

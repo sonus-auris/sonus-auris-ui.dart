@@ -1,6 +1,6 @@
 // ignore_for_file: prefer_initializing_formals
 
-// Mirrors encrypted segments the backend cannot push into the user's iCloud Drive via the native iCloud bridge.
+// Mirrors segments the backend cannot push into the user's iCloud Drive via the native iCloud bridge.
 import 'dart:async';
 
 import 'package:flutter/services.dart';
@@ -37,6 +37,7 @@ class IcloudSyncService {
     MethodChannel? channel,
     http.Client? httpClient,
     this.downloadTimeout = const Duration(seconds: 45),
+    this.platformTimeout = const Duration(seconds: 20),
     SegmentEncryptor? encryptor,
   }) : _channel = channel ?? const MethodChannel('audio_dashcam/icloud'),
        _httpClient = httpClient ?? http.Client(),
@@ -45,21 +46,27 @@ class IcloudSyncService {
   final MethodChannel _channel;
   final http.Client _httpClient;
   final Duration downloadTimeout;
+  final Duration platformTimeout;
 
   /// Decrypts ciphertext fetched from our S3 vault so a *usable* audio file is
-  /// written into the user's own iCloud. This is the user-initiated, per-clip
-  /// "opt-in release" path — decryption happens here on-device, never server-side.
+  /// written into the user's own iCloud. This is an explicit, user-owned mirror
+  /// path — decryption happens here on-device, never server-side. The UI must
+  /// not describe iCloud copies as ciphertext backups.
   final SegmentEncryptor? _encryptor;
 
   /// Whether the device is signed into iCloud and the ubiquity container is
-  /// reachable. Returns false on non-iOS platforms (channel not registered).
+  /// reachable. Returns false on platforms without the Apple native bridge.
   Future<bool> isAvailable() async {
     try {
-      final available = await _channel.invokeMethod<bool>('isAvailable');
+      final available = await _channel
+          .invokeMethod<bool>('isAvailable')
+          .timeout(platformTimeout);
       return available ?? false;
-    } on MissingPluginException {
+    } on MissingPluginException catch (_) {
       return false;
-    } on PlatformException {
+    } on PlatformException catch (_) {
+      return false;
+    } on TimeoutException catch (_) {
       return false;
     }
   }
@@ -144,10 +151,12 @@ class IcloudSyncService {
   /// Writes [bytes] into the iCloud container at [destinationKey] and returns the
   /// native file identifier/path. Throws on failure.
   Future<String> _writeToIcloud(String destinationKey, Uint8List bytes) async {
-    final fileId = await _channel.invokeMethod<String>('importSegment', {
-      'destinationKey': destinationKey,
-      'bytes': bytes,
-    });
+    final fileId = await _channel
+        .invokeMethod<String>('importSegment', {
+          'destinationKey': destinationKey,
+          'bytes': bytes,
+        })
+        .timeout(platformTimeout);
     if (fileId == null || fileId.trim().isEmpty) {
       throw StateError('iCloud write returned no file identifier.');
     }

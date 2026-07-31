@@ -7,16 +7,28 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../models/acoustic_detection.dart';
 import '../models/context_trigger.dart';
 import '../models/recording_schedule.dart';
-import '../models/acoustic_detection.dart';
 import 'diagnostic_log.dart';
+
+/// Narrow schedule-reminder seam used by [PluginSchedulePlatform]. Tests inject
+/// a fake so exact-alarm ordering can be verified without native plugin channels.
+abstract interface class ScheduleReminderClient {
+  Future<bool> requestPermission();
+
+  Future<void> scheduleTransitions(
+    List<ScheduleTransition> transitions, {
+    bool exact = true,
+  });
+
+  Future<void> cancelScheduled();
+}
 
 /// Single owner of [FlutterLocalNotificationsPlugin] so there is exactly one
 /// `initialize` (and therefore one tap-response handler) across the app. Both
-/// the recording-schedule iOS reminders and the context-trigger consent prompts
-/// flow through here.
-class LocalNotificationsService {
+/// recording-schedule reminders and context-trigger consent prompts flow here.
+class LocalNotificationsService implements ScheduleReminderClient {
   LocalNotificationsService({
     DiagnosticLog? diagnostics,
     FlutterLocalNotificationsPlugin? plugin,
@@ -36,6 +48,7 @@ class LocalNotificationsService {
   static const String scheduleStartPayload = 'schedule-start';
   static const String scheduleStopPayload = 'schedule-stop';
   static const String sleepCycleAlarmPayload = 'sleep-cycle-alarm';
+  static const String collisionPayload = 'possible-collision';
 
   // Notification id partitions.
   static const int _scheduleStartBase = 780000;
@@ -43,6 +56,7 @@ class LocalNotificationsService {
   static const int _scheduleSpan = 64;
   static const int _consentId = 800000;
   static const int _sleepCycleAlarmBase = 810000;
+  static const int _collisionId = 820000;
 
   /// iOS allows at most 64 *pending* local notifications per app. Cap the total
   /// scheduled (start + stop) below that, leaving headroom for the consent
@@ -63,6 +77,11 @@ class LocalNotificationsService {
     const initSettings = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
       iOS: DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      ),
+      macOS: DarwinInitializationSettings(
         requestAlertPermission: false,
         requestBadgePermission: false,
         requestSoundPermission: false,
@@ -93,12 +112,21 @@ class LocalNotificationsService {
     return false;
   }
 
+  @override
   Future<bool> requestPermission() async {
     await ensureInitialized();
     if (Platform.isIOS) {
       final granted = await _plugin
           .resolvePlatformSpecificImplementation<
             IOSFlutterLocalNotificationsPlugin
+          >()
+          ?.requestPermissions(alert: true, badge: false, sound: true);
+      return granted ?? false;
+    }
+    if (Platform.isMacOS) {
+      final granted = await _plugin
+          .resolvePlatformSpecificImplementation<
+            MacOSFlutterLocalNotificationsPlugin
           >()
           ?.requestPermissions(alert: true, badge: false, sound: true);
       return granted ?? false;
@@ -150,6 +178,11 @@ class LocalNotificationsService {
       presentSound: true,
       interruptionLevel: InterruptionLevel.timeSensitive,
     ),
+    macOS: DarwinNotificationDetails(
+      presentAlert: true,
+      presentSound: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+    ),
   );
 
   static const NotificationDetails _sleepAlarmDetails = NotificationDetails(
@@ -167,17 +200,34 @@ class LocalNotificationsService {
       presentSound: true,
       interruptionLevel: InterruptionLevel.timeSensitive,
     ),
+    macOS: DarwinNotificationDetails(
+      presentAlert: true,
+      presentSound: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+    ),
   );
 
-  /// Schedule iOS reminders for window barriers. If the app is already alive,
-  /// the in-app scheduler starts/stops capture directly; these reminders help
-  /// the user notice a window and can relaunch the app if it was not live.
-  Future<void> scheduleTransitions(List<ScheduleTransition> transitions) async {
+  /// Schedule user-visible reminders for window barriers. The app may start a
+  /// window automatically only while it is foregrounded. When it is backgrounded
+  /// or killed, tapping the start reminder is the explicit user action that
+  /// returns Sonus Auris to the foreground before microphone capture begins.
+  ///
+  /// Android falls back to inexact reminders when the user declines "Alarms &
+  /// reminders" access. The reminder may be delayed in that case, but the app
+  /// never substitutes a persistent microphone foreground service for standby.
+  @override
+  Future<void> scheduleTransitions(
+    List<ScheduleTransition> transitions, {
+    bool exact = true,
+  }) async {
     await ensureInitialized();
     await cancelScheduled();
     var startIdx = 0;
     var stopIdx = 0;
     final nowLocal = tz.TZDateTime.now(tz.local);
+    final androidMode = exact
+        ? AndroidScheduleMode.exactAllowWhileIdle
+        : AndroidScheduleMode.inexactAllowWhileIdle;
     for (final t in transitions) {
       // Stay under the iOS pending-notification ceiling. Transitions are
       // chronological, so this keeps the soonest reminders.
@@ -191,11 +241,11 @@ class LocalNotificationsService {
       if (t.startsRecording && startIdx < _scheduleSpan) {
         await _plugin.zonedSchedule(
           _scheduleStartBase + startIdx++,
-          'Scheduled recording is starting',
-          'Open Sonus Auris to confirm capture is active.',
+          'Scheduled recording window is ready',
+          'Tap to open Sonus Auris and start this declared window.',
           when,
           _details,
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          androidScheduleMode: androidMode,
           uiLocalNotificationDateInterpretation:
               UILocalNotificationDateInterpretation.absoluteTime,
           payload: scheduleStartPayload,
@@ -203,20 +253,24 @@ class LocalNotificationsService {
       } else if (!t.startsRecording && stopIdx < _scheduleSpan) {
         await _plugin.zonedSchedule(
           _scheduleStopBase + stopIdx++,
-          'Scheduled recording ended',
-          'Your scheduled recording window has finished.',
+          'Scheduled recording window ended',
+          'Any schedule-owned recording has been asked to stop.',
           when,
           _details,
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          androidScheduleMode: androidMode,
           uiLocalNotificationDateInterpretation:
               UILocalNotificationDateInterpretation.absoluteTime,
           payload: scheduleStopPayload,
         );
       }
     }
-    _diagnostics?.add('Scheduled $startIdx start + $stopIdx stop reminder(s).');
+    _diagnostics?.add(
+      'Scheduled $startIdx start + $stopIdx stop reminder(s) '
+      '(${exact ? "exact" : "inexact"}).',
+    );
   }
 
+  @override
   Future<void> cancelScheduled() async {
     await ensureInitialized();
     for (var i = 0; i < _scheduleSpan; i++) {
@@ -258,6 +312,20 @@ class LocalNotificationsService {
       'Estimated cycle length: $minutes minutes.',
       _sleepAlarmDetails,
       payload: sleepCycleAlarmPayload,
+    );
+  }
+
+  /// Reminds the user that the rolling recorder captured a likely impact. This
+  /// is intentionally phrased as a possibility; accelerometer-only detection
+  /// cannot distinguish every phone drop from a vehicle collision.
+  Future<void> showPossibleCollision() async {
+    await ensureInitialized();
+    await _plugin.show(
+      _collisionId,
+      'Possible collision detected',
+      'Sonus Auris is recording. Open the app to review or save this moment.',
+      _sleepAlarmDetails,
+      payload: collisionPayload,
     );
   }
 }

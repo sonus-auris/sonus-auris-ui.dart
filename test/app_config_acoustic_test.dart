@@ -21,6 +21,8 @@ void main() {
       speechDetectionEnabled: true,
       shazamEnabled: true,
       keywords: ['help', 'fire'],
+      safeWords: ['emergency', 'call counsel'],
+      keywordQualityBoostMinutes: 120,
       sttEnabled: true,
       sttEndpoint: 'https://stt.example/transcribe',
       adaptiveQualityEnabled: true,
@@ -43,6 +45,8 @@ void main() {
     expect(restored.musicDetectionEnabled, isFalse);
     expect(restored.shazamEnabled, isTrue);
     expect(restored.keywords, ['help', 'fire']);
+    expect(restored.safeWords, ['emergency', 'call counsel']);
+    expect(restored.keywordQualityBoostMinutes, 120);
     expect(restored.sttEnabled, isTrue);
     expect(restored.sttEndpoint, 'https://stt.example/transcribe');
     expect(restored.adaptiveQualityEnabled, isTrue);
@@ -110,17 +114,41 @@ void main() {
   });
 
   test('out-of-range values are clamped on load', () {
+    final oversizedPhrase = List.filled(81, 'x').join();
     final json = const AppConfig(deviceId: 'd').toJson()
       ..['captureSampleRate'] = 96000
       ..['quietSampleRate'] = 100
       ..['analysisActivationDb'] = 12.0
       ..['analysisSustainSeconds'] = 999.0
-      ..['sleepCycleMinutesByIndex'] = [30, 75, 121, 90];
+      ..['sleepCycleMinutesByIndex'] = [30, 75, 121, 90]
+      ..['safeWords'] = [
+        ' Help ',
+        'help',
+        '',
+        oversizedPhrase,
+        ...List.generate(40, (index) => 'phrase $index'),
+      ]
+      ..['keywordQualityBoostMinutes'] = 999;
     final config = AppConfig.fromJson(json);
     expect(config.captureSampleRate, 48000);
     expect(config.quietSampleRate, 8000);
     expect(config.analysisActivationDb, 0.0);
     expect(config.analysisSustainSeconds, 30.0);
     expect(config.sleepCycleMinutesByIndex, [75, 75, 120, 90]);
+    expect(config.safeWords, hasLength(32));
+    expect(config.safeWords.first, 'Help');
+    expect(config.safeWords, isNot(contains('help')));
+    expect(config.safeWords, isNot(contains(oversizedPhrase)));
+    expect(config.keywordQualityBoostMinutes, 360);
   });
+
+  test(
+    'live phrase normalization trims and deduplicates case-insensitively',
+    () {
+      expect(AppConfig.normalizePhrases([' Help ', 'help', 'FIRE', ' fire ']), [
+        'Help',
+        'FIRE',
+      ]);
+    },
+  );
 }

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build a signed App Store **IPA**. Does NOT upload. macOS + Xcode only.
+# Build a signed App Store **IPA**. macOS + Xcode only.
 #
 # Output: build/ios/ipa/*.ipa
 # Requires: a Distribution cert + App Store provisioning profile for
-# com.ores.audioDashcam, and DEVELOPMENT_TEAM set (env or in the Xcode project).
+# com.ores.audioDashcam, and DEVELOPMENT_TEAM set (env or Xcode project).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,6 +26,22 @@ if (( ${#missing_config[@]} > 0 )); then
   exit 1
 fi
 
+build_args=()
+if [[ -n "${SONUS_BUILD_NAME:-}" ]]; then
+  [[ "$SONUS_BUILD_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][A-Za-z0-9.-]+)?$ ]] || {
+    echo "SONUS_BUILD_NAME must be SemVer-like (for example 1.2.3)." >&2
+    exit 1
+  }
+  build_args+=(--build-name="$SONUS_BUILD_NAME")
+fi
+if [[ -n "${SONUS_BUILD_NUMBER:-}" ]]; then
+  [[ "$SONUS_BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
+    echo "SONUS_BUILD_NUMBER must be a positive integer." >&2
+    exit 1
+  }
+  build_args+=(--build-number="$SONUS_BUILD_NUMBER")
+fi
+
 echo "Flutter: $(flutter --version | head -1)"
 flutter pub get
 ( cd ios && pod install )
@@ -41,10 +57,10 @@ flutter build ipa \
   --obfuscate \
   --split-debug-info=build/symbols \
   --export-options-plist="$export_opts" \
+  "${build_args[@]}" \
   "${dart_define_args[@]}"
 
 echo
 echo "Built IPA(s):"; ls -la build/ios/ipa/*.ipa 2>/dev/null || echo "  (none — check signing/profile errors above)"
 echo
-echo "Upload (explicit): Xcode Organizer / Transporter, or 'cd ios && fastlane beta' for TestFlight."
-echo "Tip: validate first with 'xcrun altool --validate-app' or Transporter's Verify."
+echo "Publish through .github/workflows/ios-build.yml or validate manually with xcrun altool."

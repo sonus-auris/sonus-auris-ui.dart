@@ -3,18 +3,23 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart' show FlutterExceptionHandler;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 // `show DateFormat` so intl's TextDirection enum doesn't shadow dart:ui's.
 import 'package:intl/intl.dart' show DateFormat;
+import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
+    as interfaces;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'src/app/app_controller.dart';
 import 'src/app/app_view_model.dart';
+import 'src/models/account_status.dart';
 import 'src/platform/form_factor.dart';
+import 'src/platform/offline_development_mode.dart';
 import 'src/models/acoustic_detection.dart';
 import 'src/models/app_config.dart';
 import 'src/models/cloud_connection.dart';
@@ -26,9 +31,17 @@ import 'src/models/storage_estimate.dart';
 import 'src/models/transfer_gate_status.dart';
 import 'src/models/upload_network_policy.dart';
 import 'src/services/voice_id/voice_profile_service.dart';
+import 'src/services/account_group_service.dart';
+import 'src/services/supabase_device_presence_client.dart';
 import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
 import 'src/widgets/supabase_auth_form.dart';
+<<<<<<< HEAD
+import 'src/widgets/mandatory_mfa_gate.dart';
+=======
+import 'src/widgets/supabase_mfa_gate.dart';
+import 'src/widgets/retention_expiry_banner.dart';
+>>>>>>> origin/main
 
 const String _privacyPolicyUrl = 'https://sonusauris.app/privacy/';
 const String _accountDeletionUrl = 'https://sonusauris.app/account-deletion/';
@@ -71,10 +84,15 @@ class AudioDashcamRoot extends StatefulWidget {
   State<AudioDashcamRoot> createState() => _AudioDashcamRootState();
 }
 
-class _AudioDashcamRootState extends State<AudioDashcamRoot> {
+class _AudioDashcamRootState extends State<AudioDashcamRoot>
+    with WidgetsBindingObserver {
   Timer? _controllerBootstrapTimer;
   AppController? _controller;
   Future<void>? _initFuture;
+  late final AppLinks _appLinks;
+  StreamSubscription<Uri>? _authLinkSubscription;
+  Uri? _pendingAuthLink;
+  bool _controllerReady = false;
   Object? _startupError;
   FlutterExceptionHandler? _previousFlutterOnError;
   ui.ErrorCallback? _previousPlatformOnError;
@@ -82,6 +100,13 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _appLinks = AppLinks();
+    unawaited(_captureInitialAuthLink());
+    _authLinkSubscription = _appLinks.uriLinkStream.listen(
+      _handleAuthLink,
+      onError: (_) {},
+    );
     // Build and submit the branded loading frame before constructing plugin-
     // backed services. A zero-delay event from a post-frame callback guarantees
     // this frame can leave the Dart UI isolate first, even when Android is still
@@ -105,7 +130,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
       final controller = widget.controllerFactory?.call() ?? AppController();
       _controller = controller;
       _installTelemetryErrorHooks(controller);
-      final initFuture = controller.init();
+      final initFuture = _initializeController(controller);
       if (!mounted) {
         unawaited(controller.dispose());
         return;
@@ -120,6 +145,36 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
         });
       }
     }
+  }
+
+  Future<void> _captureInitialAuthLink() async {
+    try {
+      final link = await _appLinks.getInitialLink();
+      if (link != null) {
+        _handleAuthLink(link);
+      }
+    } catch (_) {
+      // Deep-link support is unavailable in some test/preview environments.
+    }
+  }
+
+  Future<void> _initializeController(AppController controller) async {
+    await controller.init();
+    _controllerReady = true;
+    final pending = _pendingAuthLink;
+    _pendingAuthLink = null;
+    if (pending != null) {
+      await controller.consumeSupabaseMagicLink(pending);
+    }
+  }
+
+  void _handleAuthLink(Uri link) {
+    final controller = _controller;
+    if (controller == null || !_controllerReady) {
+      _pendingAuthLink = link;
+      return;
+    }
+    unawaited(controller.consumeSupabaseMagicLink(link));
   }
 
   void _installTelemetryErrorHooks(AppController controller) {
@@ -141,7 +196,9 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controllerBootstrapTimer?.cancel();
+    _authLinkSubscription?.cancel();
     if (_previousFlutterOnError != null) {
       FlutterError.onError = _previousFlutterOnError;
     }
@@ -153,6 +210,16 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
       unawaited(controller.dispose());
     }
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final controller = _controller;
+      if (controller != null) {
+        unawaited(controller.refreshSupabaseSessionForAppResume());
+      }
+    }
   }
 
   @override
@@ -186,13 +253,31 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot> {
         if (snapshot.hasError) {
           return ErrorPage(error: snapshot.error.toString());
         }
-        // Gate the app behind onboarding/consent until it's completed for the
-        // current consent version.
-        return ValueListenableBuilder<bool>(
-          valueListenable: controller.onboardingComplete,
-          builder: (context, complete, _) => complete
-              ? SettingsPage(controller: controller)
-              : OnboardingFlow(controller: controller),
+        return StreamBuilder<AppViewModel>(
+          stream: controller.viewModels,
+          builder: (context, viewModelSnapshot) {
+            final viewModel = viewModelSnapshot.data;
+            if (viewModel == null || viewModel.isInitializing) {
+              return const LoadingPage();
+            }
+            if (viewModel.hasSupabaseSession && !viewModel.isSignedIn) {
+              return MandatoryMfaGate(controller: controller);
+            }
+            // Gate the app behind onboarding/consent until it's completed for
+            // the current consent version.
+            return ValueListenableBuilder<bool>(
+              valueListenable: controller.onboardingComplete,
+              builder: (context, complete, _) => complete
+                  ? SettingsPage(controller: controller)
+                  : OnboardingFlow(
+                      controller: controller,
+                      // The MFA gate temporarily replaces onboarding. Resume
+                      // at the account confirmation instead of throwing a
+                      // newly authenticated user back to the welcome screen.
+                      initialStep: viewModel.isSignedIn ? 1 : 0,
+                    ),
+            );
+          },
         );
       },
     );
@@ -263,19 +348,27 @@ class ErrorPage extends StatelessWidget {
 /// user accepts the required consents; the accepted [ConsentRecord] is stored
 /// locally and synced to Supabase.
 class OnboardingFlow extends StatefulWidget {
-  const OnboardingFlow({super.key, required this.controller});
+  const OnboardingFlow({
+    super.key,
+    required this.controller,
+    this.initialStep = 0,
+  });
 
   final AppController controller;
+  final int initialStep;
 
   @override
   State<OnboardingFlow> createState() => _OnboardingFlowState();
 }
 
 class _OnboardingFlowState extends State<OnboardingFlow> {
-  int _step = 0;
+  late int _step;
   bool _busy = false;
   final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
+<<<<<<< HEAD
+=======
+  final _codeController = TextEditingController();
+>>>>>>> origin/main
   final _supabaseUrlController = TextEditingController();
   final _supabaseAnonKeyController = TextEditingController();
   bool _supabaseProjectSeeded = false;
@@ -286,9 +379,18 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   static const int _lastStep = 3;
 
   @override
+  void initState() {
+    super.initState();
+    _step = widget.initialStep.clamp(0, _lastStep);
+  }
+
+  @override
   void dispose() {
     _emailController.dispose();
-    _passwordController.dispose();
+<<<<<<< HEAD
+=======
+    _codeController.dispose();
+>>>>>>> origin/main
     _supabaseUrlController.dispose();
     _supabaseAnonKeyController.dispose();
     super.dispose();
@@ -296,17 +398,10 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
 
   bool get _requiredAccepted =>
       ConsentItem.values.where((i) => i.required).every((i) => _grants[i]!);
-
-  Future<void> _auth(Future<void> Function() run) async {
-    setState(() => _busy = true);
-    try {
-      await run();
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
+<<<<<<< HEAD
+  bool get _offlineModeEnabled => isOfflineDevelopmentModeEnabled();
+=======
+>>>>>>> origin/main
 
   Future<void> _finish() async {
     setState(() => _busy = true);
@@ -396,9 +491,14 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         Text('Welcome to Sonus Auris', style: theme.textTheme.headlineSmall),
         const SizedBox(height: 12),
         const Text(
-          'Sonus Auris keeps a rolling, on-device audio buffer and can analyze '
-          'it privately — snoring, sleep cycles, and more. Audio is encrypted on '
-          'your device before anything is backed up.\n\n'
+          'Sonus Auris is first a private rolling audio recorder for musicians, '
+          'note-takers, and people who want dashcam-like context when an event '
+          'later matters. Optional song, speech, safety, and sleep estimates run '
+          'as best-effort sidecars; recording continues if any of them fail. '
+          'Audio is encrypted on your device before anything is backed up.\n\n'
+          'Recording laws and consent rules vary. Sonus Auris is not legal '
+          'advice and cannot guarantee that a recording will be admissible or '
+          'protect you from a claim.\n\n'
           "Next we'll create your account and ask permission for exactly the "
           'data the app captures. You stay in control of every item.',
           style: TextStyle(color: SonusColors.inkSoft, height: 1.4),
@@ -415,6 +515,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         validateSupabaseAnonKey(vm?.config.supabaseAnonKey) == null;
     if (signedIn) {
       return Column(
+        key: const ValueKey('onboarding-signed-in-state'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 8),
@@ -434,6 +535,20 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         ],
       );
     }
+    if (vm?.hasFirstFactorSession ?? false) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 8),
+          SupabaseMfaGate(controller: widget.controller),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: _busy ? null : widget.controller.signOutSupabase,
+            child: const Text('Use a different account'),
+          ),
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -441,23 +556,43 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         Text('Create your account', style: theme.textTheme.titleLarge),
         const SizedBox(height: 8),
         const Text(
-          'Sign up or sign in to securely store your settings and consent.',
+          'Use one 6-digit email code to sign up or sign in and securely store '
+          'your settings and consent. The email link is a fallback.',
           style: TextStyle(color: SonusColors.inkSoft),
         ),
         const SizedBox(height: 16),
         SupabaseAuthForm(
           emailController: _emailController,
-          passwordController: _passwordController,
+<<<<<<< HEAD
+=======
+          codeController: _codeController,
+>>>>>>> origin/main
           supabaseUrlController: _supabaseUrlController,
           supabaseAnonKeyController: _supabaseAnonKeyController,
           showProjectConfiguration: !configured,
           enabled: !_busy && vm != null,
-          onSignIn: (email, password) =>
-              _auth(() => _signIn(vm, email, password)),
-          onSignUp: (email, password) =>
-              _auth(() => _signUp(vm, email, password)),
-          onPasswordReset: (email) => _auth(() => _resetPassword(vm, email)),
+<<<<<<< HEAD
+          onSendMagicLink: (email) => _requestMagicLink(vm, email),
+          onVerifyCode: (email, code) => _verifyEmailCode(vm, email, code),
+=======
+          onRequestCode: (email) => _requestCode(vm, email),
+          onSubmitCode: (email, code) => _submitCode(vm, email, code),
+>>>>>>> origin/main
         ),
+        if (_offlineModeEnabled) ...[
+          const SizedBox(height: 16),
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.cloud_off_outlined),
+              title: Text('Temporary offline development mode'),
+              subtitle: Text(
+                'Local recording, playback, schedules, and on-device analysis '
+                'remain available. Account devices, cloud backup, invitations, '
+                'and sync stay disabled until you sign in.',
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -480,42 +615,59 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     );
   }
 
-  Future<void> _signUp(
-    AppViewModel? viewModel,
-    String email,
-    String password,
-  ) async {
+<<<<<<< HEAD
+  Future<bool> _requestMagicLink(AppViewModel? viewModel, String email) async {
+=======
+  Future<bool> _requestCode(AppViewModel? viewModel, String email) async {
     if (viewModel == null) {
-      return;
+      return false;
     }
-    await _saveSupabaseProject(viewModel);
-    await widget.controller.signUpWithSupabase(
-      email: email,
-      password: password,
-    );
+    setState(() => _busy = true);
+    try {
+      await _saveSupabaseProject(viewModel);
+      return await widget.controller.requestSupabaseEmailOtp(email: email);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
   }
 
-  Future<void> _signIn(
+  Future<void> _submitCode(
     AppViewModel? viewModel,
     String email,
-    String password,
+    String code,
   ) async {
+>>>>>>> origin/main
     if (viewModel == null) {
-      return;
+      return false;
     }
+<<<<<<< HEAD
     await _saveSupabaseProject(viewModel);
-    await widget.controller.signInWithSupabase(
-      email: email,
-      password: password,
-    );
+    return widget.controller.requestSupabaseEmailOtp(email: email);
   }
 
-  Future<void> _resetPassword(AppViewModel? viewModel, String email) async {
+  Future<bool> _verifyEmailCode(
+    AppViewModel? viewModel,
+    String email,
+    String code,
+  ) async {
     if (viewModel == null) {
-      return;
+      return false;
     }
     await _saveSupabaseProject(viewModel);
-    await widget.controller.sendSupabasePasswordReset(email: email);
+    return widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
+=======
+    setState(() => _busy = true);
+    try {
+      await _saveSupabaseProject(viewModel);
+      await widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+>>>>>>> origin/main
   }
 
   Widget _consentStep(BuildContext context) {
@@ -613,6 +765,8 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   Widget _buildNav(AppViewModel? vm) {
     final isLast = _step == _lastStep;
     final onAccountStep = _step == 1;
+    final accountReady =
+        !onAccountStep || (vm?.isSignedIn ?? false) || _offlineModeEnabled;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
       child: Wrap(
@@ -626,13 +780,24 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
               onPressed: _busy ? null : () => setState(() => _step -= 1),
               child: const Text('Back'),
             ),
-          if (onAccountStep && !(vm?.isSignedIn ?? false))
+<<<<<<< HEAD
+          if (onAccountStep &&
+              !(vm?.isSignedIn ?? false) &&
+              _offlineModeEnabled)
             TextButton(
               onPressed: _busy ? null : () => setState(() => _step += 1),
-              child: const Text('Skip for now'),
+              child: const Text('Continue offline (development)'),
             ),
           FilledButton(
-            onPressed: _busy || (_step == 2 && !_requiredAccepted)
+            onPressed:
+                _busy || !accountReady || (_step == 2 && !_requiredAccepted)
+=======
+          FilledButton(
+            onPressed:
+                _busy ||
+                    (_step == 2 && !_requiredAccepted) ||
+                    (onAccountStep && !(vm?.isSignedIn ?? false))
+>>>>>>> origin/main
                 ? null
                 : () {
                     if (isLast) {
@@ -773,7 +938,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _restoreSelectedTab() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getInt(_kLastTabKey);
-    if (saved != null && saved >= 0 && saved <= 2 && mounted) {
+    if (saved != null && saved >= 0 && saved <= 4 && mounted) {
       setState(() => _selectedIndex = saved);
     }
   }
@@ -920,6 +1085,16 @@ class _SettingsPageState extends State<SettingsPage> {
                       label: 'Playback',
                     ),
                     NavigationDestination(
+                      icon: Icon(Icons.cloud_outlined),
+                      selectedIcon: Icon(Icons.cloud),
+                      label: 'Connections',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.schedule_outlined),
+                      selectedIcon: Icon(Icons.schedule),
+                      label: 'Automation',
+                    ),
+                    NavigationDestination(
                       icon: Icon(Icons.tune_outlined),
                       selectedIcon: Icon(Icons.tune),
                       label: 'Configure',
@@ -958,23 +1133,30 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
         );
       case 2:
+<<<<<<< HEAD
+        return _settingsBody(viewModel, _ConfigurePage.connections);
+      case 3:
+        return _settingsBody(viewModel, _ConfigurePage.automation);
+      case 4:
+        return _settingsBody(viewModel, _ConfigurePage.general);
+=======
         return Form(
           key: _formKey,
           child: _ConfigureView(
             viewModel: viewModel,
             accountSection: _AccountSection(
+              controller: widget.controller,
               isSignedIn: viewModel.isSignedIn,
+              hasFirstFactorSession: viewModel.hasFirstFactorSession,
               signedInEmail: viewModel.signedInEmail,
               isDeviceRegistered: viewModel.isDeviceRegistered,
               isAwaitingDeviceRegistration:
                   viewModel.isAwaitingDeviceRegistration,
               supabaseUrlController: _supabaseUrlController,
               supabaseAnonKeyController: _supabaseAnonKeyController,
-              onSignIn: (email, password) =>
-                  _signIn(viewModel, email, password),
-              onSignUp: (email, password) =>
-                  _signUp(viewModel, email, password),
-              onPasswordReset: (email) => _resetPassword(viewModel, email),
+              onRequestCode: (email) => _requestCode(viewModel, email),
+              onSubmitCode: (email, code) =>
+                  _submitCode(viewModel, email, code),
               onSignOut: widget.controller.signOutSupabase,
               onDeleteAccount: widget.controller.deleteAccount,
             ),
@@ -1006,6 +1188,7 @@ class _SettingsPageState extends State<SettingsPage> {
             sttApiKeyController: _sttApiKeyController,
           ),
         );
+>>>>>>> origin/main
       default:
         return _HomeView(
           viewModel: viewModel,
@@ -1015,8 +1198,60 @@ class _SettingsPageState extends State<SettingsPage> {
           onToggleHighQuality: widget.controller.toggleHighQualityRecording,
           onSendAlert: widget.controller.sendManualAlert,
           onConfirm: widget.controller.confirmRecording,
+          onRetryBackup: widget.controller.retryPendingBackups,
+          onExportLocalCopy: widget.controller.exportLocalCopy,
+          onRunRetentionCleanup: widget.controller.runRetentionCleanupNow,
         );
     }
+  }
+
+  Widget _settingsBody(AppViewModel viewModel, _ConfigurePage page) {
+    return Form(
+      key: _formKey,
+      child: _ConfigureView(
+        page: page,
+        viewModel: viewModel,
+        accountSection: _AccountSection(
+          isSignedIn: viewModel.isSignedIn,
+          signedInEmail: viewModel.signedInEmail,
+          isDeviceRegistered: viewModel.isDeviceRegistered,
+          isAwaitingDeviceRegistration: viewModel.isAwaitingDeviceRegistration,
+          supabaseUrlController: _supabaseUrlController,
+          supabaseAnonKeyController: _supabaseAnonKeyController,
+          onSendMagicLink: (email) => _requestMagicLink(viewModel, email),
+          onVerifyCode: (email, code) =>
+              _verifyEmailCode(viewModel, email, code),
+          onSignOut: widget.controller.signOutSupabase,
+          onDeleteAccount: widget.controller.deleteAccount,
+        ),
+        selectedProvider: _selectedProvider,
+        uploadEnabled: _uploadEnabled,
+        onUploadEnabledChanged: (value) =>
+            setState(() => _uploadEnabled = value),
+        onProviderChanged: (provider) =>
+            setState(() => _selectedProvider = provider),
+        onSave: () => _save(viewModel),
+        onAudioConfigChanged: (updated) =>
+            widget.controller.saveConfig(updated),
+        controller: widget.controller,
+        deviceRetentionController: _deviceRetentionController,
+        cloudRetentionController: _cloudRetentionController,
+        segmentMinutesController: _segmentMinutesController,
+        overlapSecondsController: _overlapSecondsController,
+        sampleRateController: _sampleRateController,
+        channelsController: _channelsController,
+        backendUrlController: _backendUrlController,
+        backendDeviceTokenController: _backendDeviceTokenController,
+        s3BucketController: _s3BucketController,
+        s3RegionController: _s3RegionController,
+        s3PrefixController: _s3PrefixController,
+        s3EndpointController: _s3EndpointController,
+        s3AccessKeyController: _s3AccessKeyController,
+        s3SecretKeyController: _s3SecretKeyController,
+        s3SessionTokenController: _s3SessionTokenController,
+        sttApiKeyController: _sttApiKeyController,
+      ),
+    );
   }
 
   void _syncForm(AppViewModel viewModel) {
@@ -1053,7 +1288,7 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
     final config = viewModel.config.copyWith(
-      deviceRetentionHours: _parseInt(_deviceRetentionController.text, 50),
+      deviceRetentionHours: _parseInt(_deviceRetentionController.text, 100),
       cloudRetentionHours: _parseInt(_cloudRetentionController.text, 500),
       segmentMinutes: _parseInt(_segmentMinutesController.text, 1),
       overlapSeconds: _parseInt(_overlapSecondsController.text, 2),
@@ -1092,33 +1327,30 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Future<void> _signIn(
-    AppViewModel viewModel,
-    String email,
-    String password,
-  ) async {
+<<<<<<< HEAD
+  Future<bool> _requestMagicLink(AppViewModel viewModel, String email) async {
+=======
+  Future<bool> _requestCode(AppViewModel viewModel, String email) async {
+>>>>>>> origin/main
     await _persistSupabaseConfig(viewModel);
-    await widget.controller.signInWithSupabase(
-      email: email,
-      password: password,
-    );
+    return widget.controller.requestSupabaseEmailOtp(email: email);
   }
 
-  Future<void> _signUp(
+<<<<<<< HEAD
+  Future<bool> _verifyEmailCode(
+=======
+  Future<void> _submitCode(
+>>>>>>> origin/main
     AppViewModel viewModel,
     String email,
-    String password,
+    String code,
   ) async {
     await _persistSupabaseConfig(viewModel);
-    await widget.controller.signUpWithSupabase(
-      email: email,
-      password: password,
-    );
-  }
-
-  Future<void> _resetPassword(AppViewModel viewModel, String email) async {
-    await _persistSupabaseConfig(viewModel);
-    await widget.controller.sendSupabasePasswordReset(email: email);
+<<<<<<< HEAD
+    return widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
+=======
+    await widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
+>>>>>>> origin/main
   }
 
   int _parseInt(String value, int fallback) {
@@ -1165,6 +1397,16 @@ class _TopLevelNavigationRail extends StatelessWidget {
             label: Text('Playback'),
           ),
           NavigationRailDestination(
+            icon: Icon(Icons.cloud_outlined),
+            selectedIcon: Icon(Icons.cloud),
+            label: Text('Connections'),
+          ),
+          NavigationRailDestination(
+            icon: Icon(Icons.schedule_outlined),
+            selectedIcon: Icon(Icons.schedule),
+            label: Text('Automation'),
+          ),
+          NavigationRailDestination(
             icon: Icon(Icons.tune_outlined),
             selectedIcon: Icon(Icons.tune),
             label: Text('Configure'),
@@ -1184,6 +1426,9 @@ class _HomeView extends StatelessWidget {
     required this.onToggleHighQuality,
     required this.onSendAlert,
     required this.onConfirm,
+    required this.onRetryBackup,
+    required this.onExportLocalCopy,
+    required this.onRunRetentionCleanup,
   });
 
   final AppViewModel viewModel;
@@ -1193,6 +1438,9 @@ class _HomeView extends StatelessWidget {
   final VoidCallback onToggleHighQuality;
   final VoidCallback onSendAlert;
   final VoidCallback onConfirm;
+  final Future<void> Function() onRetryBackup;
+  final Future<void> Function(String segmentId) onExportLocalCopy;
+  final Future<void> Function() onRunRetentionCleanup;
 
   @override
   Widget build(BuildContext context) {
@@ -1211,6 +1459,13 @@ class _HomeView extends StatelessWidget {
           const _SignInNotice(),
           const SizedBox(height: 12),
         ],
+        RetentionExpirySurface(
+          warningProvider: (nowUtc) =>
+              viewModel.localRetentionWarnings(nowUtc: nowUtc),
+          onRetryBackup: onRetryBackup,
+          onExportLocalCopy: onExportLocalCopy,
+          onRunCleanup: onRunRetentionCleanup,
+        ),
         _StatusSection(
           viewModel: viewModel,
           onStart: onStart,
@@ -1264,8 +1519,8 @@ class _HomeView extends StatelessWidget {
   }
 }
 
-/// Lists recent on-device acoustic detections (snoring, possible apnea patterns,
-/// music, speech, keywords). Newest first.
+/// Lists recent on-device acoustic detections, including conservative safety
+/// sound patterns. Newest first.
 class _DetectionsSection extends StatelessWidget {
   const _DetectionsSection({required this.detections});
 
@@ -1285,6 +1540,12 @@ class _DetectionsSection extends StatelessWidget {
         return Icons.music_note;
       case AcousticDetectionKind.speech:
         return Icons.record_voice_over;
+      case AcousticDetectionKind.suddenLoudNoise:
+        return Icons.notification_important_outlined;
+      case AcousticDetectionKind.raisedVoice:
+        return Icons.campaign_outlined;
+      case AcousticDetectionKind.possibleArgumentPattern:
+        return Icons.groups_outlined;
       case AcousticDetectionKind.keyword:
         return Icons.flag;
     }
@@ -1308,6 +1569,12 @@ class _DetectionsSection extends StatelessWidget {
         return '$time · cycle ${d.details['cycleIndex'] ?? '?'} · ${d.details['estimatedCycleMinutes'] ?? '?'} min';
       case AcousticDetectionKind.sleepCycleAlarm:
         return '$time · wake after cycle ${d.details['cycleIndex'] ?? '?'}';
+      case AcousticDetectionKind.suddenLoudNoise:
+        return '$time · ${d.details['db'] ?? '?'} dBFS · sudden onset';
+      case AcousticDetectionKind.raisedVoice:
+        return '$time · max ${d.details['maxDb'] ?? '?'} dBFS · heuristic';
+      case AcousticDetectionKind.possibleArgumentPattern:
+        return '$time · ${d.details['raisedVoiceBursts'] ?? '?'} raised-voice bursts · not proof';
       default:
         return time;
     }
@@ -1322,8 +1589,7 @@ class _DetectionsSection extends StatelessWidget {
           ? const Padding(
               padding: EdgeInsets.symmetric(vertical: 8),
               child: Text(
-                'No detections yet. The engine activates when sound '
-                'is sustained.',
+                'No detections yet. Sustained sound or a sudden transient can activate the engine.',
               ),
             )
           : Column(
@@ -1848,8 +2114,11 @@ class _PlaybackViewState extends State<_PlaybackView> {
   }
 }
 
+enum _ConfigurePage { general, automation, connections }
+
 class _ConfigureView extends StatelessWidget {
   const _ConfigureView({
+    required this.page,
     required this.viewModel,
     required this.accountSection,
     required this.selectedProvider,
@@ -1877,6 +2146,7 @@ class _ConfigureView extends StatelessWidget {
     required this.sttApiKeyController,
   });
 
+  final _ConfigurePage page;
   final AppViewModel viewModel;
   final Widget accountSection;
   final CloudProvider selectedProvider;
@@ -1908,115 +2178,134 @@ class _ConfigureView extends StatelessWidget {
     return _SettingsTabbedPane(
       onSave: onSave,
       tabs: [
-        _SettingsTab(
-          label: 'Account',
-          icon: Icons.account_circle_outlined,
-          child: _SettingsPane(
-            storageKey: 'configure-account',
-            children: [accountSection],
+        if (page == _ConfigurePage.general)
+          _SettingsTab(
+            label: 'Account',
+            icon: Icons.account_circle_outlined,
+            child: _SettingsPane(
+              storageKey: 'configure-account',
+              children: [accountSection],
+            ),
           ),
-        ),
-        _SettingsTab(
-          label: 'Capture',
-          icon: Icons.mic_none,
-          child: _SettingsPane(
-            storageKey: 'configure-capture',
-            children: [
-              _CaptureSection(
-                deviceId: viewModel.config.deviceId,
-                uploadEnabled: uploadEnabled,
-                onUploadEnabledChanged: onUploadEnabledChanged,
-                deviceRetentionController: deviceRetentionController,
-                cloudRetentionController: cloudRetentionController,
-                segmentMinutesController: segmentMinutesController,
-                overlapSecondsController: overlapSecondsController,
-                sampleRateController: sampleRateController,
-                channelsController: channelsController,
-              ),
-              _TransferPolicySection(
-                config: viewModel.config,
-                status: viewModel.transferStatus,
-                onChanged: onAudioConfigChanged,
-              ),
-              _AudioTuningSection(
-                config: viewModel.config,
-                onChanged: onAudioConfigChanged,
-              ),
-            ],
-          ),
-        ),
-        _SettingsTab(
-          label: 'Automation',
-          icon: Icons.event_available_outlined,
-          child: _SettingsPane(
-            storageKey: 'configure-automation',
-            children: [
-              _ScheduleSection(
-                config: viewModel.config,
-                onChanged: onAudioConfigChanged,
-              ),
-              _ContextTriggersSection(
-                config: viewModel.config,
-                onChanged: onAudioConfigChanged,
-                controller: controller,
-              ),
-            ],
-          ),
-        ),
-        _SettingsTab(
-          label: 'Cloud',
-          icon: Icons.cloud_outlined,
-          child: _SettingsPane(
-            storageKey: 'configure-cloud',
-            children: [
-              _CloudSection(
-                selectedProvider: selectedProvider,
-                onProviderChanged: onProviderChanged,
-                backendUrlController: backendUrlController,
-                backendDeviceTokenController: backendDeviceTokenController,
-                s3BucketController: s3BucketController,
-                s3RegionController: s3RegionController,
-                s3PrefixController: s3PrefixController,
-                s3EndpointController: s3EndpointController,
-                s3AccessKeyController: s3AccessKeyController,
-                s3SecretKeyController: s3SecretKeyController,
-                s3SessionTokenController: s3SessionTokenController,
-              ),
-              if (viewModel.isDeviceRegistered)
-                _CloudLinkSection(controller: controller, viewModel: viewModel)
-              else
-                const _InlineState(
-                  icon: Icons.cloud_off_outlined,
-                  text:
-                      'Sign in and register this device to link cloud destinations.',
+        if (page == _ConfigurePage.general)
+          _SettingsTab(
+            label: 'Capture',
+            icon: Icons.mic_none,
+            child: _SettingsPane(
+              storageKey: 'configure-capture',
+              children: [
+                _CaptureSection(
+                  deviceId: viewModel.config.deviceId,
+                  uploadEnabled: uploadEnabled,
+                  onUploadEnabledChanged: onUploadEnabledChanged,
+                  deviceRetentionController: deviceRetentionController,
+                  cloudRetentionController: cloudRetentionController,
+                  segmentMinutesController: segmentMinutesController,
+                  overlapSecondsController: overlapSecondsController,
+                  sampleRateController: sampleRateController,
+                  channelsController: channelsController,
                 ),
-            ],
+                _TransferPolicySection(
+                  config: viewModel.config,
+                  status: viewModel.transferStatus,
+                  onChanged: onAudioConfigChanged,
+                ),
+                _AudioTuningSection(
+                  config: viewModel.config,
+                  onChanged: onAudioConfigChanged,
+                ),
+              ],
+            ),
           ),
-        ),
-        _SettingsTab(
-          label: 'Intelligence',
-          icon: Icons.graphic_eq,
-          child: _SettingsPane(
-            storageKey: 'configure-intelligence',
-            children: [
-              _AcousticSection(
-                config: viewModel.config,
-                onChanged: onAudioConfigChanged,
-                sttApiKeyController: sttApiKeyController,
-              ),
-              _VoiceIdSection(
-                config: viewModel.config,
-                onChanged: onAudioConfigChanged,
-                controller: controller,
-              ),
-              _MusicMemoriesSection(
-                config: viewModel.config,
-                onChanged: onAudioConfigChanged,
-                controller: controller,
-              ),
-            ],
+        if (page == _ConfigurePage.automation)
+          _SettingsTab(
+            label: 'Automation',
+            icon: Icons.event_available_outlined,
+            child: _SettingsPane(
+              storageKey: 'configure-automation',
+              children: [
+                _ScheduleSection(
+                  config: viewModel.config,
+                  onChanged: onAudioConfigChanged,
+                ),
+                _ContextTriggersSection(
+                  config: viewModel.config,
+                  onChanged: onAudioConfigChanged,
+                  controller: controller,
+                ),
+              ],
+            ),
           ),
-        ),
+        if (page == _ConfigurePage.connections)
+          _SettingsTab(
+            label: 'Devices',
+            icon: Icons.devices_other_outlined,
+            child: _SettingsPane(
+              storageKey: 'connections-devices',
+              children: [
+                _DevicesSection(controller: controller, viewModel: viewModel),
+              ],
+            ),
+          ),
+        if (page == _ConfigurePage.connections)
+          _SettingsTab(
+            label: 'Connections',
+            icon: Icons.cloud_outlined,
+            child: _SettingsPane(
+              storageKey: 'configure-cloud',
+              children: [
+                _CloudSection(
+                  selectedProvider: selectedProvider,
+                  onProviderChanged: onProviderChanged,
+                  backendUrlController: backendUrlController,
+                  backendDeviceTokenController: backendDeviceTokenController,
+                  s3BucketController: s3BucketController,
+                  s3RegionController: s3RegionController,
+                  s3PrefixController: s3PrefixController,
+                  s3EndpointController: s3EndpointController,
+                  s3AccessKeyController: s3AccessKeyController,
+                  s3SecretKeyController: s3SecretKeyController,
+                  s3SessionTokenController: s3SessionTokenController,
+                ),
+                if (viewModel.isDeviceRegistered)
+                  _CloudLinkSection(
+                    controller: controller,
+                    viewModel: viewModel,
+                  )
+                else
+                  const _InlineState(
+                    icon: Icons.cloud_off_outlined,
+                    text:
+                        'Sign in and register this device to link cloud destinations.',
+                  ),
+              ],
+            ),
+          ),
+        if (page == _ConfigurePage.general)
+          _SettingsTab(
+            label: 'Intelligence',
+            icon: Icons.graphic_eq,
+            child: _SettingsPane(
+              storageKey: 'configure-intelligence',
+              children: [
+                _AcousticSection(
+                  config: viewModel.config,
+                  onChanged: onAudioConfigChanged,
+                  sttApiKeyController: sttApiKeyController,
+                ),
+                _VoiceIdSection(
+                  config: viewModel.config,
+                  onChanged: onAudioConfigChanged,
+                  controller: controller,
+                ),
+                _MusicMemoriesSection(
+                  config: viewModel.config,
+                  onChanged: onAudioConfigChanged,
+                  controller: controller,
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -2236,33 +2525,51 @@ class _ConfigureActionBar extends StatelessWidget {
   }
 }
 
-/// Supabase identity: project config plus email/password sign-in. When signed
-/// in, the controller registers the device and uploads run under the verified
-/// account. The password is held only transiently in a local field.
+<<<<<<< HEAD
+/// Supabase identity: project config plus passwordless magic-link sign-in. When
+/// signed in, the controller registers the device and uploads run under the
+/// verified account.
+=======
+/// Supabase identity: project config plus passwordless email-code sign-in. When
+/// signed in, the controller registers the device and uploads run under the
+/// verified account. The one-time code is held only transiently in a local field.
+>>>>>>> origin/main
 class _AccountSection extends StatefulWidget {
   const _AccountSection({
+    required this.controller,
     required this.isSignedIn,
+    required this.hasFirstFactorSession,
     required this.signedInEmail,
     required this.isDeviceRegistered,
     required this.isAwaitingDeviceRegistration,
     required this.supabaseUrlController,
     required this.supabaseAnonKeyController,
-    required this.onSignIn,
-    required this.onSignUp,
-    required this.onPasswordReset,
+<<<<<<< HEAD
+    required this.onSendMagicLink,
+    required this.onVerifyCode,
+=======
+    required this.onRequestCode,
+    required this.onSubmitCode,
+>>>>>>> origin/main
     required this.onSignOut,
     required this.onDeleteAccount,
   });
 
+  final AppController controller;
   final bool isSignedIn;
+  final bool hasFirstFactorSession;
   final String? signedInEmail;
   final bool isDeviceRegistered;
   final bool isAwaitingDeviceRegistration;
   final TextEditingController supabaseUrlController;
   final TextEditingController supabaseAnonKeyController;
-  final Future<void> Function(String email, String password) onSignIn;
-  final Future<void> Function(String email, String password) onSignUp;
-  final Future<void> Function(String email) onPasswordReset;
+<<<<<<< HEAD
+  final Future<bool> Function(String email) onSendMagicLink;
+  final Future<bool> Function(String email, String code) onVerifyCode;
+=======
+  final Future<bool> Function(String email) onRequestCode;
+  final Future<void> Function(String email, String code) onSubmitCode;
+>>>>>>> origin/main
   final Future<void> Function() onSignOut;
   final Future<void> Function() onDeleteAccount;
 
@@ -2272,13 +2579,19 @@ class _AccountSection extends StatefulWidget {
 
 class _AccountSectionState extends State<_AccountSection> {
   final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
+<<<<<<< HEAD
+=======
+  final _codeController = TextEditingController();
+>>>>>>> origin/main
   bool _busy = false;
 
   @override
   void dispose() {
     _emailController.dispose();
-    _passwordController.dispose();
+<<<<<<< HEAD
+=======
+    _codeController.dispose();
+>>>>>>> origin/main
     super.dispose();
   }
 
@@ -2410,6 +2723,25 @@ class _AccountSectionState extends State<_AccountSection> {
         ),
       );
     }
+    if (widget.hasFirstFactorSession) {
+      return _Section(
+        title: 'Account security',
+        icon: Icons.security,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SupabaseMfaGate(controller: widget.controller),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: _busy
+                  ? null
+                  : () => _runAccountAction(widget.onSignOut),
+              child: const Text('Cancel and sign out'),
+            ),
+          ],
+        ),
+      );
+    }
     return _Section(
       title: 'Account',
       icon: Icons.account_circle_outlined,
@@ -2423,14 +2755,21 @@ class _AccountSectionState extends State<_AccountSection> {
           const SizedBox(height: 12),
           SupabaseAuthForm(
             emailController: _emailController,
-            passwordController: _passwordController,
+<<<<<<< HEAD
+=======
+            codeController: _codeController,
+>>>>>>> origin/main
             supabaseUrlController: widget.supabaseUrlController,
             supabaseAnonKeyController: widget.supabaseAnonKeyController,
             showProjectConfiguration: !hasBundledSupabaseConfig,
             enabled: !_busy,
-            onSignIn: widget.onSignIn,
-            onSignUp: widget.onSignUp,
-            onPasswordReset: widget.onPasswordReset,
+<<<<<<< HEAD
+            onSendMagicLink: widget.onSendMagicLink,
+            onVerifyCode: widget.onVerifyCode,
+=======
+            onRequestCode: widget.onRequestCode,
+            onSubmitCode: widget.onSubmitCode,
+>>>>>>> origin/main
           ),
           const SizedBox(height: 8),
           _legalLinks(),
@@ -2787,8 +3126,9 @@ class _AudioTuningSectionState extends State<_AudioTuningSection> {
             contentPadding: EdgeInsets.zero,
             title: const Text('Always-on (auto-start capture)'),
             subtitle: const Text(
-              'Start recording automatically when the app opens and after a '
-              'reboot — no need to press Start each time.',
+              'Start recording whenever you open Sonus Auris. After a reboot, '
+              'Android re-arms your schedule; tap the app or its notification '
+              'before microphone capture can resume.',
             ),
             value: _autoStart,
             onChanged: (value) {
@@ -2920,6 +3260,14 @@ class _VoiceIdSectionState extends State<_VoiceIdSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.layers_outlined),
+            title: Text('Optional, isolated analysis'),
+            subtitle: Text(
+              'Recognition and sleep estimates are best-effort sidecars. They can time out or be unavailable without interrupting the encrypted rolling recorder.',
+            ),
+          ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Recognize my voice'),
@@ -3142,10 +3490,13 @@ class _AcousticSectionState extends State<_AcousticSection> {
   late double _activationDb;
   late bool _sttEnabled;
   late bool _adaptiveEnabled;
+  late bool _collisionEnabled;
   late int _captureRate;
   late int _quietRate;
   late double _adaptiveLoudnessDb;
+  late double _phraseBoostMinutes;
   final _keywordsController = TextEditingController();
+  final _safeWordsController = TextEditingController();
   final _sttEndpointController = TextEditingController();
 
   void _seed(AppConfig config) {
@@ -3166,10 +3517,13 @@ class _AcousticSectionState extends State<_AcousticSection> {
     _activationDb = config.analysisActivationDb;
     _sttEnabled = config.sttEnabled;
     _adaptiveEnabled = config.adaptiveQualityEnabled;
+    _collisionEnabled = config.collisionRemindersEnabled;
     _captureRate = config.captureSampleRate;
     _quietRate = config.quietSampleRate;
     _adaptiveLoudnessDb = config.adaptiveLoudnessDb;
+    _phraseBoostMinutes = config.keywordQualityBoostMinutes.toDouble();
     _keywordsController.text = config.keywords.join(', ');
+    _safeWordsController.text = config.safeWords.join(', ');
     _sttEndpointController.text = config.sttEndpoint;
     _syncedDeviceId = config.deviceId;
   }
@@ -3177,16 +3531,33 @@ class _AcousticSectionState extends State<_AcousticSection> {
   @override
   void dispose() {
     _keywordsController.dispose();
+    _safeWordsController.dispose();
     _sttEndpointController.dispose();
     super.dispose();
   }
 
+  List<String> _parseWordList(String raw) => raw
+      .split(',')
+      .map((word) => word.trim())
+      .where((word) => word.isNotEmpty)
+      .toList();
+
   void _apply() {
+<<<<<<< HEAD
     final keywords = _keywordsController.text
         .split(',')
         .map((k) => k.trim())
         .where((k) => k.isNotEmpty)
         .toList();
+    final safeWords = _safeWordsController.text
+        .split(',')
+        .map((phrase) => phrase.trim())
+        .where((phrase) => phrase.isNotEmpty)
+        .toList();
+=======
+    final keywords = _parseWordList(_keywordsController.text);
+    final safeWords = _parseWordList(_safeWordsController.text);
+>>>>>>> origin/main
     widget.onChanged(
       widget.config.copyWith(
         acousticAnalysisEnabled: _enabled,
@@ -3205,12 +3576,51 @@ class _AcousticSectionState extends State<_AcousticSection> {
         sttEnabled: _sttEnabled,
         sttEndpoint: _sttEndpointController.text.trim(),
         keywords: keywords,
+        safeWords: safeWords,
+<<<<<<< HEAD
+        keywordQualityBoostMinutes: _phraseBoostMinutes.round(),
+=======
+>>>>>>> origin/main
         adaptiveQualityEnabled: _adaptiveEnabled,
         captureSampleRate: _captureRate,
         quietSampleRate: _quietRate,
         adaptiveLoudnessDb: _adaptiveLoudnessDb,
+        collisionRemindersEnabled: _collisionEnabled,
       ),
     );
+  }
+
+  Future<void> _setCloudTranscriptionEnabled(bool enabled) async {
+    if (enabled) {
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Send speech clips for transcription?'),
+          content: const Text(
+            'When enabled, short speech clips are sent to the external STT '
+            'endpoint you configure. The provider receives audio needed for '
+            'that request; this is separate from encrypted cloud backup. '
+            'On-device detection is tried first, and recording continues if '
+            'transcription is off or unavailable.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Enable transcription'),
+            ),
+          ],
+        ),
+      );
+      if (accepted != true || !mounted) {
+        return;
+      }
+    }
+    setState(() => _sttEnabled = enabled);
+    _apply();
   }
 
   @override
@@ -3228,7 +3638,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
             contentPadding: EdgeInsets.zero,
             title: const Text('Enable acoustic analysis'),
             subtitle: const Text(
-              'On-device FFT. Activates only when sound is sustained.',
+              'On-device FFT. Sustained sounds and sudden transients can activate it.',
             ),
             value: _enabled,
             onChanged: (v) {
@@ -3250,7 +3660,9 @@ class _AcousticSectionState extends State<_AcousticSection> {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Sleep analysis'),
-              subtitle: const Text('Breathing cadence and snoring cycles'),
+              subtitle: const Text(
+                'Non-diagnostic estimates from breathing cadence, sound, and only the extra signals you allow',
+              ),
               value: _sleep,
               onChanged: (v) {
                 setState(() {
@@ -3263,6 +3675,18 @@ class _AcousticSectionState extends State<_AcousticSection> {
                     _sleepCloudSyncConsent = false;
                   }
                 });
+                _apply();
+              },
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Allow motion sensor'),
+              subtitle: const Text(
+                'Possible-collision reminders while recording; sleep motion signals when enabled',
+              ),
+              value: _sleepMotionConsent,
+              onChanged: (v) {
+                setState(() => _sleepMotionConsent = v);
                 _apply();
               },
             ),
@@ -3286,16 +3710,6 @@ class _AcousticSectionState extends State<_AcousticSection> {
                 display: '${_sleepCycleMinutes.toStringAsFixed(0)} min',
                 onChanged: (v) {
                   setState(() => _sleepCycleMinutes = v);
-                  _apply();
-                },
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Allow motion signal'),
-                subtitle: const Text('Stillness, tossing, getting up'),
-                value: _sleepMotionConsent,
-                onChanged: (v) {
-                  setState(() => _sleepMotionConsent = v);
                   _apply();
                 },
               ),
@@ -3344,8 +3758,12 @@ class _AcousticSectionState extends State<_AcousticSection> {
             if (_music)
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Identify songs (ShazamKit, iOS only)'),
-                subtitle: const Text('Sends an audio fingerprint to Apple'),
+                title: const Text(
+                  'Best-effort song identification (ShazamKit, iOS only)',
+                ),
+                subtitle: const Text(
+                  'Rate-limited; sends an audio fingerprint to Apple and never controls recording',
+                ),
                 value: _shazam,
                 onChanged: (v) {
                   setState(() => _shazam = v);
@@ -3361,6 +3779,14 @@ class _AcousticSectionState extends State<_AcousticSection> {
                 _apply();
               },
             ),
+            const ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.health_and_safety_outlined),
+              title: Text('Safety sound patterns'),
+              subtitle: Text(
+                'Classified on-device: sudden loud noise, raised voice, and repeated raised-voice patterns. Heuristic only; event metadata follows your configured sync.',
+              ),
+            ),
             _slider(
               label: 'Activation level',
               value: _activationDb,
@@ -3372,29 +3798,86 @@ class _AcousticSectionState extends State<_AcousticSection> {
             ),
             const Divider(),
             Text(
-              'Keyword alerts (cloud speech-to-text)',
+              'Keywords & safety words',
               style: Theme.of(context).textTheme.titleSmall,
             ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Transcribe speech for keywords'),
-              subtitle: const Text(
-                'Opt-in. Sends short clips to your STT endpoint.',
+            const Text(
+              'A detected phrase dings, creates a marked event, raises the '
+              'configured alert, and keeps full-quality recording active. '
+              'Safety words take precedence when lists overlap.',
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _keywordsController,
+              enabled: _speech,
+              decoration: const InputDecoration(
+                labelText: 'Keywords (comma-separated)',
+                hintText: 'contract, chorus, important note',
               ),
-              value: _sttEnabled,
-              onChanged: (v) {
-                setState(() => _sttEnabled = v);
+              onEditingComplete: _apply,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _safeWordsController,
+              enabled: _speech,
+              decoration: const InputDecoration(
+                labelText: 'Safety words (comma-separated)',
+                hintText: 'help, emergency',
+              ),
+              onEditingComplete: _apply,
+            ),
+            _slider(
+              label: 'Full-quality phrase window',
+              value: _phraseBoostMinutes,
+              min: 15,
+              max: 360,
+              divisions: 23,
+              display: '${_phraseBoostMinutes.round()} min',
+              onChanged: (value) {
+                setState(() => _phraseBoostMinutes = value);
                 _apply();
               },
             ),
+<<<<<<< HEAD
+            const Text(
+              'Clear human speech also keeps quality high briefly; quiet '
+              'periods return to the low-storage profile.',
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Allow cloud transcription fallback'),
+              subtitle: const Text(
+                'Optional. Short speech clips are sent to the external endpoint '
+                'you configure; on-device recognition is tried first.',
+=======
             if (_sttEnabled) ...[
               TextField(
                 controller: _keywordsController,
                 decoration: const InputDecoration(
                   labelText: 'Keywords (comma-separated)',
+                  helperText:
+                      'Spoken keywords ding and raise recording quality for '
+                      '90 minutes.',
                 ),
                 onEditingComplete: _apply,
               ),
+              TextField(
+                controller: _safeWordsController,
+                decoration: const InputDecoration(
+                  labelText: 'Safe words (comma-separated)',
+                  helperText:
+                      'Distress/help words — same ding and quality boost, '
+                      'kept separate from ordinary keywords.',
+                ),
+                onEditingComplete: _apply,
+>>>>>>> origin/main
+              ),
+              value: _sttEnabled,
+              onChanged: _speech
+                  ? (v) => unawaited(_setCloudTranscriptionEnabled(v))
+                  : null,
+            ),
+            if (_sttEnabled) ...[
               TextField(
                 controller: _sttEndpointController,
                 keyboardType: TextInputType.url,
@@ -3421,6 +3904,19 @@ class _AcousticSectionState extends State<_AcousticSection> {
               value: _adaptiveEnabled,
               onChanged: (v) {
                 setState(() => _adaptiveEnabled = v);
+                _apply();
+              },
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Collision reminders'),
+              subtitle: const Text(
+                'Watch the accelerometer while recording; on a detected impact, '
+                'remind you the app is still capturing.',
+              ),
+              value: _collisionEnabled,
+              onChanged: (v) {
+                setState(() => _collisionEnabled = v);
                 _apply();
               },
             ),
@@ -3533,13 +4029,522 @@ String _cloudProviderLabel(String provider) {
       return 'Microsoft OneDrive';
     case 'apple_icloud':
       return 'Apple iCloud';
+    case 'dropbox':
+      return 'Dropbox';
     default:
       return provider;
   }
 }
 
+class _DevicesSection extends StatefulWidget {
+  const _DevicesSection({required this.controller, required this.viewModel});
+
+  final AppController controller;
+  final AppViewModel viewModel;
+
+  @override
+  State<_DevicesSection> createState() => _DevicesSectionState();
+}
+
+class _DevicesSectionState extends State<_DevicesSection> {
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.viewModel.isSignedIn) {
+      unawaited(widget.controller.refreshAccountDevices());
+      unawaited(widget.controller.refreshMfaFactors());
+    }
+  }
+
+  Future<void> _refresh() async {
+    setState(() => _busy = true);
+    await widget.controller.refreshAccountDevices();
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _rename(interfaces.DeviceRecord device) async {
+    final name = TextEditingController(text: device.displayName);
+    final next = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename device'),
+        content: TextField(
+          controller: name,
+          autofocus: true,
+          maxLength: 120,
+          decoration: const InputDecoration(labelText: 'Device name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, name.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    name.dispose();
+    if (next == null || next.isEmpty || !mounted) return;
+    setState(() => _busy = true);
+    await widget.controller.renameAccountDevice(
+      deviceId: device.deviceId,
+      displayName: next,
+    );
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _revoke(interfaces.DeviceRecord device) async {
+    final isThisDevice = device.deviceId == widget.viewModel.config.deviceId;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(isThisDevice ? 'Revoke this device?' : 'Revoke device?'),
+        content: Text(
+          isThisDevice
+              ? 'This stops this device from syncing with the account. Local '
+                    'recordings remain on this device.'
+              : '${device.displayName} will lose account access on its next '
+                    'heartbeat. Local recordings on that device are not deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Revoke'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _busy = true);
+    await widget.controller.revokeAccountDevice(device.deviceId);
+    if (mounted) setState(() => _busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _Section(
+      title: 'Registered Devices',
+      icon: Icons.devices_other_outlined,
+      child: widget.viewModel.isSignedIn
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Live status uses private Supabase presence. Last seen '
+                        'is refreshed every 10 minutes as a durable fallback.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Refresh devices',
+                      onPressed: _busy ? null : _refresh,
+                      icon: const Icon(Icons.refresh),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                StreamBuilder<List<interfaces.DeviceRecord>>(
+                  stream: widget.controller.accountDevices,
+                  initialData: widget.controller.accountDevicesValue,
+                  builder: (context, devicesSnapshot) {
+                    return StreamBuilder<DevicePresenceSnapshot>(
+                      stream: widget.controller.devicePresence,
+                      initialData: widget.controller.devicePresenceValue,
+                      builder: (context, presenceSnapshot) {
+                        final devices =
+                            devicesSnapshot.data ??
+                            const <interfaces.DeviceRecord>[];
+                        final presence =
+                            presenceSnapshot.data ??
+                            const DevicePresenceSnapshot();
+                        if (devices.isEmpty) {
+                          return const _InlineState(
+                            icon: Icons.devices_other_outlined,
+                            text:
+                                'No registered devices were returned for this account.',
+                          );
+                        }
+                        return Column(
+                          children: [
+                            for (final device in devices)
+                              _deviceTile(device, presence),
+                          ],
+                        );
+                      },
+                    );
+                  },
+                ),
+                const Divider(height: 32),
+                _TrustedAccessSection(
+                  controller: widget.controller,
+                  currentUserId: widget.viewModel.secrets.supabaseUserId,
+                ),
+              ],
+            )
+          : const _InlineState(
+              icon: Icons.lock_outline,
+              text: 'Sign in to view and manage account devices.',
+            ),
+    );
+  }
+
+  Widget _deviceTile(
+    interfaces.DeviceRecord device,
+    DevicePresenceSnapshot presence,
+  ) {
+    final revoked = (device.revokedAt ?? '').trim().isNotEmpty;
+    final online = !revoked && presence.isOnline(device.deviceId);
+    final seen = DateTime.tryParse(device.lastSeenAt)?.toLocal();
+    final recentlySeen =
+        !online &&
+        !revoked &&
+        seen != null &&
+        DateTime.now().difference(seen).abs() <= const Duration(minutes: 15);
+    final status = revoked
+        ? 'Revoked'
+        : online
+        ? 'Online now'
+        : recentlySeen
+        ? 'Recently seen'
+        : seen == null
+        ? 'Offline'
+        : 'Last seen ${DateFormat.yMMMd().add_jm().format(seen)}';
+    final statusColor = revoked
+        ? Theme.of(context).colorScheme.error
+        : online
+        ? SonusColors.green500
+        : recentlySeen
+        ? SonusColors.orange500
+        : Theme.of(context).colorScheme.onSurfaceVariant;
+    final isThisDevice = device.deviceId == widget.viewModel.config.deviceId;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        leading: Icon(
+          device.platform == 'web'
+              ? Icons.language
+              : device.platform == 'macos' ||
+                    device.platform == 'windows' ||
+                    device.platform == 'linux'
+              ? Icons.computer
+              : Icons.phone_android,
+        ),
+        title: Text(device.displayName),
+        subtitle: Text(
+          '${isThisDevice ? "This device · " : ""}$status · ${device.platform}',
+          style: TextStyle(color: statusColor),
+        ),
+        trailing: revoked
+            ? null
+            : PopupMenuButton<String>(
+                enabled: !_busy,
+                onSelected: (action) {
+                  if (action == 'rename') {
+                    unawaited(_rename(device));
+                  } else if (action == 'revoke') {
+                    unawaited(_revoke(device));
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'rename', child: Text('Rename')),
+                  PopupMenuItem(value: 'revoke', child: Text('Revoke access')),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+class _TrustedAccessSection extends StatefulWidget {
+  const _TrustedAccessSection({
+    required this.controller,
+    required this.currentUserId,
+  });
+
+  final AppController controller;
+  final String currentUserId;
+
+  @override
+  State<_TrustedAccessSection> createState() => _TrustedAccessSectionState();
+}
+
+class _TrustedAccessSectionState extends State<_TrustedAccessSection> {
+  bool _busy = false;
+
+  Future<String?> _prompt({
+    required String title,
+    required String label,
+    TextInputType? keyboardType,
+  }) async {
+    final value = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: value,
+          autofocus: true,
+          keyboardType: keyboardType,
+          decoration: InputDecoration(labelText: label),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, value.text.trim()),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    value.dispose();
+    return result;
+  }
+
+  Future<void> _invite(AccountInviteDelivery delivery) async {
+    final destination = await _prompt(
+      title: delivery == AccountInviteDelivery.email
+          ? 'Invite by email'
+          : 'Invite by phone',
+      label: delivery == AccountInviteDelivery.email
+          ? 'Email address'
+          : 'Phone number (+country code)',
+      keyboardType: delivery == AccountInviteDelivery.email
+          ? TextInputType.emailAddress
+          : TextInputType.phone,
+    );
+    if (destination == null || destination.isEmpty || !mounted) return;
+    setState(() => _busy = true);
+    final invitation = await widget.controller.createAccountInvite(
+      delivery: delivery,
+      destination: destination,
+    );
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (invitation == null) return;
+
+    final body =
+        'You are invited to join a Sonus Auris account. Install or open '
+        'Sonus Auris, sign in without a password, then open this one-time '
+        'link within 24 hours:\n\n${invitation.link}';
+    final deliveryUri = delivery == AccountInviteDelivery.email
+        ? Uri(
+            scheme: 'mailto',
+            path: invitation.destination,
+            queryParameters: {
+              'subject': 'Join my Sonus Auris account',
+              'body': body,
+            },
+          )
+        : Uri(
+            scheme: 'sms',
+            path: invitation.destination,
+            queryParameters: {'body': body},
+          );
+    final opened = await launchUrl(deliveryUri);
+    if (!opened) {
+      await Clipboard.setData(ClipboardData(text: invitation.link.toString()));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invite link copied. Send it within 24 hours.'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _addPhoneFactor() async {
+    final phone = await _prompt(
+      title: 'Add SMS two-factor authentication',
+      label: 'Phone number (+country code)',
+      keyboardType: TextInputType.phone,
+    );
+    if (phone == null || phone.isEmpty || !mounted) return;
+    setState(() => _busy = true);
+    final enrollment = await widget.controller.enrollPhoneFactor(phone: phone);
+    final challenge = enrollment == null
+        ? null
+        : await widget.controller.challengeMfaFactor(enrollment.factorId);
+    if (mounted) setState(() => _busy = false);
+    if (enrollment == null || challenge == null || !mounted) return;
+    final code = await _prompt(
+      title: 'Confirm phone number',
+      label: 'Code from the text message',
+      keyboardType: TextInputType.number,
+    );
+    if (code == null || code.isEmpty || !mounted) return;
+    setState(() => _busy = true);
+    await widget.controller.verifyMfaFactor(
+      factorId: enrollment.factorId,
+      challengeId: challenge,
+      code: code,
+    );
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _revokeMember(String userId) async {
+    setState(() => _busy = true);
+    await widget.controller.revokeAccountMember(userId);
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _revokeInvite(String invitationId) async {
+    setState(() => _busy = true);
+    await widget.controller.revokeAccountInvitation(invitationId);
+    if (mounted) setState(() => _busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<AccountGroupSnapshot?>(
+      stream: widget.controller.accountGroup,
+      initialData: widget.controller.accountGroupValue,
+      builder: (context, groupSnapshot) {
+        final group = groupSnapshot.data;
+        return StreamBuilder<AccountStatus>(
+          stream: widget.controller.accountStatus,
+          initialData: widget.controller.accountStatusValue,
+          builder: (context, securitySnapshot) {
+            final security = securitySnapshot.data ?? const AccountStatus();
+            final currentMember = group?.members
+                .where((member) => member.userId == widget.currentUserId)
+                .firstOrNull;
+            final canInvite = currentMember?.isOwner ?? false;
+            final trustedMembers =
+                group?.members
+                    .where((member) => member.isActive && !member.isOwner)
+                    .toList(growable: false) ??
+                const <AccountGroupMember>[];
+            final pending =
+                group?.invitations
+                    .where((invitation) => invitation.isPending)
+                    .toList(growable: false) ??
+                const <AccountInvitation>[];
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Trusted access',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Invite a secondary email or phone-delivered identity with a '
+                  'single-use 24-hour link. Each person signs in passwordlessly '
+                  'and can be revoked separately from their devices.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                if (trustedMembers.isEmpty)
+                  const Text('No additional trusted identities.')
+                else
+                  for (final member in trustedMembers)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.verified_user_outlined),
+                      title: Text(
+                        member.identityHint?.trim().isNotEmpty == true
+                            ? member.identityHint!
+                            : 'Trusted account member',
+                      ),
+                      subtitle: const Text('Verified through an invite'),
+                      trailing: canInvite
+                          ? TextButton(
+                              onPressed: _busy
+                                  ? null
+                                  : () => _revokeMember(member.userId),
+                              child: const Text('Revoke'),
+                            )
+                          : null,
+                    ),
+                if (pending.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Pending invitations',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                  for (final invitation in pending)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.outgoing_mail),
+                      title: Text(invitation.destinationHint),
+                      subtitle: Text(
+                        'Expires ${DateFormat.MMMd().add_jm().format(invitation.expiresAt.toLocal())}',
+                      ),
+                      trailing: TextButton(
+                        onPressed: _busy
+                            ? null
+                            : () => _revokeInvite(invitation.id),
+                        child: const Text('Revoke'),
+                      ),
+                    ),
+                ],
+                if (canInvite)
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _busy
+                            ? null
+                            : () => _invite(AccountInviteDelivery.email),
+                        icon: const Icon(Icons.alternate_email),
+                        label: const Text('Invite email'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _busy
+                            ? null
+                            : () => _invite(AccountInviteDelivery.phone),
+                        icon: const Icon(Icons.sms_outlined),
+                        label: const Text('Invite by phone'),
+                      ),
+                    ],
+                  ),
+                const Divider(height: 32),
+                Text(
+                  'Two-factor authentication',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  security.verifiedMfaFactors.isEmpty
+                      ? 'No verified second factor is enrolled.'
+                      : '${security.verifiedMfaFactors.length} verified second-factor method(s).',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _addPhoneFactor,
+                  icon: const Icon(Icons.phonelink_lock),
+                  label: const Text('Add SMS 2FA'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
 /// Lists linked cloud destinations and offers one-tap iCloud linking plus a
-/// guided authorization-code flow for Google Drive / OneDrive.
+/// guided authorization-code flow for server-managed OAuth providers.
 class _CloudLinkSection extends StatefulWidget {
   const _CloudLinkSection({required this.controller, required this.viewModel});
 
@@ -3577,20 +4582,35 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
   }
 
   Future<void> _linkProvider(CloudProvider provider) async {
-    final host = Uri.tryParse(widget.viewModel.config.backendBaseUrl.trim());
-    final defaultRedirect = (host != null && host.host.isNotEmpty)
-        ? '${host.scheme}://${host.host}/oauth/callback'
-        : '';
-    await showDialog<bool>(
+    await _run(() async {
+      await widget.controller.linkCloudProvider(provider);
+    });
+  }
+
+  Future<void> _confirmCloudRevoke(CloudConnection connection) async {
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => _ProviderLinkDialog(
-        provider: provider,
-        controller: widget.controller,
-        defaultRedirectUri: defaultRedirect,
+      builder: (context) => AlertDialog(
+        title: const Text('Disconnect cloud backup?'),
+        content: Text(
+          'Sonus Auris will stop sending new recordings to '
+          '${_cloudProviderLabel(connection.provider)}. Existing files in '
+          'that cloud account are not deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Disconnect'),
+          ),
+        ],
       ),
     );
-    if (mounted) {
-      _refresh();
+    if (confirmed == true && mounted) {
+      await _run(() => widget.controller.revokeCloudConnection(connection.id));
     }
   }
 
@@ -3631,13 +4651,14 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              OutlinedButton.icon(
-                onPressed: _busy
-                    ? null
-                    : () => _run(widget.controller.linkICloud),
-                icon: const Icon(Icons.cloud_outlined),
-                label: const Text('Link iCloud'),
-              ),
+              if (Platform.isIOS || Platform.isMacOS)
+                OutlinedButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () => _linkProvider(CloudProvider.iCloudDrive),
+                  icon: const Icon(Icons.cloud_outlined),
+                  label: const Text('Link iCloud'),
+                ),
               OutlinedButton.icon(
                 onPressed: _busy
                     ? null
@@ -3652,19 +4673,34 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
                 icon: const Icon(Icons.cloud_sync_outlined),
                 label: const Text('Link OneDrive'),
               ),
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => _linkProvider(CloudProvider.dropbox),
+                icon: const Icon(Icons.inventory_2_outlined),
+                label: const Text('Link Dropbox'),
+              ),
             ],
           ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: _busy
-                  ? null
-                  : () => _run(widget.controller.syncIcloudBackups),
-              icon: const Icon(Icons.sync),
-              label: const Text('Sync iCloud now'),
+          if (Platform.isIOS || Platform.isMacOS) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => _run(widget.controller.syncIcloudBackups),
+                icon: const Icon(Icons.sync),
+                label: const Text('Sync iCloud now'),
+              ),
             ),
-          ),
+          ] else ...[
+            const SizedBox(height: 8),
+            Text(
+              'iCloud linking and sync are available from an Apple device.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
         ],
       ),
     );
@@ -3683,143 +4719,8 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
       trailing: IconButton(
         icon: const Icon(Icons.link_off),
         tooltip: 'Remove',
-        onPressed: _busy
-            ? null
-            : () => _run(
-                () => widget.controller.revokeCloudConnection(connection.id),
-              ),
+        onPressed: _busy ? null : () => _confirmCloudRevoke(connection),
       ),
-    );
-  }
-}
-
-/// Guided Google Drive / OneDrive link: fetch an authorization URL, let the user
-/// authorize in a browser, then paste the returned `code` back to complete.
-class _ProviderLinkDialog extends StatefulWidget {
-  const _ProviderLinkDialog({
-    required this.provider,
-    required this.controller,
-    required this.defaultRedirectUri,
-  });
-
-  final CloudProvider provider;
-  final AppController controller;
-  final String defaultRedirectUri;
-
-  @override
-  State<_ProviderLinkDialog> createState() => _ProviderLinkDialogState();
-}
-
-class _ProviderLinkDialogState extends State<_ProviderLinkDialog> {
-  late final TextEditingController _redirect = TextEditingController(
-    text: widget.defaultRedirectUri,
-  );
-  final TextEditingController _code = TextEditingController();
-  CloudLinkStart? _start;
-  bool _busy = false;
-
-  @override
-  void dispose() {
-    _redirect.dispose();
-    _code.dispose();
-    super.dispose();
-  }
-
-  Future<void> _getLink() async {
-    setState(() => _busy = true);
-    final start = await widget.controller.startProviderLink(
-      widget.provider,
-      redirectUri: _redirect.text.trim(),
-    );
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _busy = false;
-      _start = start;
-    });
-  }
-
-  Future<void> _complete() async {
-    final start = _start;
-    if (start == null) {
-      return;
-    }
-    setState(() => _busy = true);
-    final ok = await widget.controller.completeProviderLink(
-      provider: widget.provider,
-      state: start.state,
-      authorizationCode: _code.text.trim(),
-      redirectUri: _redirect.text.trim(),
-    );
-    if (!mounted) {
-      return;
-    }
-    setState(() => _busy = false);
-    if (ok) {
-      Navigator.of(context).pop(true);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final start = _start;
-    final authUrl = start?.authorizationUrl;
-    return AlertDialog(
-      title: Text('Link ${widget.provider.label}'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: _redirect,
-              decoration: const InputDecoration(
-                labelText: 'Redirect URI',
-                helperText:
-                    'Must match the OAuth client registered on the server.',
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (authUrl == null)
-              FilledButton(
-                onPressed: _busy ? null : _getLink,
-                child: const Text('Get authorization link'),
-              )
-            else ...[
-              const Text('1. Open this link and authorize:'),
-              const SizedBox(height: 4),
-              SelectableText(authUrl),
-              const SizedBox(height: 4),
-              TextButton.icon(
-                onPressed: () =>
-                    Clipboard.setData(ClipboardData(text: authUrl)),
-                icon: const Icon(Icons.copy, size: 18),
-                label: const Text('Copy link'),
-              ),
-              const SizedBox(height: 8),
-              const Text('2. Paste the authorization code from the redirect:'),
-              TextField(
-                controller: _code,
-                decoration: const InputDecoration(
-                  labelText: 'Authorization code',
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _busy ? null : () => Navigator.of(context).pop(false),
-          child: const Text('Cancel'),
-        ),
-        if (authUrl != null)
-          FilledButton(
-            onPressed: _busy ? null : _complete,
-            child: const Text('Complete link'),
-          ),
-      ],
     );
   }
 }

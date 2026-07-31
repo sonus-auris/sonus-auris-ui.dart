@@ -6,17 +6,17 @@ import 'package:flutter_test/flutter_test.dart';
 const double _frameSeconds = 2048 / 2 / 16000; // 0.064s
 
 SpectralFrame _pitched(double rms) => SpectralFrame(
-      rms: rms,
-      db: -20,
-      centroidHz: 1200,
-      flatness: 0.2, // tonal / pitched
-      crest: 40,
-      rolloffHz: 4000,
-      dominantHz: 440,
-      lowBandRatio: 0.2,
-      speechBandRatio: 0.4,
-      totalPower: 1,
-    );
+  rms: rms,
+  db: -20,
+  centroidHz: 1200,
+  flatness: 0.2, // tonal / pitched
+  crest: 40,
+  rolloffHz: 4000,
+  dominantHz: 440,
+  lowBandRatio: 0.2,
+  speechBandRatio: 0.4,
+  totalPower: 1,
+);
 
 void main() {
   late DateTime clock;
@@ -35,10 +35,7 @@ void main() {
 
   test('pitched audio with a steady beat is detected as music', () {
     // Pulse the envelope every 8 frames (~0.51s, ~117 BPM).
-    final frames = List.generate(
-      200,
-      (i) => _pitched(i % 8 < 2 ? 0.5 : 0.12),
-    );
+    final frames = List.generate(200, (i) => _pitched(i % 8 < 2 ? 0.5 : 0.12));
     final events = run(frames);
     final music = events.where((e) => e.kind == AcousticDetectionKind.music);
     expect(music, isNotEmpty);

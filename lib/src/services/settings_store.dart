@@ -7,14 +7,53 @@ import 'package:uuid/uuid.dart';
 
 import '../models/app_config.dart';
 import '../models/audio_trigger_event.dart';
+import '../models/client_telemetry_event.dart';
 import '../models/cloud_secrets.dart';
 import '../models/consent.dart';
+import '../models/pending_supabase_auth.dart';
 import '../models/sleep_cycle_profile.dart';
 
+/// Narrow secure-value boundary used by [SettingsStore].
+///
+/// Production wraps the platform Keychain/Keystore plugin; integration tests
+/// can supply an in-memory implementation without weakening release storage.
+abstract interface class SecretValueStore {
+  Future<String?> read({required String key});
+
+  Future<void> write({required String key, required String value});
+
+  Future<void> delete({required String key});
+}
+
+final class FlutterSecretValueStore implements SecretValueStore {
+  const FlutterSecretValueStore(this.storage);
+
+  final FlutterSecureStorage storage;
+
+  @override
+  Future<String?> read({required String key}) => storage.read(key: key);
+
+  @override
+  Future<void> write({required String key, required String value}) =>
+      storage.write(key: key, value: value);
+
+  @override
+  Future<void> delete({required String key}) => storage.delete(key: key);
+}
+
 class SettingsStore {
-  SettingsStore({FlutterSecureStorage? secureStorage, Uuid? uuid})
-    : _secureStorage = secureStorage ?? _defaultSecureStorage,
-      _uuid = uuid ?? const Uuid();
+  SettingsStore({
+    FlutterSecureStorage? secureStorage,
+    SecretValueStore? secretValueStore,
+    Uuid? uuid,
+  }) : assert(
+         secureStorage == null || secretValueStore == null,
+         'Supply either secureStorage or secretValueStore, not both.',
+       ),
+       _secureStorage =
+           secretValueStore ??
+           FlutterSecretValueStore(secureStorage ?? _defaultSecureStorage),
+       _uuid = uuid ?? const Uuid();
 
   static const _defaultSecureStorage = FlutterSecureStorage(
     aOptions: AndroidOptions(resetOnError: true),
@@ -26,6 +65,7 @@ class SettingsStore {
 
   static const _configKey = 'audio_dashcam.config.v1';
   static const _pendingAlertsKey = 'audio_dashcam.pending_alerts.v1';
+  static const _pendingTelemetryKey = 'audio_dashcam.pending_telemetry.v1';
   static const _sleepCycleProfileKey = 'audio_dashcam.sleep_cycle_profile.v1';
   static const _consentRecordKey = 'audio_dashcam.consent_record.v1';
   static const _s3AccessKeyKey = 'audio_dashcam.s3.access_key_id';
@@ -37,7 +77,10 @@ class SettingsStore {
       'audio_dashcam.supabase.refresh_token';
   static const _supabaseTokenExpiresAtKey =
       'audio_dashcam.supabase.token_expires_at';
+  static const _supabaseUserIdKey = 'audio_dashcam.supabase.user_id';
   static const _supabaseEmailKey = 'audio_dashcam.supabase.email';
+  static const _pendingSupabaseAuthKey =
+      'audio_dashcam.supabase.pending_auth.v1';
   static const _sttApiKeyKey = 'audio_dashcam.stt.api_key';
   static const _soundCloudAccessKey = 'audio_dashcam.soundcloud.access_token';
   static const _soundCloudRefreshKey = 'audio_dashcam.soundcloud.refresh_token';
@@ -45,7 +88,7 @@ class SettingsStore {
   static const _spotifyRefreshKey = 'audio_dashcam.spotify.refresh_token';
   static const _lastArchivedDayKey = 'audio_dashcam.day_archive.last_day';
 
-  final FlutterSecureStorage _secureStorage;
+  final SecretValueStore _secureStorage;
   final Uuid _uuid;
 
   Future<AppConfig> loadConfig() async {
@@ -96,6 +139,45 @@ class SettingsStore {
     }
     await prefs.setString(
       _pendingAlertsKey,
+      jsonEncode(events.map((event) => event.toJson()).toList()),
+    );
+  }
+
+  /// Persisted, sanitized observability outbox. This contains no credentials
+  /// and is capped by the controller; it lets diagnostics survive an app kill
+  /// or an offline period before they are delivered to Supabase.
+  Future<List<ClientTelemetryEvent>> loadPendingTelemetry() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pendingTelemetryKey);
+    if (raw == null || raw.trim().isEmpty) {
+      return const [];
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) {
+        return const [];
+      }
+      return decoded
+          .whereType<Map>()
+          .map(
+            (item) =>
+                ClientTelemetryEvent.fromJson(item.cast<String, Object?>()),
+          )
+          .toList(growable: false);
+    } catch (_) {
+      await prefs.remove(_pendingTelemetryKey);
+      return const [];
+    }
+  }
+
+  Future<void> savePendingTelemetry(List<ClientTelemetryEvent> events) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (events.isEmpty) {
+      await prefs.remove(_pendingTelemetryKey);
+      return;
+    }
+    await prefs.setString(
+      _pendingTelemetryKey,
       jsonEncode(events.map((event) => event.toJson()).toList()),
     );
   }
@@ -160,6 +242,7 @@ class SettingsStore {
           await _secureStorage.read(key: _supabaseRefreshTokenKey) ?? '',
       supabaseAccessTokenExpiresAt:
           await _secureStorage.read(key: _supabaseTokenExpiresAtKey) ?? '',
+      supabaseUserId: await _secureStorage.read(key: _supabaseUserIdKey) ?? '',
       supabaseEmail: await _secureStorage.read(key: _supabaseEmailKey) ?? '',
       sttApiKey: await _secureStorage.read(key: _sttApiKeyKey) ?? '',
       soundCloudAccessToken:
@@ -184,12 +267,43 @@ class SettingsStore {
       _supabaseTokenExpiresAtKey,
       secrets.supabaseAccessTokenExpiresAt,
     );
+    await _writeSecure(_supabaseUserIdKey, secrets.supabaseUserId);
     await _writeSecure(_supabaseEmailKey, secrets.supabaseEmail);
     await _writeSecure(_sttApiKeyKey, secrets.sttApiKey);
     await _writeSecure(_soundCloudAccessKey, secrets.soundCloudAccessToken);
     await _writeSecure(_soundCloudRefreshKey, secrets.soundCloudRefreshToken);
     await _writeSecure(_spotifyAccessKey, secrets.spotifyAccessToken);
     await _writeSecure(_spotifyRefreshKey, secrets.spotifyRefreshToken);
+  }
+
+  /// Stores the short-lived PKCE verifier in Keychain/Keystore, never in
+  /// preferences or a callback URL.
+  Future<void> savePendingSupabaseAuth(PendingSupabaseAuth pending) {
+    return _secureStorage.write(
+      key: _pendingSupabaseAuthKey,
+      value: jsonEncode(pending.toJson()),
+    );
+  }
+
+  Future<PendingSupabaseAuth?> loadPendingSupabaseAuth() async {
+    final raw = await _secureStorage.read(key: _pendingSupabaseAuthKey);
+    if (raw == null || raw.trim().isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        throw const FormatException('Pending sign-in state is invalid.');
+      }
+      return PendingSupabaseAuth.fromJson(decoded.cast<String, Object?>());
+    } catch (_) {
+      await clearPendingSupabaseAuth();
+      return null;
+    }
+  }
+
+  Future<void> clearPendingSupabaseAuth() {
+    return _secureStorage.delete(key: _pendingSupabaseAuthKey);
   }
 
   /// The last local date (yyyy-MM-dd) successfully archived as a "Day of My

@@ -50,15 +50,16 @@ class ModelCatalog {
 /// verifies, so a killed app never leaves a corrupt model in place.
 class ModelManager {
   ModelManager({http.Client? httpClient, Directory? cacheDir})
-      : _http = httpClient ?? http.Client(),
-        _cacheDirOverride = cacheDir;
+    : _http = httpClient ?? http.Client(),
+      _cacheDirOverride = cacheDir;
 
   final http.Client _http;
   final Directory? _cacheDirOverride;
   final Map<String, Future<File>> _inFlight = {};
 
   Future<Directory> _cacheDir() async {
-    final base = _cacheDirOverride ??
+    final base =
+        _cacheDirOverride ??
         Directory(p.join((await getApplicationSupportDirectory()).path));
     final dir = Directory(p.join(base.path, 'models'));
     await dir.create(recursive: true);

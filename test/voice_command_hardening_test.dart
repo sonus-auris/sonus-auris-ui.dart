@@ -22,18 +22,23 @@ void main() {
   group('confidence gate cannot be bypassed', () {
     test('NaN confidence is treated as failing the threshold', () async {
       final dispatcher = VoiceCommandDispatcher(
-        resolver: _FixedResolver(VoiceCommand(
-          intent: VoiceIntent.takeNote,
-          transcript: 'x',
-          slots: const {'text': 'sneaky'},
-          confidence: double.nan,
-        )),
+        resolver: _FixedResolver(
+          VoiceCommand(
+            intent: VoiceIntent.takeNote,
+            transcript: 'x',
+            slots: const {'text': 'sneaky'},
+            confidence: double.nan,
+          ),
+        ),
       );
       addTearDown(dispatcher.dispose);
 
       final result = await dispatcher.dispatch('whatever');
-      expect(result.success, isFalse,
-          reason: 'NaN must not slip past the confidence gate');
+      expect(
+        result.success,
+        isFalse,
+        reason: 'NaN must not slip past the confidence gate',
+      );
     });
 
     test('infinity confidence is clamped, not trusted blindly', () {
@@ -60,14 +65,18 @@ void main() {
     });
 
     test('allows https and http loopback', () {
-      expect(LlmIntentResolver.isSafeEndpoint(Uri.parse('https://api/x')),
-          isTrue);
       expect(
-          LlmIntentResolver.isSafeEndpoint(Uri.parse('http://localhost:8080/x')),
-          isTrue);
+        LlmIntentResolver.isSafeEndpoint(Uri.parse('https://api/x')),
+        isTrue,
+      );
       expect(
-          LlmIntentResolver.isSafeEndpoint(Uri.parse('http://127.0.0.1/x')),
-          isTrue);
+        LlmIntentResolver.isSafeEndpoint(Uri.parse('http://localhost:8080/x')),
+        isTrue,
+      );
+      expect(
+        LlmIntentResolver.isSafeEndpoint(Uri.parse('http://127.0.0.1/x')),
+        isTrue,
+      );
     });
 
     test('truncates an oversized response instead of acting on it', () async {
@@ -82,33 +91,38 @@ void main() {
         httpClient: client,
       );
       final cmd = await resolver.resolve('take a note: hello');
-      expect(cmd.intent, VoiceIntent.unknown,
-          reason: 'oversized bodies are refused');
+      expect(
+        cmd.intent,
+        VoiceIntent.unknown,
+        reason: 'oversized bodies are refused',
+      );
     });
 
-    test('clamps slot count, slot length and confidence from the server',
-        () async {
-      final slots = <String, String>{
-        for (var i = 0; i < VoiceLimits.maxSlots + 50; i++) 'k$i': 'v',
-        'text': 'y' * (VoiceLimits.maxSlotValueChars + 100),
-      };
-      final body = jsonEncode({
-        'intent': 'takeNote',
-        'slots': slots,
-        'confidence': 999.0,
-      });
-      final client = MockClient((_) async => http.Response(body, 200));
-      final resolver = LlmIntentResolver(
-        endpoint: Uri.parse('https://api.example/intent'),
-        httpClient: client,
-      );
-      final cmd = await resolver.resolve('note');
-      expect(cmd.slots.length, lessThanOrEqualTo(VoiceLimits.maxSlots));
-      expect(cmd.confidence, lessThanOrEqualTo(1.0));
-      for (final v in cmd.slots.values) {
-        expect(v.length, lessThanOrEqualTo(VoiceLimits.maxSlotValueChars));
-      }
-    });
+    test(
+      'clamps slot count, slot length and confidence from the server',
+      () async {
+        final slots = <String, String>{
+          for (var i = 0; i < VoiceLimits.maxSlots + 50; i++) 'k$i': 'v',
+          'text': 'y' * (VoiceLimits.maxSlotValueChars + 100),
+        };
+        final body = jsonEncode({
+          'intent': 'takeNote',
+          'slots': slots,
+          'confidence': 999.0,
+        });
+        final client = MockClient((_) async => http.Response(body, 200));
+        final resolver = LlmIntentResolver(
+          endpoint: Uri.parse('https://api.example/intent'),
+          httpClient: client,
+        );
+        final cmd = await resolver.resolve('note');
+        expect(cmd.slots.length, lessThanOrEqualTo(VoiceLimits.maxSlots));
+        expect(cmd.confidence, lessThanOrEqualTo(1.0));
+        for (final v in cmd.slots.values) {
+          expect(v.length, lessThanOrEqualTo(VoiceLimits.maxSlotValueChars));
+        }
+      },
+    );
 
     test('a backend error fails soft to unknown', () async {
       final client = MockClient((_) async => http.Response('nope', 500));
@@ -133,11 +147,13 @@ void main() {
       final sink = InMemoryNoteSink();
       final dispatcher = VoiceCommandDispatcher(
         noteSink: sink,
-        resolver: _FixedResolver(VoiceCommand(
-          intent: VoiceIntent.takeNote,
-          transcript: 'x',
-          slots: {'text': 'z' * (VoiceLimits.maxNoteChars + 500)},
-        )),
+        resolver: _FixedResolver(
+          VoiceCommand(
+            intent: VoiceIntent.takeNote,
+            transcript: 'x',
+            slots: {'text': 'z' * (VoiceLimits.maxNoteChars + 500)},
+          ),
+        ),
       );
       addTearDown(dispatcher.dispose);
 

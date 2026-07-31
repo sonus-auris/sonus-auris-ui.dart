@@ -62,35 +62,45 @@ class SleepProbabilityModel {
     var totalWeight = 0.0;
     final active = <String>[];
 
+    double? usable(double? value) =>
+        value != null && value.isFinite ? value : null;
+
     void add(String signal, double score, double weight) {
+      if (!score.isFinite || !weight.isFinite || weight <= 0) {
+        return;
+      }
       weighted += score.clamp(0.0, 1.0) * weight;
       totalWeight += weight;
       active.add(signal);
     }
 
-    if (consent.audio && sample.acousticSleepScore != null) {
-      final sleep = sample.acousticSleepScore!.clamp(0.0, 1.0);
-      final arousal = sample.acousticArousalScore?.clamp(0.0, 1.0) ?? 0.0;
+    final acousticSleep = usable(sample.acousticSleepScore);
+    if (consent.audio && acousticSleep != null) {
+      final sleep = acousticSleep.clamp(0.0, 1.0);
+      final arousal =
+          usable(sample.acousticArousalScore)?.clamp(0.0, 1.0) ?? 0.0;
       add('audio', (sleep * 0.78 + (1.0 - arousal) * 0.22), 0.42);
     }
 
-    if (consent.motion && sample.motionStillnessScore != null) {
-      final stillness = sample.motionStillnessScore!.clamp(0.0, 1.0);
-      final tossingPenalty = ((sample.tossingEventsPerHour ?? 0.0) / 12.0)
-          .clamp(0.0, 1.0);
+    final motionStillness = usable(sample.motionStillnessScore);
+    if (consent.motion && motionStillness != null) {
+      final stillness = motionStillness.clamp(0.0, 1.0);
+      final tossingPenalty =
+          ((usable(sample.tossingEventsPerHour) ?? 0.0) / 12.0).clamp(0.0, 1.0);
       final gotUpPenalty = sample.gotUp ? 0.45 : 0.0;
       add('motion', stillness - tossingPenalty * 0.35 - gotUpPenalty, 0.26);
     }
 
-    if (consent.ambientLight && sample.ambientLux != null) {
-      final darkness = (1.0 - (sample.ambientLux! / 60.0)).clamp(0.0, 1.0);
+    final ambientLux = usable(sample.ambientLux);
+    if (consent.ambientLight && ambientLux != null) {
+      final darkness = (1.0 - (ambientLux / 60.0)).clamp(0.0, 1.0);
       add('ambientLight', darkness, 0.16);
     }
 
     if (consent.phoneContext) {
       var contextWeighted = 0.0;
       var contextWeight = 0.0;
-      final idle = sample.phoneIdleMinutes;
+      final idle = usable(sample.phoneIdleMinutes);
       if (idle != null) {
         contextWeighted += (idle / 45.0).clamp(0.0, 1.0) * 0.45;
         contextWeight += 0.45;
@@ -100,7 +110,7 @@ class SleepProbabilityModel {
         contextWeighted += (charging ? 1.0 : 0.25) * 0.20;
         contextWeight += 0.20;
       }
-      final bedtime = sample.usualBedtimeScore;
+      final bedtime = usable(sample.usualBedtimeScore);
       if (bedtime != null) {
         contextWeighted += bedtime.clamp(0.0, 1.0) * 0.35;
         contextWeight += 0.35;

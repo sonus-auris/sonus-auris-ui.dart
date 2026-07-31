@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:audio_dashcam/src/services/crypto/key_manager.dart';
 import 'package:audio_dashcam/src/services/crypto/segment_cipher.dart';
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/in_memory_key_store.dart';
@@ -23,21 +24,58 @@ void main() {
     expect(await mk1.extractBytes(), equals(await mk2.extractBytes()));
   });
 
-  test('passphrase recovery restores the same master key on a new device',
-      () async {
-    final originalStore = InMemoryKeyStore();
-    final original = KeyManager(store: originalStore);
-    await original.getOrCreateMasterKey();
-    final recovery = await original.exportPassphraseRecovery('correct horse staple');
+  test('concurrent first use creates and persists one master key', () async {
+    final store = _CountingKeyStore();
+    final km = KeyManager(store: store);
 
-    // New device: empty store, import from the blob + passphrase.
-    final fresh = KeyManager(store: InMemoryKeyStore());
-    await fresh.restoreFromPassphraseRecovery('correct horse staple', recovery);
+    final keys = await Future.wait(
+      List<Future<SecretKey>>.generate(32, (_) => km.getOrCreateMasterKey()),
+    );
 
-    final a = await original.getOrCreateMasterKey();
-    final b = await fresh.getOrCreateMasterKey();
-    expect(await a.extractBytes(), equals(await b.extractBytes()));
+    expect(store.writeAttempts, 1);
+    expect(keys.skip(1).every((key) => identical(key, keys.first)), isTrue);
+    expect(
+      base64Decode(store.snapshot[KeyManager.masterKeyStorageId]!),
+      await keys.first.extractBytes(),
+    );
   });
+
+  test('failed master-key persistence is retryable', () async {
+    final store = _CountingKeyStore(failFirstWrite: true);
+    final km = KeyManager(store: store);
+
+    await expectLater(km.getOrCreateMasterKey(), throwsStateError);
+    final recovered = await km.getOrCreateMasterKey();
+
+    expect(store.writeAttempts, 2);
+    expect(
+      base64Decode(store.snapshot[KeyManager.masterKeyStorageId]!),
+      await recovered.extractBytes(),
+    );
+  });
+
+  test(
+    'passphrase recovery restores the same master key on a new device',
+    () async {
+      final originalStore = InMemoryKeyStore();
+      final original = KeyManager(store: originalStore);
+      await original.getOrCreateMasterKey();
+      final recovery = await original.exportPassphraseRecovery(
+        'correct horse staple',
+      );
+
+      // New device: empty store, import from the blob + passphrase.
+      final fresh = KeyManager(store: InMemoryKeyStore());
+      await fresh.restoreFromPassphraseRecovery(
+        'correct horse staple',
+        recovery,
+      );
+
+      final a = await original.getOrCreateMasterKey();
+      final b = await fresh.getOrCreateMasterKey();
+      expect(await a.extractBytes(), equals(await b.extractBytes()));
+    },
+  );
 
   test('wrong passphrase fails to recover', () async {
     final km = KeyManager(store: InMemoryKeyStore());
@@ -46,7 +84,8 @@ void main() {
 
     final fresh = KeyManager(store: InMemoryKeyStore());
     expect(
-      () => fresh.restoreFromPassphraseRecovery('the-wrong-passphrase', recovery),
+      () =>
+          fresh.restoreFromPassphraseRecovery('the-wrong-passphrase', recovery),
       throwsA(isA<Object>()),
     );
   });
@@ -57,38 +96,70 @@ void main() {
     expect(() => km.exportPassphraseRecovery('short'), throwsArgumentError);
   });
 
-  test('account-escrow recovery restores the master key with its secret',
-      () async {
-    final original = KeyManager(store: InMemoryKeyStore());
-    await original.getOrCreateMasterKey();
-    final material = await original.exportAccountRecovery();
+  test(
+    'account-escrow recovery restores the master key with its secret',
+    () async {
+      final original = KeyManager(store: InMemoryKeyStore());
+      await original.getOrCreateMasterKey();
+      final material = await original.exportAccountRecovery();
 
-    final fresh = KeyManager(store: InMemoryKeyStore());
-    await fresh.restoreFromAccountRecovery(
-      material.recoverySecretBase64,
-      material.blob,
-    );
+      final fresh = KeyManager(store: InMemoryKeyStore());
+      await fresh.restoreFromAccountRecovery(
+        material.recoverySecretBase64,
+        material.blob,
+      );
 
-    final a = await original.getOrCreateMasterKey();
-    final b = await fresh.getOrCreateMasterKey();
-    expect(await a.extractBytes(), equals(await b.extractBytes()));
+      final a = await original.getOrCreateMasterKey();
+      final b = await fresh.getOrCreateMasterKey();
+      expect(await a.extractBytes(), equals(await b.extractBytes()));
+    },
+  );
+
+  test(
+    'account-escrow blob is useless without the secret (zero-knowledge)',
+    () async {
+      final original = KeyManager(store: InMemoryKeyStore());
+      await original.getOrCreateMasterKey();
+      final material = await original.exportAccountRecovery();
+
+      final attacker = KeyManager(store: InMemoryKeyStore());
+      final wrongSecret = base64Wrong(material.recoverySecretBase64);
+      expect(
+        () => attacker.restoreFromAccountRecovery(wrongSecret, material.blob),
+        throwsA(isA<Object>()),
+      );
+    },
+  );
+
+  test('wrapped DEK uses and opens the exact 60-byte envelope', () async {
+    final km = KeyManager(store: InMemoryKeyStore());
+    final dek = SecretKey(List<int>.generate(32, (index) => index));
+    final wrapped = await km.wrapDek(dek);
+    expect(wrapped, hasLength(SegmentCipher.wrappedDekLength));
+
+    final opened = await km.unwrapDek(wrapped);
+    try {
+      expect(await opened.extractBytes(), await dek.extractBytes());
+    } finally {
+      opened.destroy();
+      dek.destroy();
+    }
   });
 
-  test('account-escrow blob is useless without the secret (zero-knowledge)',
-      () async {
-    final original = KeyManager(store: InMemoryKeyStore());
-    await original.getOrCreateMasterKey();
-    final material = await original.exportAccountRecovery();
+  test(
+    'device wrapper rejects malformed lengths before AES-GCM parsing',
+    () async {
+      final km = KeyManager(store: InMemoryKeyStore());
+      for (final length in [0, 59, 61, 65535]) {
+        await expectLater(
+          () => km.unwrapDek(Uint8List(length)),
+          throwsFormatException,
+        );
+      }
+    },
+  );
 
-    final attacker = KeyManager(store: InMemoryKeyStore());
-    final wrongSecret = base64Wrong(material.recoverySecretBase64);
-    expect(
-      () => attacker.restoreFromAccountRecovery(wrongSecret, material.blob),
-      throwsA(isA<Object>()),
-    );
-  });
-
-  test('wrapped DEK is the expected envelope size', () async {
+  test('wrapped DEK is the expected envelope size inside SAC1', () async {
     final km = KeyManager(store: InMemoryKeyStore());
     final cipher = SegmentCipher();
     final container = await cipher.seal(
@@ -96,8 +167,7 @@ void main() {
       wrapDek: km.wrapDek,
     );
     final header = SegmentCipher.peekHeader(container);
-    // nonce(12) + dek(32) + mac(16)
-    expect(header.wrappedDek.length, 60);
+    expect(header.wrappedDek.length, SegmentCipher.wrappedDekLength);
   });
 }
 
@@ -106,4 +176,35 @@ String base64Wrong(String b64) {
   final bytes = base64Decode(b64);
   bytes[0] ^= 0xFF;
   return base64Encode(bytes);
+}
+
+class _CountingKeyStore implements SecureKeyStore {
+  _CountingKeyStore({this.failFirstWrite = false});
+
+  final bool failFirstWrite;
+  final Map<String, String> _values = <String, String>{};
+  var writeAttempts = 0;
+
+  Map<String, String> get snapshot => Map.unmodifiable(_values);
+
+  @override
+  Future<String?> read(String key) async {
+    await Future<void>.delayed(Duration.zero);
+    return _values[key];
+  }
+
+  @override
+  Future<void> write(String key, String value) async {
+    writeAttempts++;
+    await Future<void>.delayed(Duration.zero);
+    if (failFirstWrite && writeAttempts == 1) {
+      throw StateError('synthetic secure-store failure');
+    }
+    _values[key] = value;
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    _values.remove(key);
+  }
 }

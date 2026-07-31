@@ -1,0 +1,219 @@
+name: desktop builds
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish_r2:
+        description: Publish unsigned Flutter desktop alpha archives to Cloudflare R2
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recorder-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SONUS_BACKEND_BASE_URL: ${{ vars.SONUS_BACKEND_BASE_URL }}
+  SONUS_SUPABASE_URL: ${{ vars.SONUS_SUPABASE_URL }}
+  SONUS_SUPABASE_ANON_KEY: ${{ vars.SONUS_SUPABASE_PUBLISHABLE_KEY }}
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Linux desktop toolchain
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+          libsecret-1-dev libwebkit2gtk-4.1-dev
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+      - run: flutter pub get
+      - name: Resolve account configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            SONUS_BACKEND_BASE_URL="${SONUS_BACKEND_BASE_URL:-http://127.0.0.1:8126}"
+            SONUS_SUPABASE_URL="${SONUS_SUPABASE_URL:-http://127.0.0.1:54321}"
+            SONUS_SUPABASE_ANON_KEY="${SONUS_SUPABASE_ANON_KEY:-sb_publishable_compile_only}"
+          fi
+          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required desktop build setting is missing: $name" >&2
+              exit 1
+            fi
+            echo "$name=${!name}" >> "$GITHUB_ENV"
+          done
+      - name: Build Linux desktop recorder
+        run: >-
+          flutter build linux --release -t lib/main_desktop.dart
+          "--dart-define=SONUS_BACKEND_BASE_URL=${SONUS_BACKEND_BASE_URL}"
+          "--dart-define=SONUS_SUPABASE_URL=${SONUS_SUPABASE_URL}"
+          "--dart-define=SONUS_SUPABASE_ANON_KEY=${SONUS_SUPABASE_ANON_KEY}"
+<<<<<<< HEAD
+      - name: Package Linux desktop alpha
+        shell: bash
+        run: tar -C build/linux/x64/release -czf sonus-auris-flutter-linux-x64.tar.gz bundle
+      - uses: actions/upload-artifact@v7
+=======
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+>>>>>>> origin/main
+        with:
+          name: sonus-auris-flutter-linux-x64
+          path: sonus-auris-flutter-linux-x64.tar.gz
+          retention-days: 14
+
+  macos:
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+      - run: flutter pub get
+      - name: Require account configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required desktop build setting is missing: $name" >&2
+              exit 1
+            fi
+          done
+      - name: Build macOS desktop recorder
+        run: >-
+          flutter build macos --release -t lib/main_desktop.dart
+          "--dart-define=SONUS_BACKEND_BASE_URL=${SONUS_BACKEND_BASE_URL}"
+          "--dart-define=SONUS_SUPABASE_URL=${SONUS_SUPABASE_URL}"
+          "--dart-define=SONUS_SUPABASE_ANON_KEY=${SONUS_SUPABASE_ANON_KEY}"
+<<<<<<< HEAD
+      - name: Package macOS desktop alpha
+        shell: bash
+        run: >-
+          ditto -c -k --sequesterRsrc --keepParent
+          "build/macos/Build/Products/Release/Sonus Auris.app"
+          sonus-auris-flutter-macos-arm64.zip
+      - uses: actions/upload-artifact@v7
+=======
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+>>>>>>> origin/main
+        with:
+          name: sonus-auris-flutter-macos-arm64
+          path: sonus-auris-flutter-macos-arm64.zip
+          retention-days: 14
+
+  windows:
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+      - run: flutter pub get
+      - name: Require account configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required desktop build setting is missing: $name" >&2
+              exit 1
+            fi
+          done
+      - name: Build Windows desktop recorder
+        shell: bash
+        run: >-
+          flutter build windows --release -t lib/main_desktop.dart
+          "--dart-define=SONUS_BACKEND_BASE_URL=${SONUS_BACKEND_BASE_URL}"
+          "--dart-define=SONUS_SUPABASE_URL=${SONUS_SUPABASE_URL}"
+          "--dart-define=SONUS_SUPABASE_ANON_KEY=${SONUS_SUPABASE_ANON_KEY}"
+<<<<<<< HEAD
+      - name: Package Windows desktop alpha
+        shell: pwsh
+        run: >-
+          Compress-Archive
+          -Path build/windows/x64/runner/Release/*
+          -DestinationPath sonus-auris-flutter-windows-x64.zip
+      - uses: actions/upload-artifact@v7
+=======
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+>>>>>>> origin/main
+        with:
+          name: sonus-auris-flutter-windows-x64
+          path: sonus-auris-flutter-windows-x64.zip
+          retention-days: 14
+
+  publish-r2:
+    name: publish Flutter desktop alpha to R2
+    needs: [linux, macos, windows]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_r2 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: desktop-alpha
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sonus-auris-flutter-*
+          path: dist
+          merge-multiple: true
+      - name: Verify, checksum, and publish archives
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: "true"
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          R2_DESKTOP_BUCKET: ${{ vars.R2_DESKTOP_BUCKET }}
+        run: |
+          set -euo pipefail
+          expected=(
+            sonus-auris-flutter-linux-x64.tar.gz
+            sonus-auris-flutter-macos-arm64.zip
+            sonus-auris-flutter-windows-x64.zip
+          )
+          for archive in "${expected[@]}"; do
+            test -s "dist/$archive"
+          done
+          (
+            cd dist
+            sha256sum "${expected[@]}" > SHA256SUMS
+          )
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY CLOUDFLARE_ACCOUNT_ID R2_DESKTOP_BUCKET; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required R2 setting is missing: $name" >&2
+              exit 1
+            fi
+          done
+          endpoint="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          for file in dist/*; do
+            filename="$(basename "$file")"
+            aws s3 cp "$file" "s3://${R2_DESKTOP_BUCKET}/desktop/flutter-alpha/${GITHUB_SHA}/${filename}" \
+              --endpoint-url "$endpoint" \
+              --cache-control "public,max-age=31536000,immutable"
+            aws s3 cp "$file" "s3://${R2_DESKTOP_BUCKET}/desktop/flutter-alpha/latest/${filename}" \
+              --endpoint-url "$endpoint" \
+              --cache-control "public,max-age=300"
+          done

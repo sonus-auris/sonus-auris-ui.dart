@@ -16,14 +16,24 @@ concurrency:
 jobs:
   analyze-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
-          flutter-version: 3.44.2
+          flutter-version: 3.44.3
+          cache: true
       - run: flutter --version
       - run: flutter pub get
+      - name: Install store-listing OCR verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr
+      - name: Verify App Store and Play Store graphics
+        run: scripts/release/verify-store-assets.sh
       - name: Analyze (fails on warnings/errors, not pre-existing style infos)
         run: flutter analyze --no-fatal-infos
       - name: Unit tests (hard gate)

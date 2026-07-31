@@ -11,7 +11,10 @@ class RecognisedSong {
 }
 
 class MemoryPublishResult {
-  const MemoryPublishResult({this.spotifyAddedCount = 0, this.notes = const []});
+  const MemoryPublishResult({
+    this.spotifyAddedCount = 0,
+    this.notes = const [],
+  });
 
   final int spotifyAddedCount;
   final List<String> notes;
@@ -27,7 +30,7 @@ class MemoryPublishResult {
 /// `DayOfLifeArchiver` — see "Day of My Life".)
 class MemoryPublisher {
   MemoryPublisher({SpotifyClient? spotify})
-      : _spotify = spotify ?? SpotifyClient();
+    : _spotify = spotify ?? SpotifyClient();
 
   final SpotifyClient _spotify;
 

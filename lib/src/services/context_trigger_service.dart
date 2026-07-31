@@ -32,16 +32,16 @@ class ContextTriggerService {
     required List<ContextTriggerSource> sources,
     DiagnosticLog? diagnostics,
     Duration debounce = const Duration(seconds: 8),
-  })  : _sources = {for (final s in sources) s.kind: s},
-        _diagnostics = diagnostics,
-        _debounce = debounce;
+  }) : _sources = {for (final s in sources) s.kind: s},
+       _diagnostics = diagnostics,
+       _debounce = debounce;
 
   final Map<ContextTriggerKind, ContextTriggerSource> _sources;
   final DiagnosticLog? _diagnostics;
   final Duration _debounce;
 
   final Map<ContextTriggerKind, StreamSubscription<ContextTriggerEvent>>
-      _subscriptions = {};
+  _subscriptions = {};
   final Map<ContextTriggerKind, DateTime> _lastEmitted = {};
 
   void Function(ContextTriggerEvent event)? onTrigger;

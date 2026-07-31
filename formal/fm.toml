@@ -1,0 +1,90 @@
+# Provisional manifest consumed directly by GitHub Actions until DEN-565 lands.
+schema_version = 1
+project = "sonus-auris-ui.dart"
+model = "encrypted-segment-lifecycle-v1"
+language = "quint"
+spec = "formal/segment_lifecycle.qnt"
+tests = "formal/segment_lifecycle_test.qnt"
+main = "segment_lifecycle"
+init = "init"
+step = "step"
+invariants = ["segment_lifecycle_safety"]
+witnesses = [
+  "direct_upload_reached",
+  "partial_remote_without_ack_reached",
+  "retry_generation_reached",
+  "retention_tombstone_reached",
+  "unbacked_retention_failure_reached",
+]
+
+[bounds]
+segments = 1
+upload_generations = 2
+logical_remote_objects = 1
+derived_artifacts = 2
+retention_deadline_ticks = 4
+max_logical_time = 7
+upload_modes = 2
+tombstone_stages = 4
+
+[assumptions]
+plaintext_retention_hours = 100
+logical_tick_scale = "abstract; deadline is fixed and cannot be extended"
+remote_put_identity = "all retries address one logical segment object"
+crash_model = "restart clears volatile upload state and preserves persisted index/tombstone state"
+network_model = "successful egress is represented only after on-device sealing"
+
+[toolchain]
+quint = "0.32.0"
+node = "22"
+java = "21"
+flutter = "3.44.3"
+
+[simulation]
+max_samples = 10000
+max_steps = 35
+
+[verification]
+backend = "apalache"
+max_steps = 12
+profile = "push-and-scheduled"
+
+[traces]
+format = "itf"
+model_based_testing_metadata = true
+count = 8
+max_steps = 25
+
+[adapters.dart]
+strategy = "json-lines-itf-driver"
+targets = [
+  "lib/src/models/recording_segment.dart",
+  "lib/src/app/app_controller.dart",
+  "lib/src/services/segment_index.dart",
+  "lib/src/services/s3_storage_client.dart",
+  "lib/src/services/sound_recorder_backend_client.dart",
+  "lib/src/retention/local_retention_policy.dart",
+]
+status = "planned"
+
+[adapters.typescript]
+strategy = "json-lines-itf-driver"
+status = "planned-for-shared-client-protocols"
+
+[procedures.retention_journal]
+schema_version = 1
+id = "sonus-retention-journal-v1"
+model = "formal/retention_journal_model.py"
+runner = "python3"
+adapter_protocol = "json-stdin/v1"
+claim = "finite-crash-interleaving-abstraction"
+transition_depth = 7
+invariants = [
+  "journal-before-delete",
+  "no-journal-no-stale-local-index",
+  "unbacked-expiry-visible",
+  "recovery-converges",
+  "terminal-idempotence",
+]
+production_symbols = ["SegmentIndex", "RetentionMutationStage", "loadSegments", "enforceDeviceRetention"]
+refinement_status = "required"

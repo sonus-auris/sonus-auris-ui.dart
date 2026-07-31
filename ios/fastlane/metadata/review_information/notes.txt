@@ -27,7 +27,9 @@ Cloud / accounts
   recordings are encrypted on-device and the service cannot decrypt them.
 - If you need to exercise the optional backend (alerts/links), contact us for a
   demo configuration; it is not required to evaluate the core recording feature.
-- Account creation uses Supabase email/password auth. Signed-in users can delete
+- Account creation and sign-in use a one-time six-digit Supabase email code; the
+  app has no password field. A single-use PKCE email link remains a fallback.
+  Signed-in users can delete
   their account from Configure > Account > Delete account; the app confirms,
   calls the backend deletion endpoint, and clears local recordings/tokens.
 

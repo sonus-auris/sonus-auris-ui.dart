@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Sonus Auris
+Comment=Passwordless rolling-window audio recorder
+Exec=sonus_auris %U
+Icon=app.sonusauris.audio_dashcam
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+MimeType=x-scheme-handler/sonusauris;
+StartupNotify=true
