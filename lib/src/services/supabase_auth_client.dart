@@ -30,7 +30,6 @@ class SupabaseAuthClient {
   final http.Client _httpClient;
   final Duration requestTimeout;
 
-<<<<<<< HEAD
   /// Creates an RFC 7636 verifier with enough entropy for a public client.
   static String createPkceVerifier() {
     final random = Random.secure();
@@ -47,8 +46,6 @@ class SupabaseAuthClient {
     ).replaceAll('=', '');
   }
 
-=======
->>>>>>> origin/main
   /// Emails a one-time sign-in code (and, with the default template, a magic
   /// link). `create_user: true` makes this the sign-up path too: an unknown
   /// address gets an account the moment its first code is verified.
