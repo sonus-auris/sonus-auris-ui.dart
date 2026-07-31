@@ -208,6 +208,58 @@ void main() {
     },
   );
 
+  test(
+    'account deletion resets prior clear success and cannot be downgraded',
+    () async {
+      final coordinator = RetentionWorkerCoordinator();
+      var clearAttempts = 0;
+
+      await coordinator.revokeAndClear(
+        reason: RetentionRevocationReason.consentRevocation,
+        clearLocalState: () async {
+          clearAttempts += 1;
+        },
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(coordinator.localStateCleared, isTrue);
+      expect(coordinator.permanentlyClosed, isFalse);
+
+      await expectLater(
+        coordinator.revokeAndClear(
+          reason: RetentionRevocationReason.accountDeletion,
+          clearLocalState: () async {
+            clearAttempts += 1;
+            throw StateError('account-specific local clear failed');
+          },
+        ),
+        throwsA(isA<StateError>()),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(coordinator.localStateCleared, isFalse);
+      expect(coordinator.permanentlyClosed, isTrue);
+      expect(
+        coordinator.revokedFor,
+        RetentionRevocationReason.accountDeletion,
+      );
+
+      // Even a mistakenly weaker retry reason cannot reopen or downgrade an
+      // account-deletion barrier.
+      await coordinator.revokeAndClear(
+        reason: RetentionRevocationReason.consentRevocation,
+        clearLocalState: () async {
+          clearAttempts += 1;
+        },
+      );
+      expect(coordinator.localStateCleared, isTrue);
+      expect(coordinator.permanentlyClosed, isTrue);
+      expect(
+        coordinator.revokedFor,
+        RetentionRevocationReason.accountDeletion,
+      );
+      expect(clearAttempts, 3);
+    },
+  );
+
   test('account deletion dominates an in-flight consent revocation', () async {
     final coordinator = RetentionWorkerCoordinator();
     final clearBlock = Completer<void>();
