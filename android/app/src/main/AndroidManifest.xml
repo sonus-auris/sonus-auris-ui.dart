@@ -125,11 +125,7 @@
                 <data
                     android:scheme="sonusauris"
                     android:host="oauth"
-<<<<<<< HEAD
-                    android:path="/callback" />
-=======
                     android:pathPrefix="/callback" />
->>>>>>> origin/main
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
