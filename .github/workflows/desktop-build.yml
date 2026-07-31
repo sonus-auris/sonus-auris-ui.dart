@@ -100,17 +100,13 @@ jobs:
           "--dart-define=SONUS_BACKEND_BASE_URL=${SONUS_BACKEND_BASE_URL}"
           "--dart-define=SONUS_SUPABASE_URL=${SONUS_SUPABASE_URL}"
           "--dart-define=SONUS_SUPABASE_ANON_KEY=${SONUS_SUPABASE_ANON_KEY}"
-<<<<<<< HEAD
       - name: Package macOS desktop alpha
         shell: bash
         run: >-
           ditto -c -k --sequesterRsrc --keepParent
           "build/macos/Build/Products/Release/Sonus Auris.app"
           sonus-auris-flutter-macos-arm64.zip
-      - uses: actions/upload-artifact@v7
-=======
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
->>>>>>> origin/main
         with:
           name: sonus-auris-flutter-macos-arm64
           path: sonus-auris-flutter-macos-arm64.zip
