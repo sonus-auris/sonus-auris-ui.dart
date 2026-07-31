@@ -31,14 +31,11 @@ import 'src/services/supabase_rest_client.dart';
 import 'src/services/supabase_telemetry_realtime_client.dart';
 import 'src/widgets/supabase_auth_form.dart';
 
-<<<<<<< HEAD
 const _authRedirectUrl = String.fromEnvironment(
   'SONUS_SUPABASE_AUTH_REDIRECT_URL',
 );
 const _pendingAuthPreferenceKey = 'sonus_auris.web.pending_auth.v1';
 
-=======
->>>>>>> origin/main
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const SonusWebApp());
