@@ -1086,62 +1086,11 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
         );
       case 2:
-<<<<<<< HEAD
         return _settingsBody(viewModel, _ConfigurePage.connections);
       case 3:
         return _settingsBody(viewModel, _ConfigurePage.automation);
       case 4:
         return _settingsBody(viewModel, _ConfigurePage.general);
-=======
-        return Form(
-          key: _formKey,
-          child: _ConfigureView(
-            viewModel: viewModel,
-            accountSection: _AccountSection(
-              controller: widget.controller,
-              isSignedIn: viewModel.isSignedIn,
-              hasFirstFactorSession: viewModel.hasFirstFactorSession,
-              signedInEmail: viewModel.signedInEmail,
-              isDeviceRegistered: viewModel.isDeviceRegistered,
-              isAwaitingDeviceRegistration:
-                  viewModel.isAwaitingDeviceRegistration,
-              supabaseUrlController: _supabaseUrlController,
-              supabaseAnonKeyController: _supabaseAnonKeyController,
-              onRequestCode: (email) => _requestCode(viewModel, email),
-              onSubmitCode: (email, code) =>
-                  _submitCode(viewModel, email, code),
-              onSignOut: widget.controller.signOutSupabase,
-              onDeleteAccount: widget.controller.deleteAccount,
-            ),
-            selectedProvider: _selectedProvider,
-            uploadEnabled: _uploadEnabled,
-            onUploadEnabledChanged: (value) =>
-                setState(() => _uploadEnabled = value),
-            onProviderChanged: (provider) =>
-                setState(() => _selectedProvider = provider),
-            onSave: () => _save(viewModel),
-            onAudioConfigChanged: (updated) =>
-                widget.controller.saveConfig(updated),
-            controller: widget.controller,
-            deviceRetentionController: _deviceRetentionController,
-            cloudRetentionController: _cloudRetentionController,
-            segmentMinutesController: _segmentMinutesController,
-            overlapSecondsController: _overlapSecondsController,
-            sampleRateController: _sampleRateController,
-            channelsController: _channelsController,
-            backendUrlController: _backendUrlController,
-            backendDeviceTokenController: _backendDeviceTokenController,
-            s3BucketController: _s3BucketController,
-            s3RegionController: _s3RegionController,
-            s3PrefixController: _s3PrefixController,
-            s3EndpointController: _s3EndpointController,
-            s3AccessKeyController: _s3AccessKeyController,
-            s3SecretKeyController: _s3SecretKeyController,
-            s3SessionTokenController: _s3SessionTokenController,
-            sttApiKeyController: _sttApiKeyController,
-          ),
-        );
->>>>>>> origin/main
       default:
         return _HomeView(
           viewModel: viewModel,

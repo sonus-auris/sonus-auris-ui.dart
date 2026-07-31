@@ -1,7 +1,6 @@
 // Speaks short spoken cues (TTS) confirming capture state for eyes-free use.
 import 'package:flutter/services.dart' show SystemSound, SystemSoundType;
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:flutter/services.dart';
 
 /// Speaks short verbal cues ("recording", "stopped", "saved") so the user can
 /// confirm capture state without looking at the screen. All speech is gated by
