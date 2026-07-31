@@ -16,25 +16,16 @@ class KeywordMatch {
   const KeywordMatch({
     required this.keyword,
     required this.transcript,
-<<<<<<< HEAD
     required this.kind,
-=======
-    this.isSafeWord = false,
->>>>>>> origin/main
   });
 
   final String keyword;
   final String transcript;
-<<<<<<< HEAD
   final SpokenPhraseKind kind;
-
-  bool get isSafeWord => kind == SpokenPhraseKind.safeWord;
-=======
 
   /// True when the hit came from [AppConfig.safeWords] rather than
   /// [AppConfig.keywords]. Both trigger the same alert/ding/quality boost.
-  final bool isSafeWord;
->>>>>>> origin/main
+  bool get isSafeWord => kind == SpokenPhraseKind.safeWord;
 }
 
 /// Opt-in cloud speech-to-text. POSTs a short WAV clip to a user-configured
