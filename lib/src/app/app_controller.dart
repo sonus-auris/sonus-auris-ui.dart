@@ -1342,9 +1342,6 @@ class AppController {
     _message.add('Signed out.');
   }
 
-<<<<<<< HEAD
-  // --- Passwordless sign-in (email code with magic-link fallback) -----------
-=======
   Future<void> _invalidateSupabaseSession({required String message}) async {
     final secrets = _secrets.valueOrNull ?? const CloudSecrets();
     final cleared = secrets.withoutSupabaseSession().copyWith(
@@ -1362,8 +1359,7 @@ class AppController {
     _message.add(message);
   }
 
-  // --- Passwordless sign-in (email magic link / one-time code) --------------
->>>>>>> origin/main
+  // --- Passwordless sign-in (email code with magic-link fallback) -----------
 
   /// Emails a six-digit sign-in code (plus a magic-link fallback). Same call
   /// for sign-in and sign-up — an unknown address is created when its first
