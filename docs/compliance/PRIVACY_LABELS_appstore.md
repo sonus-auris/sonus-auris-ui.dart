@@ -48,17 +48,6 @@ for the exact audio, transcript, identifiers, location, derived data, purpose,
 linkage, and provider role before release.
 
 ## Notes
-<<<<<<< HEAD
-- For each type Apple asks the **purposes**: choose **App Functionality** (and
-  **Authentication** for IDs). Do **not** select Advertising, Analytics (3rd
-  party), or Product Personalization.
-- Keep App Store Connect answers synchronized with `ios/Runner/PrivacyInfo.xcprivacy`.
-- Optional cloud transcription and song identification can send a bounded audio
-  excerpt/fingerprint to the configured recognition provider. Keep **Audio Data**
-  declared when either feature is present, even if encrypted backup is disabled.
-- If you ship a build with the backend/backup fully disabled, Audio/Location/IDs
-  become "Data Not Collected." Keep this in sync with the shipped build.
-=======
 
 - For each type select only the purposes used by the shipped app. Do not select
   Advertising or third-party advertising analytics.
@@ -67,9 +56,13 @@ linkage, and provider role before release.
 - Keep App Store Connect answers synchronized with
   `ios/Runner/PrivacyInfo.xcprivacy`, the public privacy policy, and the runtime
   data-flow inventory.
+- Optional cloud transcription and song identification can send a bounded audio
+  excerpt/fingerprint to the configured recognition provider. Keep **Audio Data**
+  declared when either feature is present, even if encrypted backup is disabled.
+- If you ship a build with the backend/backup fully disabled, Audio/Location/IDs
+  become "Data Not Collected." Keep this in sync with the shipped build.
 - Verify the production build, UI, tests, and retention sweeper all enforce the
   100-hour default and preserve shorter user-selected settings.
->>>>>>> origin/main
 - Privacy policy URL: `https://sonusauris.app/privacy/`.
 - Account deletion URL: `https://sonusauris.app/account-deletion/`.
 - Re-audit whenever providers, SDKs, analysis categories, retention, encryption,
