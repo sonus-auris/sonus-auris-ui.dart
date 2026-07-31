@@ -93,6 +93,29 @@ void main() {
   FlutterForegroundTask.initCommunicationPort();
 
   testWidgets(
+    'schedule standby never creates a microphone foreground service',
+    (tester) async {
+      final background = BackgroundCaptureService();
+      background.init();
+      await background.stop();
+      expect(await FlutterForegroundTask.isRunningService, isFalse);
+
+      final error = await background.start(
+        mode: BackgroundCaptureMode.scheduleStandby,
+      );
+      expect(error, isNull);
+      expect(
+        await FlutterForegroundTask.isRunningService,
+        isFalse,
+        reason:
+            'an armed schedule must use reminders, not a microphone FGS while idle',
+      );
+      // ignore: avoid_print
+      print('SCHEDULE STANDBY POLICY TEST PASSED');
+    },
+  );
+
+  testWidgets(
     'device mic -> recorder writes a valid WAV segment to disk',
     (tester) async {
       final index = SegmentIndex();

@@ -1,16 +1,16 @@
-// Pure-Dart timer logic that arms/disarms capture at schedule-window boundaries, plus the SchedulePlatform seam for OS wake-ups.
+// Timer logic that reconciles capture at schedule-window boundaries, plus the SchedulePlatform seam for OS wake-ups.
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
+
+import 'package:flutter/widgets.dart';
 
 import '../models/recording_schedule.dart';
 import 'diagnostic_log.dart';
 
 /// OS-level registration of schedule transitions. Implementations register
-/// exact alarms (Android) / local notifications (iOS) so the device wakes the
-/// app at a window barrier even when it isn't foregrounded. Abstracted so the
-/// pure-Dart [RecordingScheduler] timer logic can be unit-tested without the
-/// platform plugins.
+/// alarms/reminders so a user can see a window boundary even when the app is not
+/// foregrounded. Abstracted so the timer logic can be tested without plugins.
 abstract class SchedulePlatform {
   /// Register OS events for [transitions] (already chronological). Replaces any
   /// previously registered events.
@@ -38,37 +38,51 @@ class NoopSchedulePlatform implements SchedulePlatform {
   Future<void> register(List<ScheduleTransition> transitions) async {}
 }
 
-/// Drives start/stop of recording from a [RecordingSchedule].
+bool _appIsForeground() {
+  final state = WidgetsBinding.instance.lifecycleState;
+  return state == null || state == AppLifecycleState.resumed;
+}
+
+/// Drives start/stop reconciliation from a [RecordingSchedule].
 ///
 /// Two tiers of enforcement:
-///  1. An in-app [Timer] armed to the next transition, so while the app's main
-///     isolate is alive (including backgrounded under the foreground service)
-///     the schedule is honored to the minute via [onTransition].
-///  2. OS-level events registered through [SchedulePlatform], which persist the
-///     intended barrier state so the controller can reconcile actual capture
-///     against [RecordingSchedule.isActiveAt]. On Android, mic capture still
-///     depends on a user-visible foreground service because microphone access is
-///     a while-in-use permission.
+///  1. An in-app [Timer] reaches the next transition. Stop transitions always
+///     reconcile. Start transitions reconcile automatically only while the app
+///     is foregrounded; a background start is deferred to a user-visible local
+///     notification and subsequent foreground resume.
+///  2. OS-level events registered through [SchedulePlatform] persist the desired
+///     barrier state and display reminders without starting microphone capture.
 class RecordingScheduler {
   RecordingScheduler({
     DiagnosticLog? diagnostics,
     SchedulePlatform? platform,
     DateTime Function()? now,
+    bool Function()? canStartFromTimer,
+    bool observeAppLifecycle = true,
   }) : _diagnostics = diagnostics,
        _platform = platform ?? const NoopSchedulePlatform(),
-       _now = now ?? DateTime.now;
+       _now = now ?? DateTime.now,
+       _canStartFromTimer = canStartFromTimer ?? _appIsForeground {
+    if (observeAppLifecycle) {
+      _lifecycleListener = AppLifecycleListener(
+        onResume: reconcileAfterForegroundResume,
+      );
+    }
+  }
 
   final DiagnosticLog? _diagnostics;
   final SchedulePlatform _platform;
   final DateTime Function() _now;
+  final bool Function() _canStartFromTimer;
 
-  /// Called when the in-app timer reaches a transition: `true` = should be
-  /// recording now, `false` = should stop. The controller reconciles actual
-  /// capture (respecting manual sessions) against this.
+  /// Called when capture should reconcile against the current schedule:
+  /// `true` = should be recording now, `false` = should stop. The controller
+  /// preserves manually owned sessions when applying the result.
   void Function(bool shouldRecord)? onTransition;
 
   Timer? _timer;
   RecordingSchedule? _schedule;
+  AppLifecycleListener? _lifecycleListener;
   Future<void> _platformTail = Future<void>.value();
   int _revision = 0;
   bool _disposed = false;
@@ -108,6 +122,25 @@ class RecordingScheduler {
 
   Future<bool?> drainPendingShouldRecord() =>
       _platform.drainPendingShouldRecord();
+
+  /// Reconcile the authoritative wall-clock state when Flutter reports that the
+  /// app is visible again. This is the foreground half of the schedule-start
+  /// contract: a background timer/alarm can notify, but cannot open the mic.
+  void reconcileAfterForegroundResume() {
+    if (_disposed) {
+      return;
+    }
+    final schedule = _schedule;
+    if (schedule == null || !schedule.enabled) {
+      return;
+    }
+    final shouldRecord = schedule.isActiveAt(_now());
+    _diagnostics?.add(
+      'App resumed; reconciling schedule to '
+      '${shouldRecord ? "recording" : "idle"}.',
+    );
+    onTransition?.call(shouldRecord);
+  }
 
   Future<void> _enqueuePlatformMutation(
     int revision,
@@ -154,11 +187,16 @@ class RecordingScheduler {
       if (_disposed || revision != _revision) {
         return;
       }
-      _diagnostics?.add(
-        'Schedule timer fired: ${next.startsRecording ? "start" : "stop"} '
-        'recording.',
-      );
-      onTransition?.call(next.startsRecording);
+      final action = next.startsRecording ? 'start' : 'stop';
+      if (next.startsRecording && !_canStartFromTimer()) {
+        _diagnostics?.add(
+          'Schedule timer reached a start boundary while the app was not '
+          'foregrounded; microphone start deferred to notification tap/resume.',
+        );
+      } else {
+        _diagnostics?.add('Schedule timer fired: $action recording.');
+        onTransition?.call(next.startsRecording);
+      }
       // Re-arm against the now-current schedule for the following barrier.
       final current = _schedule;
       if (current != null && current.enabled) {
@@ -173,5 +211,7 @@ class RecordingScheduler {
     _schedule = null;
     _timer?.cancel();
     _timer = null;
+    _lifecycleListener?.dispose();
+    _lifecycleListener = null;
   }
 }

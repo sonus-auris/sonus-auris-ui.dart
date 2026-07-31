@@ -34,6 +34,35 @@ class _FakeAndroidAlarms implements AndroidScheduleAlarmClient {
   }
 }
 
+class _FakeReminders implements ScheduleReminderClient {
+  bool permissionResult = true;
+  int permissionRequests = 0;
+  int cancelCount = 0;
+  final List<({List<ScheduleTransition> transitions, bool exact})> scheduled = [];
+
+  @override
+  Future<bool> requestPermission() async {
+    permissionRequests += 1;
+    return permissionResult;
+  }
+
+  @override
+  Future<void> scheduleTransitions(
+    List<ScheduleTransition> transitions, {
+    bool exact = true,
+  }) async {
+    scheduled.add((
+      transitions: List<ScheduleTransition>.unmodifiable(transitions),
+      exact: exact,
+    ));
+  }
+
+  @override
+  Future<void> cancelScheduled() async {
+    cancelCount += 1;
+  }
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -43,8 +72,9 @@ void main() {
     'schedule operations wait for one shared Android initialization',
     () async {
       final alarms = _FakeAndroidAlarms()..initializeBlock = Completer<bool>();
+      final reminders = _FakeReminders();
       final platform = PluginSchedulePlatform(
-        notifications: LocalNotificationsService(),
+        notifications: reminders,
         androidAlarmClient: alarms,
         hostPlatform: ScheduleHostPlatform.android,
         exactAlarmPermissionRequester: () async => true,
@@ -62,6 +92,12 @@ void main() {
       expect(alarms.initializeCalls, 1);
       expect(alarms.cancelledIds, isEmpty);
       expect(alarms.scheduled, isEmpty);
+      expect(reminders.cancelCount, 1);
+      expect(
+        reminders.scheduled,
+        isEmpty,
+        reason: 'the newer cancellation invalidates reminder registration too',
+      );
 
       alarms.initializeBlock!.complete(true);
       await Future.wait([registration, cancellation]);
@@ -78,8 +114,9 @@ void main() {
     'an explicit initialization failure is retried on the next sync',
     () async {
       final alarms = _FakeAndroidAlarms(initializeResult: false);
+      final reminders = _FakeReminders();
       final platform = PluginSchedulePlatform(
-        notifications: LocalNotificationsService(),
+        notifications: reminders,
         androidAlarmClient: alarms,
         hostPlatform: ScheduleHostPlatform.android,
         exactAlarmPermissionRequester: () async => true,
@@ -92,31 +129,65 @@ void main() {
       await platform.register([transition]);
       expect(alarms.initializeCalls, 1);
       expect(alarms.scheduled, isEmpty);
+      expect(reminders.scheduled, hasLength(1));
+      expect(reminders.scheduled.single.exact, isTrue);
 
       alarms.initializeResult = true;
       await platform.register([transition]);
       expect(alarms.initializeCalls, 2);
       expect(alarms.scheduled, hasLength(1));
+      expect(reminders.scheduled, hasLength(2));
     },
   );
 
   test(
-    'denied exact-alarm access leaves the native alarm queue untouched',
+    'denied exact-alarm access falls back to an inexact visible reminder',
     () async {
       final alarms = _FakeAndroidAlarms();
+      final reminders = _FakeReminders();
       final platform = PluginSchedulePlatform(
-        notifications: LocalNotificationsService(),
+        notifications: reminders,
         androidAlarmClient: alarms,
         hostPlatform: ScheduleHostPlatform.android,
         exactAlarmPermissionRequester: () async => false,
+      );
+      final transition = ScheduleTransition(
+        at: DateTime(2026, 6, 15, 9),
+        startsRecording: true,
+      );
+
+      await platform.register([transition]);
+
+      expect(alarms.initializeCalls, 0);
+      expect(alarms.scheduled, isEmpty);
+      expect(reminders.permissionRequests, 1);
+      expect(reminders.scheduled, hasLength(1));
+      expect(reminders.scheduled.single.exact, isFalse);
+      expect(reminders.scheduled.single.transitions, [transition]);
+    },
+  );
+
+  test(
+    'notification denial never turns schedule standby into microphone service work',
+    () async {
+      final alarms = _FakeAndroidAlarms();
+      final reminders = _FakeReminders()..permissionResult = false;
+      final platform = PluginSchedulePlatform(
+        notifications: reminders,
+        androidAlarmClient: alarms,
+        hostPlatform: ScheduleHostPlatform.android,
+        exactAlarmPermissionRequester: () async => true,
       );
 
       await platform.register([
         ScheduleTransition(at: DateTime(2026, 6, 15, 9), startsRecording: true),
       ]);
 
-      expect(alarms.initializeCalls, 0);
-      expect(alarms.scheduled, isEmpty);
+      // The state journal remains available for foreground reconciliation, but
+      // the schedule layer has no API capable of starting a foreground service.
+      expect(reminders.permissionRequests, 1);
+      expect(reminders.scheduled, hasLength(1));
+      expect(alarms.scheduled, hasLength(1));
     },
   );
 }
