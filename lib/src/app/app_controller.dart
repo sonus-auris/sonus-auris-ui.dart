@@ -2812,6 +2812,9 @@ class AppController {
   }
 
   void _onCollision(CollisionEvent event) {
+    if (!_recorder.isRecording) {
+      return;
+    }
     _diagnostics.add(
       'Collision detected (${event.peakG.toStringAsFixed(1)}g); '
       'reminding that capture is live.',
@@ -2825,6 +2828,20 @@ class AppController {
     _message.add(
       'Possible collision detected — Sonus Auris is still recording.',
     );
+    // Also surface the dashcam-style cues that work when the phone is pocketed
+    // or muted for speech: an audible ding plus a system notification.
+    unawaited(_showCollisionCaptureCues());
+  }
+
+  Future<void> _showCollisionCaptureCues() async {
+    try {
+      await Future.wait([
+        _feedback.ding(),
+        _localNotifications.showPossibleCollision(),
+      ]);
+    } catch (error) {
+      _diagnostics.add('Collision reminder failed: $error');
+    }
   }
 
   Future<void> startRecording({bool scheduleInitiated = false}) async {
