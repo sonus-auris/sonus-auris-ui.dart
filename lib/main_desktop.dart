@@ -468,7 +468,6 @@ class _DesktopRootState extends State<_DesktopRoot> {
                     .confirmSupabaseEmailOtp(email: email, code: code),
               );
             },
->>>>>>> origin/main
           ),
         ),
         actions: [
