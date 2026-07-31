@@ -2460,10 +2460,7 @@ class _AccountSectionState extends State<_AccountSection> {
   @override
   void dispose() {
     _emailController.dispose();
-<<<<<<< HEAD
-=======
     _codeController.dispose();
->>>>>>> origin/main
     super.dispose();
   }
 
