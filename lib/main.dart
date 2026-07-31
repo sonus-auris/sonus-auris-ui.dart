@@ -2454,10 +2454,7 @@ class _AccountSection extends StatefulWidget {
 
 class _AccountSectionState extends State<_AccountSection> {
   final _emailController = TextEditingController();
-<<<<<<< HEAD
-=======
   final _codeController = TextEditingController();
->>>>>>> origin/main
   bool _busy = false;
 
   @override
