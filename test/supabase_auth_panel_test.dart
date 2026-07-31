@@ -26,6 +26,20 @@ void main() {
     );
   }
 
+  testWidgets('presents a passwordless single-field email step', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      harness(
+        onRequestCode: (_) async => true,
+        onSubmitCode: (_, _) async {},
+      ),
+    );
+
+    expect(find.textContaining('password', findRichText: true), findsWidgets);
+    expect(find.byType(TextFormField), findsOneWidget);
+  });
+
   testWidgets('validates the email before requesting a code', (tester) async {
     var calls = 0;
     await tester.pumpWidget(
