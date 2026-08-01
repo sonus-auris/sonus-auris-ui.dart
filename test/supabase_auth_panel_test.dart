@@ -49,7 +49,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Email me a 6-digit code'));
+    await tester.tap(find.text('Email me a sign-in link'));
     await tester.pump();
 
     expect(find.text('Enter a valid email address.'), findsOneWidget);
@@ -79,7 +79,7 @@ void main() {
       find.byKey(const ValueKey('supabase-email')),
       '  listener@example.com  ',
     );
-    await tester.tap(find.text('Email me a 6-digit code'));
+    await tester.tap(find.text('Email me a sign-in link'));
     await tester.pumpAndSettle();
 
     // One flow covers sign-in and sign-up: the code field is now revealed.
@@ -110,7 +110,7 @@ void main() {
       find.byKey(const ValueKey('supabase-email')),
       'listener@example.com',
     );
-    await tester.tap(find.text('Email me a 6-digit code'));
+    await tester.tap(find.text('Email me a sign-in link'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byKey(const ValueKey('supabase-code')), '12');
@@ -137,7 +137,7 @@ void main() {
       find.byKey(const ValueKey('supabase-email')),
       'listener@example.com',
     );
-    await tester.tap(find.text('Email me a 6-digit code'));
+    await tester.tap(find.text('Email me a sign-in link'));
     await tester.pumpAndSettle();
     expect(requests, 1);
 
@@ -148,7 +148,7 @@ void main() {
     await tester.tap(find.text('Use a different email'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('supabase-code')), findsNothing);
-    expect(find.text('Email me a 6-digit code'), findsOneWidget);
+    expect(find.text('Email me a sign-in link'), findsOneWidget);
   });
 
   testWidgets('explains when account access is not configured', (tester) async {
