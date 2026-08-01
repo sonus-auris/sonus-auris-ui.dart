@@ -36,6 +36,13 @@ const _authRedirectUrl = String.fromEnvironment(
 );
 const _pendingAuthPreferenceKey = 'sonus_auris.web.pending_auth.v1';
 
+/// Shown while a first-factor-only (AAL1) session is held. The browser surface
+/// has no enrolment/challenge UI of its own, so it points at the clients that
+/// do rather than silently opening account data at AAL1.
+const _secondFactorRequiredStatus =
+    'Two-factor verification is required before account data opens. Complete '
+    'it in the Sonus Auris mobile or desktop app, then reload this page.';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const SonusWebApp());
