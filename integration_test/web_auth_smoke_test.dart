@@ -357,8 +357,8 @@ void main() {
       await tester.pumpWidget(harness);
       await tester.pump();
 
-      await tester.enterText(find.byKey(emailField), 'person@example.com');
-      await tester.tap(find.byKey(requestButton));
+      await _enterText(tester, emailField, 'person@example.com');
+      await _tapButton(tester, requestButton);
       await _pumpUntil(
         tester,
         () => find.byKey(codeField).evaluate().isNotEmpty,
