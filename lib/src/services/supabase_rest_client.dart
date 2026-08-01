@@ -736,11 +736,9 @@ class SupabaseRestClient {
   /// shape an HTTP client uses when it echoes a failed request back into an
   /// exception message.
   static final RegExp _authQueryParameterPattern = RegExp(
-    r'\b(access_token|refresh_token|id_token|provider_token|provider_refresh_token'
-    r'|auth_code|code_verifier|code_challenge|apikey|api_key|token)'
-    r'=[^\s&"'
-    r"'"
-    r']+',
+    r'''\b(access_token|refresh_token|id_token|provider_token'''
+    r'''|provider_refresh_token|auth_code|code_verifier|code_challenge'''
+    r'''|apikey|api_key|token)=[^\s&"']+''',
     caseSensitive: false,
   );
 
