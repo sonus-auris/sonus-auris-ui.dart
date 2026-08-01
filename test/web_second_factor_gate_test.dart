@@ -11,6 +11,7 @@
 // `SonusWebApp` builds its own `SupabaseAuthClient` with no injection seam, so
 // an AAL1 session cannot be driven through the real widget in a test. What is
 // asserted here is the structural gate plus the predicate it relies on.
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:audio_dashcam/src/models/supabase_session.dart';
