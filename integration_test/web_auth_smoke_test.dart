@@ -60,6 +60,7 @@ Future<void> _pumpUntil(
   bool Function() ready, {
   Duration timeout = const Duration(seconds: 30),
   String reason = 'condition never became true',
+  String Function()? diagnose,
 }) async {
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
@@ -68,7 +69,45 @@ Future<void> _pumpUntil(
       return;
     }
   }
-  fail('Timed out after $timeout: $reason');
+  final extra = diagnose == null ? '' : ' [${diagnose()}]';
+  fail('Timed out after $timeout: $reason$extra');
+}
+
+/// Types [value] into the field with [key] and does not return until the
+/// field's own controller actually holds it. On web the text-input channel is
+/// asynchronous, so tapping straight after `enterText` can act on stale text.
+Future<void> _enterText(WidgetTester tester, Key key, String value) async {
+  final field = find.byKey(key);
+  await tester.ensureVisible(field);
+  await tester.enterText(field, value);
+  await tester.pump();
+  await _pumpUntil(
+    tester,
+    () => _textOf(tester, key) == value,
+    timeout: const Duration(seconds: 10),
+    reason: 'the field never took the typed value',
+    diagnose: () => 'field now holds "${_textOf(tester, key)}"',
+  );
+}
+
+String _textOf(WidgetTester tester, Key key) {
+  final editable = find.descendant(
+    of: find.byKey(key),
+    matching: find.byType(EditableText),
+  );
+  if (editable.evaluate().isEmpty) {
+    return '<absent>';
+  }
+  return tester.widget<EditableText>(editable.first).controller.text;
+}
+
+/// Taps a button after scrolling it into view, so a grown form (an extra
+/// validation line, say) can never turn a real regression into a missed tap.
+Future<void> _tapButton(WidgetTester tester, Key key) async {
+  await tester.ensureVisible(find.byKey(key));
+  await tester.pump();
+  await tester.tap(find.byKey(key));
+  await tester.pump();
 }
 
 /// Every rendered text-editing widget, so password checks can inspect the real
