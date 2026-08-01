@@ -726,9 +726,6 @@ class SupabaseRestClient {
         lower.contains('authcode') ||
         lower.contains('jwt') ||
         lower.contains('otp');
-    // Deliberately NOT matched: bare `code` and `session` — `error_code`,
-    // `status_code`, and `session_id` are diagnostic, not secret, and
-    // redacting them would blind the telemetry without protecting anything.
   }
 
   /// Bare `header.payload.signature` JWT, matched without needing a `Bearer`
