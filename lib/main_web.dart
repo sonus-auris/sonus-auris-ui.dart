@@ -617,7 +617,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
                   'Supabase telemetry table and live Realtime channel.',
                 ),
                 const SizedBox(height: 20),
-                if (!signedIn)
+                if (!hasSession)
                   SupabaseAuthForm(
                     emailController: _email,
                     codeController: _code,
@@ -626,6 +626,39 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
                     showProjectConfiguration: true,
                     onRequestCode: _sendMagicLink,
                     onSubmitCode: _verifyEmailCode,
+                  )
+                else if (!signedIn)
+                  Card(
+                    key: const ValueKey('web-second-factor-required'),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.lock_outline),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Two-factor verification required',
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Your email code confirmed the first factor only. '
+                            'Devices, diagnostics, and live streaming stay '
+                            'closed until a verified second factor upgrades '
+                            'this session.',
+                          ),
+                        ],
+                      ),
+                    ),
                   )
                 else ...[
                   Card(
