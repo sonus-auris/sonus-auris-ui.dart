@@ -62,8 +62,8 @@ validate_publishable_key() {
     echo "SONUS_SUPABASE_ANON_KEY must not be empty." >&2
     return 1
   fi
-  if [[ "$value" == "$compile_supabase_key" ]]; then
-    echo "SONUS_SUPABASE_ANON_KEY may not use the compile-only sentinel in publish mode." >&2
+  if [[ "$mode" != 'compile-only' && "$value" == "$compile_supabase_key" ]]; then
+    echo "SONUS_SUPABASE_ANON_KEY may use the compile-only sentinel only in compile-only mode." >&2
     return 1
   fi
 }
@@ -101,10 +101,13 @@ fi
 
 mode='configured'
 if ((${#missing[@]} > 0)); then
+  # Never build a mixed real/fallback configuration. A partially configured
+  # client could contact a live service with the wrong companion endpoint or
+  # key. The compile-only mode is deliberately wholly inert.
   mode='compile-only'
-  : "${SONUS_BACKEND_BASE_URL:=$compile_backend_url}"
-  : "${SONUS_SUPABASE_URL:=$compile_supabase_url}"
-  : "${SONUS_SUPABASE_ANON_KEY:=$compile_supabase_key}"
+  SONUS_BACKEND_BASE_URL="$compile_backend_url"
+  SONUS_SUPABASE_URL="$compile_supabase_url"
+  SONUS_SUPABASE_ANON_KEY="$compile_supabase_key"
 fi
 if $strict; then
   mode='publish'
@@ -114,6 +117,8 @@ validate_http_url SONUS_BACKEND_BASE_URL "$SONUS_BACKEND_BASE_URL"
 validate_http_url SONUS_SUPABASE_URL "$SONUS_SUPABASE_URL"
 validate_publishable_key "$SONUS_SUPABASE_ANON_KEY"
 
+# All validation is complete before the first write, so a failure never leaves
+# a partially resolved environment for later workflow steps.
 append_environment SONUS_BACKEND_BASE_URL "$SONUS_BACKEND_BASE_URL"
 append_environment SONUS_SUPABASE_URL "$SONUS_SUPABASE_URL"
 append_environment SONUS_SUPABASE_ANON_KEY "$SONUS_SUPABASE_ANON_KEY"
