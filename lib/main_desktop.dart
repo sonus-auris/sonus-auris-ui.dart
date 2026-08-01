@@ -98,15 +98,28 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
     // On desktop, behave like an always-on recorder only after the user has
     // accepted the current recording disclosure. The controller independently
     // enforces the same rule for every manual/scheduled start.
-    _ready = _controller.init().then((_) async {
-      _controllerReady = true;
-      final pending = _pendingAuthLink;
-      _pendingAuthLink = null;
-      if (pending != null) {
-        await _controller.consumeSupabaseMagicLink(pending);
-      }
-    });
+    _ready = _controller.init();
+    unawaited(_consumePendingAuthLinkAfterInit());
     unawaited(_startAlwaysOnRecorderAfterInit());
+  }
+
+  /// Adopt any auth callback that arrived before the controller finished
+  /// initialising. Runs off the loading-screen critical path: `_ready` gates
+  /// only controller init, never auth-link or microphone startup.
+  Future<void> _consumePendingAuthLinkAfterInit() async {
+    try {
+      await _ready;
+    } catch (_) {
+      // Init failures surface through the FutureBuilder on `_ready` and the
+      // recorder startup path; a pending link cannot be consumed without init.
+      return;
+    }
+    _controllerReady = true;
+    final pending = _pendingAuthLink;
+    _pendingAuthLink = null;
+    if (pending != null) {
+      await _controller.consumeSupabaseMagicLink(pending);
+    }
   }
 
   Future<void> _startAlwaysOnRecorderAfterInit() async {
