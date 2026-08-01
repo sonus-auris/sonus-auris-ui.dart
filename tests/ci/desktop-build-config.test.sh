@@ -31,12 +31,15 @@ run_success() {
   local name="$1"
   shift
   local env_file="$temporary/$name.env"
+  local output_file="$temporary/$name.output"
   local log_file="$temporary/$name.log"
   : > "$env_file"
+  : > "$output_file"
   if ! env -i \
     PATH="$PATH" \
     HOME="${HOME:-$temporary}" \
     GITHUB_ENV="$env_file" \
+    GITHUB_OUTPUT="$output_file" \
     "$@" \
     bash "$resolver" > "$log_file" 2>&1; then
     cat "$log_file" >&2
@@ -49,12 +52,15 @@ run_failure() {
   local name="$1"
   shift
   local env_file="$temporary/$name.env"
+  local output_file="$temporary/$name.output"
   local log_file="$temporary/$name.log"
   : > "$env_file"
+  : > "$output_file"
   if env -i \
     PATH="$PATH" \
     HOME="${HOME:-$temporary}" \
     GITHUB_ENV="$env_file" \
+    GITHUB_OUTPUT="$output_file" \
     "$@" \
     bash "$resolver" > "$log_file" 2>&1; then
     fail "$name unexpectedly succeeded"
@@ -67,6 +73,8 @@ assert_line "$temporary/compile_only.env" 'SONUS_BACKEND_BASE_URL=http://127.0.0
 assert_line "$temporary/compile_only.env" 'SONUS_SUPABASE_URL=http://127.0.0.1:54321'
 assert_line "$temporary/compile_only.env" 'SONUS_SUPABASE_ANON_KEY=sb_publishable_compile_only'
 assert_line "$temporary/compile_only.env" 'SONUS_DESKTOP_BUILD_CONFIG_MODE=compile-only'
+assert_line "$temporary/compile_only.output" 'mode=compile-only'
+assert_line "$temporary/compile_only.output" 'distributable=false'
 assert_line "$temporary/compile_only.log" 'Desktop build configuration: compile-only placeholders; distributable artifact upload is disabled.'
 
 # A partial configuration is more dangerous than a wholly inert one. If any
@@ -78,6 +86,7 @@ run_success partial_config \
 assert_line "$temporary/partial_config.env" 'SONUS_BACKEND_BASE_URL=http://127.0.0.1:8126'
 assert_line "$temporary/partial_config.env" 'SONUS_SUPABASE_URL=http://127.0.0.1:54321'
 assert_line "$temporary/partial_config.env" 'SONUS_SUPABASE_ANON_KEY=sb_publishable_compile_only'
+assert_line "$temporary/partial_config.output" 'distributable=false'
 assert_absent "$temporary/partial_config.env" 'real-backend.example.test'
 assert_absent "$temporary/partial_config.env" 'provided-but-incomplete'
 
@@ -90,6 +99,8 @@ assert_line "$temporary/configured.env" 'SONUS_DESKTOP_BUILD_CONFIG_MODE=configu
 assert_line "$temporary/configured.env" 'SONUS_BACKEND_BASE_URL=https://backend.example.test/api'
 assert_line "$temporary/configured.env" 'SONUS_SUPABASE_URL=https://project.supabase.co'
 assert_line "$temporary/configured.env" 'SONUS_SUPABASE_ANON_KEY=sb_publishable_configured_fixture'
+assert_line "$temporary/configured.output" 'mode=configured'
+assert_line "$temporary/configured.output" 'distributable=true'
 assert_absent "$temporary/configured.log" 'backend.example.test'
 assert_absent "$temporary/configured.log" 'sb_publishable_configured_fixture'
 
@@ -101,6 +112,7 @@ assert_line "$temporary/publish_missing.log" 'Publishing requires real desktop b
 assert_absent "$temporary/publish_missing.log" 'publish-backend.example.test'
 assert_absent "$temporary/publish_missing.log" 'publish-secret-must-not-log'
 [[ ! -s "$temporary/publish_missing.env" ]] || fail 'failed publish resolution wrote a partial GITHUB_ENV'
+[[ ! -s "$temporary/publish_missing.output" ]] || fail 'failed publish resolution wrote a partial GITHUB_OUTPUT'
 
 run_success publish \
   SONUS_REQUIRE_REAL_CONFIG=true \
@@ -108,6 +120,8 @@ run_success publish \
   SONUS_SUPABASE_URL=https://publish-project.supabase.co \
   SONUS_SUPABASE_ANON_KEY=sb_publishable_publish_fixture
 assert_line "$temporary/publish.env" 'SONUS_DESKTOP_BUILD_CONFIG_MODE=publish'
+assert_line "$temporary/publish.output" 'mode=publish'
+assert_line "$temporary/publish.output" 'distributable=true'
 assert_absent "$temporary/publish.log" 'publish-backend.example.test'
 assert_absent "$temporary/publish.log" 'sb_publishable_publish_fixture'
 
@@ -119,9 +133,11 @@ run_failure credential_url \
 assert_line "$temporary/credential_url.log" 'SONUS_BACKEND_BASE_URL must contain a credential-free host.'
 assert_absent "$temporary/credential_url.log" 'embedded-secret'
 [[ ! -s "$temporary/credential_url.env" ]] || fail 'invalid URL wrote a partial GITHUB_ENV'
+[[ ! -s "$temporary/credential_url.output" ]] || fail 'invalid URL wrote a partial GITHUB_OUTPUT'
 
 run_failure invalid_boolean SONUS_REQUIRE_REAL_CONFIG=maybe
 assert_line "$temporary/invalid_boolean.log" 'Expected a boolean flag, got an unsupported value.'
 [[ ! -s "$temporary/invalid_boolean.env" ]] || fail 'invalid boolean wrote GITHUB_ENV'
+[[ ! -s "$temporary/invalid_boolean.output" ]] || fail 'invalid boolean wrote GITHUB_OUTPUT'
 
 echo "Desktop build configuration tests passed: $pass_count cases."
