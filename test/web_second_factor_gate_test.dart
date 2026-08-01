@@ -127,12 +127,5 @@ void main() {
   );
 }
 
-String _base64UrlNoPad(Map<String, Object?> claims) {
-  final json = _jsonEncode(claims);
-  return _base64Url(json);
-}
-
-String _jsonEncode(Object? value) => const JsonCodec().encode(value);
-
-String _base64Url(String value) =>
-    base64Url.encode(utf8.encode(value)).replaceAll('=', '');
+String _base64UrlNoPad(Map<String, Object?> claims) =>
+    base64Url.encode(utf8.encode(jsonEncode(claims))).replaceAll('=', '');
