@@ -161,7 +161,9 @@ jobs:
     timeout-minutes: 10
     environment: desktop-alpha
     steps:
-      - uses: actions/download-artifact@v4
+      # Pinned: this job holds the R2 publishing credentials, so a retagged
+      # mutable ref here would run alongside them.
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v6
         with:
           pattern: sonus-auris-flutter-*
           path: dist
