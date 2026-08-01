@@ -113,12 +113,10 @@ class _AuthFormHarness extends StatefulWidget {
   const _AuthFormHarness({
     required this.requestedEmails,
     required this.submitted,
-    this.requestSucceeds = true,
   });
 
   final List<String> requestedEmails;
   final List<String> submitted;
-  final bool requestSucceeds;
 
   @override
   State<_AuthFormHarness> createState() => _AuthFormHarnessState();
