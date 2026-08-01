@@ -445,10 +445,15 @@ void main() {
       }),
     );
 
+    // Unauthenticated entry points (sendEmailOtp/verifyEmailOtp/
+    // exchangePkceCode) deliberately hide server details; authenticated
+    // endpoints such as factor verification still surface the description.
     expect(
-      () => client.verifyEmailOtp(
+      () => client.verifyFactor(
         config: config,
-        email: 'user@example.com',
+        accessToken: 'token',
+        factorId: 'factor-id',
+        challengeId: 'challenge-id',
         code: '000000',
       ),
       throwsA(
