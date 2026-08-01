@@ -174,7 +174,7 @@ class _SupabaseAuthPanelState extends State<SupabaseAuthPanel> {
       key: const ValueKey('supabase-request-code'),
       label: _busy == _PanelBusy.request
           ? 'Sending…'
-          : 'Email me a sign-in link',
+          : 'Email me a 6-digit code',
       icon: _busy == _PanelBusy.request
           ? Icons.hourglass_top_rounded
           : Icons.mark_email_read_outlined,
