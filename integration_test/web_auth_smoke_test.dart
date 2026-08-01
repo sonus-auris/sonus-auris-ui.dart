@@ -254,12 +254,13 @@ void main() {
 
       expect(find.byKey(codeField), findsNothing);
 
-      await tester.enterText(find.byKey(emailField), 'person@example.com');
-      await tester.tap(find.byKey(requestButton));
+      await _enterText(tester, emailField, 'person@example.com');
+      await _tapButton(tester, requestButton);
       await _pumpUntil(
         tester,
         () => find.byKey(codeField).evaluate().isNotEmpty,
         reason: 'requesting a code never revealed the code step',
+        diagnose: () => 'requested=$requested',
       );
 
       expect(requested, ['person@example.com']);
