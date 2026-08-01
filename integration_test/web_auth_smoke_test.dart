@@ -73,20 +73,30 @@ Future<void> _pumpUntil(
   fail('Timed out after $timeout: $reason$extra');
 }
 
-/// Types [value] into the field with [key] and does not return until the
-/// field's own controller actually holds it. On web the text-input channel is
-/// asynchronous, so tapping straight after `enterText` can act on stale text.
+/// Clicks into the field with [key] and types [value], not returning until the
+/// field's own controller actually holds it.
+///
+/// The click matters: in a real browser the text-input connection is torn down
+/// when focus moves to a button, and a bare `enterText` against an unfocused
+/// field is then silently dropped — which would otherwise let this test
+/// "pass" while asserting against stale text.
 Future<void> _enterText(WidgetTester tester, Key key, String value) async {
   final field = find.byKey(key);
   await tester.ensureVisible(field);
-  await tester.enterText(field, value);
-  await tester.pump();
-  await _pumpUntil(
-    tester,
-    () => _textOf(tester, key) == value,
-    timeout: const Duration(seconds: 10),
-    reason: 'the field never took the typed value',
-    diagnose: () => 'field now holds "${_textOf(tester, key)}"',
+  for (var attempt = 0; attempt < 4; attempt += 1) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+    await tester.tap(field);
+    await tester.pump();
+    await tester.enterText(field, value);
+    await tester.pump();
+    if (_textOf(tester, key) == value) {
+      return;
+    }
+  }
+  fail(
+    'the field never took the typed value; '
+    'it holds "${_textOf(tester, key)}"',
   );
 }
 
@@ -385,7 +395,7 @@ void main() {
 
         codeController.text = candidate;
         await tester.pump();
-        await tester.tap(find.byKey(verifyButton));
+        await _tapButton(tester, verifyButton);
         await tester.pump(const Duration(milliseconds: 300));
 
         expect(
@@ -404,7 +414,7 @@ void main() {
       for (final candidate in ['', '123', '12ab56']) {
         codeController.text = candidate;
         await tester.pump();
-        await tester.tap(find.byKey(verifyButton));
+        await _tapButton(tester, verifyButton);
         await tester.pump(const Duration(milliseconds: 300));
         expect(submitted, isEmpty, reason: '"$candidate" was submitted');
       }
@@ -413,7 +423,7 @@ void main() {
       // passing because the button is simply inert.
       codeController.text = '123456';
       await tester.pump();
-      await tester.tap(find.byKey(verifyButton));
+      await _tapButton(tester, verifyButton);
       await _pumpUntil(
         tester,
         () => submitted.isNotEmpty,
