@@ -404,6 +404,12 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     }
   }
 
+  /// Whether cloud account access is authorized: a held session whose access
+  /// token records a passwordless first factor *and* a completed second factor
+  /// (AAL2). Mirrors `AppViewModel.isSignedIn`, so the browser applies the same
+  /// mandatory-MFA rule as the mobile and desktop clients.
+  bool get _isAuthorized => _session?.isPasswordlessAal2 ?? false;
+
   CloudSecrets get _deviceSecrets {
     final session = _session;
     if (session == null) return const CloudSecrets();
