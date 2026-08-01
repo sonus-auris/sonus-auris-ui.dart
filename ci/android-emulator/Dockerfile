@@ -1,9 +1,10 @@
 # Headless Android emulator for Sonus Auris permission testing.
 #
 # Runs an x86_64 Android emulator with no window and drives the permission smoke
-# test against a prebuilt APK. The image is intended for a KVM-capable Linux
-# host locally or in the cluster. The release workflow records the resulting OCI
-# digest and renders the Kubernetes Job with that immutable identity.
+# test against the exact debug APK built from the same source commit. The image
+# is intended for a KVM-capable Linux host locally or in the cluster. The
+# release workflow records the resulting OCI digest and renders the Kubernetes
+# Job with that immutable identity.
 FROM ubuntu:22.04
 
 ARG ANDROID_API=34
@@ -12,6 +13,7 @@ ARG ANDROID_ARCH=x86_64
 ARG ANDROID_COMMANDLINE_TOOLS_BUILD=15859902
 ARG ANDROID_COMMANDLINE_TOOLS_SHA256=23b14d11016f2155158c5bc7a20449a07c8ec8c17e9b0b0fd8a9eb1fd7acb2f5
 ARG VCS_REF=unknown
+ARG APK_SHA256=unknown
 
 # TARGETARCH is provided by BuildKit (amd64 / arm64). JAVA_HOME is
 # architecture-suffixed on Ubuntu.
@@ -24,10 +26,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
 ENV PATH="$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator"
 
 LABEL org.opencontainers.image.title="Sonus Auris Android emulator permission runner" \
-      org.opencontainers.image.description="Headless Android emulator used by the Sonus Auris permission smoke gate" \
+      org.opencontainers.image.description="Headless Android emulator and exact-commit APK used by the Sonus Auris permission smoke gate" \
       org.opencontainers.image.source="https://github.com/sonus-auris/sonus-auris-ui.dart" \
       org.opencontainers.image.revision="${VCS_REF}" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="MIT" \
+      app.sonusauris.apk.sha256="${APK_SHA256}"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -44,6 +47,7 @@ RUN apt-get update \
       libxrandr2 \
       libxtst6 \
       openjdk-17-jdk-headless \
+      python3 \
       socat \
       unzip \
     && rm -rf /var/lib/apt/lists/*
@@ -93,10 +97,11 @@ RUN yes | sdkmanager --licenses >/dev/null \
 
 COPY ci/android-emulator/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scripts/emulator/permission-smoke.sh /usr/local/bin/permission-smoke.sh
-RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/permission-smoke.sh
+COPY build/app/outputs/flutter-apk/app-debug.apk /work/app-under-test.apk
+RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/permission-smoke.sh \
+    && test "$APK_SHA256" != unknown \
+    && printf '%s  %s\n' "$APK_SHA256" /work/app-under-test.apk | sha256sum --check --strict
 
-# The APK to test is provided at run time (bind-mount or baked into a derived
-# image) and its path passed through APK_PATH.
-ENV APK_PATH=/work/app-release.apk
+ENV APK_PATH=/work/app-under-test.apk
 WORKDIR /work
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
