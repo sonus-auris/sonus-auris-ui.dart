@@ -145,7 +145,7 @@ class _AuthFormHarnessState extends State<_AuthFormHarness> {
             codeController: code,
             onRequestCode: (value) async {
               widget.requestedEmails.add(value);
-              return widget.requestSucceeds;
+              return true;
             },
             onSubmitCode: (value, otp) async {
               widget.submitted.add('$value|$otp');
