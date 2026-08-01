@@ -103,6 +103,6 @@ jobs:
           name: web-browser-test-diagnostics
           path: |
             ${{ runner.temp }}/chromedriver.log
-            build/web_driver_failures/**
+            build/integration_response_data.json
           if-no-files-found: warn
           retention-days: 7
