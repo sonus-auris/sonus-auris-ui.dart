@@ -306,8 +306,8 @@ void main() {
       ];
 
       for (final candidate in rejected) {
-        await tester.enterText(find.byKey(emailField), candidate);
-        await tester.tap(find.byKey(requestButton));
+        await _enterText(tester, emailField, candidate);
+        await _tapButton(tester, requestButton);
         await tester.pump(const Duration(milliseconds: 300));
 
         expect(
