@@ -704,6 +704,12 @@ class SupabaseRestClient {
     return _redactAndTruncate(value.toString(), 1000);
   }
 
+  /// Whether a telemetry `details` key names something that must never be
+  /// shipped verbatim.
+  ///
+  /// Deliberately NOT matched: bare `code` and `session`. `error_code`,
+  /// `status_code`, and `session_id` are diagnostic rather than secret, and
+  /// redacting them would blind telemetry without protecting anything.
   bool _looksSecretKey(String key) {
     final lower = key.toLowerCase();
     return lower.contains('token') ||

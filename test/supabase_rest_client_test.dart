@@ -429,8 +429,7 @@ void main() {
     // The non-secret part of the URL is still readable.
     expect(row['message'], contains('/auth/v1/token?grant_type=pkce'));
 
-    final details =
-        (row['metadata'] as Map)['details'] as Map<String, dynamic>;
+    final details = (row['metadata'] as Map)['details'] as Map<String, dynamic>;
     for (final key in [
       'code_verifier',
       'auth_code',
