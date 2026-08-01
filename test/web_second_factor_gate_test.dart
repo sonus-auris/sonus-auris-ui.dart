@@ -45,12 +45,15 @@ void main() {
     // has not reached AAL2. Neither Realtime client carries an AAL check of
     // its own, so this early return is the only thing stopping an AAL1 token
     // from being used to subscribe.
-    final adopt = RegExp(
-      r'Future<void> _adoptSession\([\s\S]*?\n  \}',
-    ).firstMatch(webSource)?.group(0);
-    expect(adopt, isNotNull, reason: '_adoptSession was renamed or removed');
+    final start = webSource.indexOf('Future<void> _adoptSession(');
+    expect(start, isNonNegative, reason: '_adoptSession was renamed');
+    // Ends at the next method declaration; the multi-line parameter list makes
+    // brace counting from the signature unreliable.
+    final end = webSource.indexOf('\n  Future<void> ', start + 1);
+    expect(end, isNonNegative, reason: '_adoptSession is the last member');
+    final adopt = webSource.substring(start, end);
 
-    final gateIndex = adopt!.indexOf('if (!session.isPasswordlessAal2)');
+    final gateIndex = adopt.indexOf('if (!session.isPasswordlessAal2)');
     expect(
       gateIndex,
       isNonNegative,
