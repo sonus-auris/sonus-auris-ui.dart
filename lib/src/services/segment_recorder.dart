@@ -11,6 +11,7 @@ import 'package:uuid/uuid.dart';
 import '../models/acoustic_detection.dart';
 import '../models/audio_trigger_event.dart';
 import '../models/app_config.dart';
+import 'keyword_quality_boost.dart';
 import '../models/recorder_snapshot.dart';
 import '../models/recording_segment.dart';
 import 'acoustic/acoustic_pipeline.dart';
@@ -118,7 +119,11 @@ class SegmentRecorder {
   _Pcm16Downsampler? _storeDownsampler;
   int _storedOverlapSamples = 0;
   double? _recentDb; // EMA of slice loudness, drives the per-segment decision.
-  DateTime? _forceHighQualityUntilUtc;
+  // A heard keyword/safe word (or an explicit [forceHighQualityFor] call)
+  // forces full quality for a sustained window even while the audio is quiet,
+  // so the stretch after a caught phrase isn't downsampled. Extended by
+  // [boostQualityForKeyword] and [forceHighQualityFor].
+  final KeywordQualityBoost _qualityBoost = KeywordQualityBoost();
 
   // Rolling buffer of recently captured (processed) audio for Shazam / STT.
   final List<Uint8List> _recentChunks = [];
@@ -162,17 +167,13 @@ class SegmentRecorder {
 
   /// Forces newly opened segments to remain at the full capture rate until the
   /// deadline. Used for clear speech and the configured recognition-phrase
-  /// window.
+  /// window. Overlapping calls only ever lengthen the window.
   void forceHighQualityFor(Duration duration) {
-    final candidate = DateTime.now().toUtc().add(duration);
-    final current = _forceHighQualityUntilUtc;
-    if (current == null || candidate.isAfter(current)) {
-      _forceHighQualityUntilUtc = candidate;
-    }
+    _qualityBoost.trigger(DateTime.now(), duration);
   }
 
   void clearForcedHighQuality() {
-    _forceHighQualityUntilUtc = null;
+    _qualityBoost.clear();
   }
 
   /// The most recent [window] of captured audio (processed PCM16), or null when
@@ -197,6 +198,13 @@ class SegmentRecorder {
       bytes = Uint8List.sublistView(bytes, bytes.length - wanted);
     }
     return (bytes: bytes, sampleRate: _captureRate, channels: channels);
+  }
+
+  /// Opens (or extends) a full-quality window after a keyword/safe word is
+  /// heard, so the following [window] of audio keeps full fidelity even while
+  /// quiet. No-op-safe to call repeatedly; overlapping calls only lengthen it.
+  void boostQualityForKeyword(Duration window) {
+    _qualityBoost.trigger(DateTime.now(), window);
   }
 
   Future<void> start(AppConfig config) async {
@@ -610,19 +618,10 @@ class SegmentRecorder {
       _storeDownsampler = null;
       return;
     }
-    final forcedUntil = _forceHighQualityUntilUtc;
-    if (forcedUntil != null && DateTime.now().toUtc().isBefore(forcedUntil)) {
-      _storeRate = _captureRate;
-      _storeFactor = 1;
-      _storeDownsampler = null;
-      return;
-    }
-    if (forcedUntil != null) {
-      _forceHighQualityUntilUtc = null;
-    }
-    // Until we have a trailing-loudness reading, keep full quality (treat the
-    // first segment as loud) rather than needlessly downsampling startup audio.
-    final loud =
+    // A keyword/safe-word boost forces full quality even through quiet audio.
+    // Otherwise: until we have a trailing-loudness reading, keep full quality
+    // (treat the first segment as loud) rather than downsampling startup audio.
+    final loud = _qualityBoost.isActive(DateTime.now()) ||
         (_recentDb ?? config.adaptiveLoudnessDb) >= config.adaptiveLoudnessDb;
     if (loud) {
       _storeRate = _captureRate;

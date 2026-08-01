@@ -83,6 +83,13 @@ class CloudSecrets {
     return DateTime.tryParse(raw)?.toUtc();
   }
 
+  bool hasFreshSupabaseToken({DateTime? now}) {
+    final expiry = supabaseTokenExpiresAtUtc;
+    return hasSupabaseToken &&
+        expiry != null &&
+        expiry.isAfter((now ?? DateTime.now()).toUtc());
+  }
+
   /// True when there is no access token, or it expires within [skew]. Callers
   /// should refresh before using the token for a backend request.
   bool supabaseTokenNeedsRefresh({
@@ -94,7 +101,10 @@ class CloudSecrets {
     }
     final expiresAt = supabaseTokenExpiresAtUtc;
     if (expiresAt == null) {
-      return false;
+      // Legacy/corrupt storage without an expiry is never evidence that an
+      // access token is still usable. Refresh when possible; otherwise the
+      // controller invalidates the session before returning the token.
+      return true;
     }
     final reference = (now ?? DateTime.now().toUtc()).add(skew);
     return !reference.isBefore(expiresAt);

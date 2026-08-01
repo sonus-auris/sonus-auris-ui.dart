@@ -1,12 +1,12 @@
-name: Android emulator account and permission test
+name: Android emulator account, lifecycle, and recording tests
 
-# Boots a headless Android emulator and runs the permission smoke-test
-# (scripts/emulator/permission-smoke.sh): the login/sign-up screen must render,
-# sensitive context permissions must default to opt-in, mic/notifications grant
-# cleanly, and the app must not crash.
-# GitHub's ubuntu-latest runners expose /dev/kvm, so the emulator is hardware
-# accelerated here (the same test also runs on the cluster via
-# ci/android-emulator/, for KVM-capable Hetzner/EC2 nodes).
+# Boots hardware-accelerated Android emulators and exercises:
+# - onboarding/account UI and opt-in permission defaults
+# - permission grants, force-stop/cold relaunch, and in-place APK reinstall
+# - real device-mic -> WAV capture, one-second segment rotation, and restart
+# - a host-driven Home transition while the microphone foreground service is live
+#
+# The same scripts can run locally or on KVM-capable cluster nodes.
 
 on:
   push:
@@ -20,10 +20,19 @@ permissions:
 
 jobs:
   emulator-permission-test:
+    name: Permission/lifecycle smoke (API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # API 34 matches the current physical acceptance phone generation;
+        # API 36 exercises the app's pinned target/compile SDK contract.
+        api-level: [34, 36]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Enable KVM
         run: |
@@ -32,7 +41,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
           java-version: '17'
@@ -52,35 +61,58 @@ jobs:
           --dart-define=SONUS_SUPABASE_URL=https://emulator-test.supabase.co
           --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_emulator_test
 
-      - name: Run permission smoke-test on emulator
-        uses: reactivecircus/android-emulator-runner@v2
+      - name: Run permission/lifecycle smoke-test on emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
-          api-level: 34
+          api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
           force-avd-creation: false
           emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
-          # Single line: the android-emulator-runner feeds `script` to `sh -c`
+          # Single line: android-emulator-runner feeds `script` to `sh -c`
           # line-by-line, so a trailing-backslash continuation breaks it.
-          script: SMOKE_SCREENSHOT="$PWD/permission-smoke.png" bash scripts/emulator/permission-smoke.sh build/app/outputs/flutter-apk/app-debug.apk
+          script: SMOKE_SCREENSHOT="$PWD/permission-smoke-api-${{ matrix.api-level }}.png" SMOKE_EVIDENCE_DIR="$PWD/permission-smoke-evidence-api-${{ matrix.api-level }}" bash scripts/emulator/permission-smoke.sh build/app/outputs/flutter-apk/app-debug.apk
 
-      - name: Upload evidence screenshot
+      - name: Upload permission/lifecycle evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: permission-smoke-screenshot
-          path: permission-smoke.png
-          if-no-files-found: ignore
+          name: permission-smoke-evidence-api-${{ matrix.api-level }}
+          path: |
+            permission-smoke-api-${{ matrix.api-level }}.png
+            permission-smoke-evidence-api-${{ matrix.api-level }}/**
+          if-no-files-found: error
+          retention-days: 14
 
-  # Functional end-to-end: drive the REAL capture pipeline (device mic -> WAV
-  # segment on disk) via a Flutter integration_test on the emulator.
+      - name: Package API-34-tested direct-install debug APK
+        if: ${{ matrix.api-level == 34 }}
+        run: |
+          install -D -m 0644 \
+            build/app/outputs/flutter-apk/app-debug.apk \
+            build/android-debug-install/sonus-auris-debug.apk
+          cd build/android-debug-install
+          sha256sum sonus-auris-debug.apk > SHA256SUMS
+
+      - name: Upload API-34-tested direct-install debug APK
+        if: ${{ matrix.api-level == 34 }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: sonus-auris-android-debug-apk
+          path: build/android-debug-install/**
+          if-no-files-found: error
+          retention-days: 14
+
+  # Functional end-to-end: real mic stream, WAV files, rapid rotations, recorder
+  # restart, and an actual Home/background/foreground round trip.
   recording-integration-test:
     runs-on: ubuntu-latest
     # Hard cap so a stuck emulator/mic can never hang the job for hours.
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Enable KVM
         run: |
@@ -89,7 +121,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
           java-version: '17'
@@ -110,13 +142,15 @@ jobs:
           flutter build apk --debug
           --target=integration_test/recording_pipeline_test.dart
 
-      - name: Run recording integration test on emulator
-        uses: reactivecircus/android-emulator-runner@v2
+      - name: Run recording/background integration tests on emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         env:
           # This always-compiled QEMU driver uses the virtual clock to emit
           # zeroed PCM input frames. It gives AudioRecord deterministic silence
           # while exercising the real guest mic/plugin/WAV pipeline.
           QEMU_AUDIO_DRV: none
+          SONUS_BACKGROUND_PROBE: '1'
+          BACKGROUND_EVIDENCE_DIR: ${{ github.workspace }}/background-recording-evidence
         with:
           api-level: 34
           target: google_apis
@@ -127,9 +161,18 @@ jobs:
           # supplies its deterministic input without physical runner hardware.
           emulator-options: -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect -allow-host-audio
           disable-animations: true
-          # The harness pre-installs the test APK and verifies RECORD_AUDIO before
-          # launch; a background loop also preserves the grant across reinstalls.
+          # The harness pre-installs the test APK, verifies RECORD_AUDIO, and
+          # coordinates the real Home/background probe from the host.
           script: >-
             adb emu avd hostmicon &&
             bash scripts/emulator/grant-then-run-integration.sh
             integration_test/recording_pipeline_test.dart
+
+      - name: Upload background recording evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: background-recording-evidence
+          path: background-recording-evidence/**
+          if-no-files-found: error
+          retention-days: 14

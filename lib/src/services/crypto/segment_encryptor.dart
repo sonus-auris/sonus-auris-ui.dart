@@ -20,15 +20,15 @@ class SegmentEncryptor {
   }) : _keyManager = keyManager,
        _cipher = cipher ?? SegmentCipher(),
        _accountRecipient = accountRecipient ?? AccountRecipient(),
-       _accountPublicKey = accountPublicKey;
+       _accountPublicKey = _copyAccountPublicKey(accountPublicKey);
 
   final KeyManager _keyManager;
   final SegmentCipher _cipher;
   final AccountRecipient _accountRecipient;
 
   /// The account's X25519 public key, once provisioned onto this device. When
-  /// set, every sealed segment is *also* wrapped to the account so the desktop
-  /// master can read it (v2 container). Null on a device that has not yet synced
+  /// set, every sealed segment is *also* wrapped to the account so an authorized
+  /// peer can read it (v2 container). Null on a device that has not yet synced
   /// the account key → v1 (device-only) containers, exactly as before.
   Uint8List? _accountPublicKey;
 
@@ -36,7 +36,9 @@ class SegmentEncryptor {
 
   /// Sets (or clears) the account public key, e.g. after the device syncs it
   /// from the backend on login.
-  set accountPublicKey(Uint8List? key) => _accountPublicKey = key;
+  set accountPublicKey(Uint8List? key) {
+    _accountPublicKey = _copyAccountPublicKey(key);
+  }
 
   /// Encrypts audio bytes for upload. The returned container is what is hashed,
   /// sized, and PUT to the cloud — the plaintext never leaves the device.
@@ -57,7 +59,8 @@ class SegmentEncryptor {
   /// Decrypts a container fetched from the cloud. Bytes that are not a
   /// recognised container (legacy, pre-encryption objects) are returned as-is
   /// so older backups remain playable. This device always opens via its own
-  /// device key (the account-recipient block is for the desktop master).
+  /// device key; an authorized peer uses the account-recipient block only after
+  /// independently validating the sync manifest and object binding.
   Future<Uint8List> open(Uint8List bytes) {
     if (!SegmentCipher.looksEncrypted(bytes)) {
       return Future<Uint8List>.value(bytes);
@@ -68,4 +71,16 @@ class SegmentEncryptor {
   /// Whether on-device encryption is active. Always true once constructed;
   /// exposed so call sites can branch without a null-check on the encryptor.
   bool get enabled => true;
+
+  static Uint8List? _copyAccountPublicKey(Uint8List? key) {
+    if (key == null) {
+      return null;
+    }
+    if (key.length != AccountRecipient.publicKeyLength) {
+      throw ArgumentError(
+        'Account public key must be ${AccountRecipient.publicKeyLength} bytes.',
+      );
+    }
+    return Uint8List.fromList(key);
+  }
 }

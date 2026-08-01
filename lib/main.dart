@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart' show FlutterExceptionHandler;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
@@ -35,7 +36,8 @@ import 'src/services/supabase_device_presence_client.dart';
 import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
 import 'src/widgets/supabase_auth_form.dart';
-import 'src/widgets/mandatory_mfa_gate.dart';
+import 'src/widgets/supabase_mfa_gate.dart';
+import 'src/widgets/retention_expiry_banner.dart';
 
 const String _privacyPolicyUrl = 'https://sonusauris.app/privacy/';
 const String _accountDeletionUrl = 'https://sonusauris.app/account-deletion/';
@@ -83,6 +85,10 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
   Timer? _controllerBootstrapTimer;
   AppController? _controller;
   Future<void>? _initFuture;
+  late final AppLinks _appLinks;
+  StreamSubscription<Uri>? _authLinkSubscription;
+  Uri? _pendingAuthLink;
+  bool _controllerReady = false;
   Object? _startupError;
   FlutterExceptionHandler? _previousFlutterOnError;
   ui.ErrorCallback? _previousPlatformOnError;
@@ -91,6 +97,12 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _appLinks = AppLinks();
+    unawaited(_captureInitialAuthLink());
+    _authLinkSubscription = _appLinks.uriLinkStream.listen(
+      _handleAuthLink,
+      onError: (_) {},
+    );
     // Build and submit the branded loading frame before constructing plugin-
     // backed services. A zero-delay event from a post-frame callback guarantees
     // this frame can leave the Dart UI isolate first, even when Android is still
@@ -114,7 +126,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
       final controller = widget.controllerFactory?.call() ?? AppController();
       _controller = controller;
       _installTelemetryErrorHooks(controller);
-      final initFuture = controller.init();
+      final initFuture = _initializeController(controller);
       if (!mounted) {
         unawaited(controller.dispose());
         return;
@@ -129,6 +141,36 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
         });
       }
     }
+  }
+
+  Future<void> _captureInitialAuthLink() async {
+    try {
+      final link = await _appLinks.getInitialLink();
+      if (link != null) {
+        _handleAuthLink(link);
+      }
+    } catch (_) {
+      // Deep-link support is unavailable in some test/preview environments.
+    }
+  }
+
+  Future<void> _initializeController(AppController controller) async {
+    await controller.init();
+    _controllerReady = true;
+    final pending = _pendingAuthLink;
+    _pendingAuthLink = null;
+    if (pending != null) {
+      await controller.consumeSupabaseMagicLink(pending);
+    }
+  }
+
+  void _handleAuthLink(Uri link) {
+    final controller = _controller;
+    if (controller == null || !_controllerReady) {
+      _pendingAuthLink = link;
+      return;
+    }
+    unawaited(controller.consumeSupabaseMagicLink(link));
   }
 
   void _installTelemetryErrorHooks(AppController controller) {
@@ -152,6 +194,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _controllerBootstrapTimer?.cancel();
+    _authLinkSubscription?.cancel();
     if (_previousFlutterOnError != null) {
       FlutterError.onError = _previousFlutterOnError;
     }
@@ -213,9 +256,6 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
             if (viewModel == null || viewModel.isInitializing) {
               return const LoadingPage();
             }
-            if (viewModel.hasSupabaseSession && !viewModel.isSignedIn) {
-              return MandatoryMfaGate(controller: controller);
-            }
             // Gate the app behind onboarding/consent until it's completed for
             // the current consent version.
             return ValueListenableBuilder<bool>(
@@ -224,10 +264,16 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
                   ? SettingsPage(controller: controller)
                   : OnboardingFlow(
                       controller: controller,
-                      // The MFA gate temporarily replaces onboarding. Resume
-                      // at the account confirmation instead of throwing a
-                      // newly authenticated user back to the welcome screen.
-                      initialStep: viewModel.isSignedIn ? 1 : 0,
+                      // A magic-link/OTP return relaunches the app with a
+                      // session (first factor or full AAL2). Resume at the
+                      // account step — where the mandatory MFA gate lives —
+                      // instead of throwing the user back to the welcome
+                      // screen.
+                      initialStep:
+                          viewModel.isSignedIn ||
+                              viewModel.hasFirstFactorSession
+                          ? 1
+                          : 0,
                     ),
             );
           },
@@ -318,6 +364,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   late int _step;
   bool _busy = false;
   final _emailController = TextEditingController();
+  final _codeController = TextEditingController();
   final _supabaseUrlController = TextEditingController();
   final _supabaseAnonKeyController = TextEditingController();
   bool _supabaseProjectSeeded = false;
@@ -336,6 +383,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   @override
   void dispose() {
     _emailController.dispose();
+    _codeController.dispose();
     _supabaseUrlController.dispose();
     _supabaseAnonKeyController.dispose();
     super.dispose();
@@ -477,6 +525,20 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         ],
       );
     }
+    if (vm?.hasFirstFactorSession ?? false) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 8),
+          SupabaseMfaGate(controller: widget.controller),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: _busy ? null : widget.controller.signOutSupabase,
+            child: const Text('Use a different account'),
+          ),
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -491,12 +553,13 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         const SizedBox(height: 16),
         SupabaseAuthForm(
           emailController: _emailController,
+          codeController: _codeController,
           supabaseUrlController: _supabaseUrlController,
           supabaseAnonKeyController: _supabaseAnonKeyController,
           showProjectConfiguration: !configured,
           enabled: !_busy && vm != null,
-          onSendMagicLink: (email) => _requestMagicLink(vm, email),
-          onVerifyCode: (email, code) => _verifyEmailCode(vm, email, code),
+          onRequestCode: (email) => _requestCode(vm, email),
+          onSubmitCode: (email, code) => _submitCode(vm, email, code),
         ),
         if (_offlineModeEnabled) ...[
           const SizedBox(height: 16),
@@ -534,24 +597,38 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     );
   }
 
-  Future<bool> _requestMagicLink(AppViewModel? viewModel, String email) async {
+  Future<bool> _requestCode(AppViewModel? viewModel, String email) async {
     if (viewModel == null) {
       return false;
     }
-    await _saveSupabaseProject(viewModel);
-    return widget.controller.requestSupabaseEmailOtp(email: email);
+    setState(() => _busy = true);
+    try {
+      await _saveSupabaseProject(viewModel);
+      return await widget.controller.requestSupabaseEmailOtp(email: email);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
   }
 
-  Future<bool> _verifyEmailCode(
+  Future<void> _submitCode(
     AppViewModel? viewModel,
     String email,
     String code,
   ) async {
     if (viewModel == null) {
-      return false;
+      return;
     }
-    await _saveSupabaseProject(viewModel);
-    return widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
+    setState(() => _busy = true);
+    try {
+      await _saveSupabaseProject(viewModel);
+      await widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
   }
 
   Widget _consentStep(BuildContext context) {
@@ -1023,6 +1100,9 @@ class _SettingsPageState extends State<SettingsPage> {
           onToggleHighQuality: widget.controller.toggleHighQualityRecording,
           onSendAlert: widget.controller.sendManualAlert,
           onConfirm: widget.controller.confirmRecording,
+          onRetryBackup: widget.controller.retryPendingBackups,
+          onExportLocalCopy: widget.controller.exportLocalCopy,
+          onRunRetentionCleanup: widget.controller.runRetentionCleanupNow,
         );
     }
   }
@@ -1034,15 +1114,16 @@ class _SettingsPageState extends State<SettingsPage> {
         page: page,
         viewModel: viewModel,
         accountSection: _AccountSection(
+          controller: widget.controller,
           isSignedIn: viewModel.isSignedIn,
+          hasFirstFactorSession: viewModel.hasFirstFactorSession,
           signedInEmail: viewModel.signedInEmail,
           isDeviceRegistered: viewModel.isDeviceRegistered,
           isAwaitingDeviceRegistration: viewModel.isAwaitingDeviceRegistration,
           supabaseUrlController: _supabaseUrlController,
           supabaseAnonKeyController: _supabaseAnonKeyController,
-          onSendMagicLink: (email) => _requestMagicLink(viewModel, email),
-          onVerifyCode: (email, code) =>
-              _verifyEmailCode(viewModel, email, code),
+          onRequestCode: (email) => _requestCode(viewModel, email),
+          onSubmitCode: (email, code) => _submitCode(viewModel, email, code),
           onSignOut: widget.controller.signOutSupabase,
           onDeleteAccount: widget.controller.deleteAccount,
         ),
@@ -1110,7 +1191,7 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
     final config = viewModel.config.copyWith(
-      deviceRetentionHours: _parseInt(_deviceRetentionController.text, 50),
+      deviceRetentionHours: _parseInt(_deviceRetentionController.text, 100),
       cloudRetentionHours: _parseInt(_cloudRetentionController.text, 500),
       segmentMinutes: _parseInt(_segmentMinutesController.text, 1),
       overlapSeconds: _parseInt(_overlapSecondsController.text, 2),
@@ -1149,18 +1230,18 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Future<bool> _requestMagicLink(AppViewModel viewModel, String email) async {
+  Future<bool> _requestCode(AppViewModel viewModel, String email) async {
     await _persistSupabaseConfig(viewModel);
     return widget.controller.requestSupabaseEmailOtp(email: email);
   }
 
-  Future<bool> _verifyEmailCode(
+  Future<void> _submitCode(
     AppViewModel viewModel,
     String email,
     String code,
   ) async {
     await _persistSupabaseConfig(viewModel);
-    return widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
+    await widget.controller.confirmSupabaseEmailOtp(email: email, code: code);
   }
 
   int _parseInt(String value, int fallback) {
@@ -1236,6 +1317,9 @@ class _HomeView extends StatelessWidget {
     required this.onToggleHighQuality,
     required this.onSendAlert,
     required this.onConfirm,
+    required this.onRetryBackup,
+    required this.onExportLocalCopy,
+    required this.onRunRetentionCleanup,
   });
 
   final AppViewModel viewModel;
@@ -1245,6 +1329,9 @@ class _HomeView extends StatelessWidget {
   final VoidCallback onToggleHighQuality;
   final VoidCallback onSendAlert;
   final VoidCallback onConfirm;
+  final Future<void> Function() onRetryBackup;
+  final Future<void> Function(String segmentId) onExportLocalCopy;
+  final Future<void> Function() onRunRetentionCleanup;
 
   @override
   Widget build(BuildContext context) {
@@ -1263,6 +1350,13 @@ class _HomeView extends StatelessWidget {
           const _SignInNotice(),
           const SizedBox(height: 12),
         ],
+        RetentionExpirySurface(
+          warningProvider: (nowUtc) =>
+              viewModel.localRetentionWarnings(nowUtc: nowUtc),
+          onRetryBackup: onRetryBackup,
+          onExportLocalCopy: onExportLocalCopy,
+          onRunCleanup: onRunRetentionCleanup,
+        ),
         _StatusSection(
           viewModel: viewModel,
           onStart: onStart,
@@ -2322,31 +2416,35 @@ class _ConfigureActionBar extends StatelessWidget {
   }
 }
 
-/// Supabase identity: project config plus passwordless magic-link sign-in. When
+/// Supabase identity: project config plus passwordless email-code sign-in. When
 /// signed in, the controller registers the device and uploads run under the
-/// verified account.
+/// verified account. The one-time code is held only transiently in a local field.
 class _AccountSection extends StatefulWidget {
   const _AccountSection({
+    required this.controller,
     required this.isSignedIn,
+    required this.hasFirstFactorSession,
     required this.signedInEmail,
     required this.isDeviceRegistered,
     required this.isAwaitingDeviceRegistration,
     required this.supabaseUrlController,
     required this.supabaseAnonKeyController,
-    required this.onSendMagicLink,
-    required this.onVerifyCode,
+    required this.onRequestCode,
+    required this.onSubmitCode,
     required this.onSignOut,
     required this.onDeleteAccount,
   });
 
+  final AppController controller;
   final bool isSignedIn;
+  final bool hasFirstFactorSession;
   final String? signedInEmail;
   final bool isDeviceRegistered;
   final bool isAwaitingDeviceRegistration;
   final TextEditingController supabaseUrlController;
   final TextEditingController supabaseAnonKeyController;
-  final Future<bool> Function(String email) onSendMagicLink;
-  final Future<bool> Function(String email, String code) onVerifyCode;
+  final Future<bool> Function(String email) onRequestCode;
+  final Future<void> Function(String email, String code) onSubmitCode;
   final Future<void> Function() onSignOut;
   final Future<void> Function() onDeleteAccount;
 
@@ -2356,11 +2454,13 @@ class _AccountSection extends StatefulWidget {
 
 class _AccountSectionState extends State<_AccountSection> {
   final _emailController = TextEditingController();
+  final _codeController = TextEditingController();
   bool _busy = false;
 
   @override
   void dispose() {
     _emailController.dispose();
+    _codeController.dispose();
     super.dispose();
   }
 
@@ -2492,6 +2592,25 @@ class _AccountSectionState extends State<_AccountSection> {
         ),
       );
     }
+    if (widget.hasFirstFactorSession) {
+      return _Section(
+        title: 'Account security',
+        icon: Icons.security,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SupabaseMfaGate(controller: widget.controller),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: _busy
+                  ? null
+                  : () => _runAccountAction(widget.onSignOut),
+              child: const Text('Cancel and sign out'),
+            ),
+          ],
+        ),
+      );
+    }
     return _Section(
       title: 'Account',
       icon: Icons.account_circle_outlined,
@@ -2505,12 +2624,13 @@ class _AccountSectionState extends State<_AccountSection> {
           const SizedBox(height: 12),
           SupabaseAuthForm(
             emailController: _emailController,
+            codeController: _codeController,
             supabaseUrlController: widget.supabaseUrlController,
             supabaseAnonKeyController: widget.supabaseAnonKeyController,
             showProjectConfiguration: !hasBundledSupabaseConfig,
             enabled: !_busy,
-            onSendMagicLink: widget.onSendMagicLink,
-            onVerifyCode: widget.onVerifyCode,
+            onRequestCode: widget.onRequestCode,
+            onSubmitCode: widget.onSubmitCode,
           ),
           const SizedBox(height: 8),
           _legalLinks(),
@@ -3231,6 +3351,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
   late double _activationDb;
   late bool _sttEnabled;
   late bool _adaptiveEnabled;
+  late bool _collisionEnabled;
   late int _captureRate;
   late int _quietRate;
   late double _adaptiveLoudnessDb;
@@ -3257,6 +3378,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
     _activationDb = config.analysisActivationDb;
     _sttEnabled = config.sttEnabled;
     _adaptiveEnabled = config.adaptiveQualityEnabled;
+    _collisionEnabled = config.collisionRemindersEnabled;
     _captureRate = config.captureSampleRate;
     _quietRate = config.quietSampleRate;
     _adaptiveLoudnessDb = config.adaptiveLoudnessDb;
@@ -3275,17 +3397,15 @@ class _AcousticSectionState extends State<_AcousticSection> {
     super.dispose();
   }
 
+  List<String> _parseWordList(String raw) => raw
+      .split(',')
+      .map((word) => word.trim())
+      .where((word) => word.isNotEmpty)
+      .toList();
+
   void _apply() {
-    final keywords = _keywordsController.text
-        .split(',')
-        .map((k) => k.trim())
-        .where((k) => k.isNotEmpty)
-        .toList();
-    final safeWords = _safeWordsController.text
-        .split(',')
-        .map((phrase) => phrase.trim())
-        .where((phrase) => phrase.isNotEmpty)
-        .toList();
+    final keywords = _parseWordList(_keywordsController.text);
+    final safeWords = _parseWordList(_safeWordsController.text);
     widget.onChanged(
       widget.config.copyWith(
         acousticAnalysisEnabled: _enabled,
@@ -3310,6 +3430,7 @@ class _AcousticSectionState extends State<_AcousticSection> {
         captureSampleRate: _captureRate,
         quietSampleRate: _quietRate,
         adaptiveLoudnessDb: _adaptiveLoudnessDb,
+        collisionRemindersEnabled: _collisionEnabled,
       ),
     );
   }
@@ -3605,6 +3726,19 @@ class _AcousticSectionState extends State<_AcousticSection> {
               value: _adaptiveEnabled,
               onChanged: (v) {
                 setState(() => _adaptiveEnabled = v);
+                _apply();
+              },
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Collision reminders'),
+              subtitle: const Text(
+                'Watch the accelerometer while recording; on a detected impact, '
+                'remind you the app is still capturing.',
+              ),
+              value: _collisionEnabled,
+              onChanged: (v) {
+                setState(() => _collisionEnabled = v);
                 _apply();
               },
             ),

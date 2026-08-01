@@ -11,21 +11,28 @@ enum ConsentItem {
     key: 'microphone',
     title: 'Microphone & audio recording',
     rationale:
-        'After you start recording or arm a schedule, Sonus Auris records a '
-        'rolling on-device audio buffer and may continue while the screen is '
-        'locked or you use another app. Android shows a persistent recording '
-        'notification and iOS shows its microphone indicator. Audio is '
-        'encrypted on your device. This is required for recording to work.',
+        'After you tap Start or explicitly arm a schedule, Sonus Auris may '
+        'record a rolling local audio buffer and continue while the screen is '
+        'locked or you use another app. A schedule records your intent, but it '
+        'cannot override iOS or Android restrictions: force-quitting, '
+        'force-stopping, or OS termination can prevent a future scheduled '
+        'start. Android shows a persistent notification and iOS shows its '
+        'microphone indicator while recording. The working rolling window may '
+        'remain plaintext inside the app-private device sandbox for your '
+        'configured retention period so approved local analysis can run. Every '
+        'backup or cross-device sync object is encrypted on-device before it '
+        'leaves. This consent is required for recording to work.',
     required: true,
   ),
 
   /// Storing/uploading the encrypted audio window off-device (cloud backup).
   cloudBackup(
     key: 'cloud_backup',
-    title: 'Encrypted cloud backup',
+    title: 'Encrypted cloud backup & device sync',
     rationale:
-        'Optionally back up a longer retention window to your cloud. Audio is '
-        'end-to-end encrypted on-device before it leaves the phone.',
+        'Optionally back up a longer retention window or synchronize it to '
+        'your authorized devices. Every audio object is end-to-end encrypted '
+        'on-device before it leaves this device.',
     required: false,
   ),
 
@@ -34,7 +41,9 @@ enum ConsentItem {
     key: 'notifications',
     title: 'Notifications & alarms',
     rationale:
-        'Used for sleep-cycle wake alarms and scheduled-recording reminders.',
+        'Used for sleep-cycle alarms, recording-state controls, and scheduled '
+        'recording reminders or user actions when the operating system cannot '
+        'start capture automatically.',
     required: false,
   ),
 

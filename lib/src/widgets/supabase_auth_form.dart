@@ -1,18 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/supabase_key_policy.dart';
 
-/// Shared passwordless Supabase magic-link form used by every app surface.
+/// Shared, validated passwordless Supabase sign-in form used during onboarding
+/// and from Configure. A single email-code flow covers both sign-in and
+/// sign-up (an unknown address gets an account the moment its first code is
+/// verified), so keeping both entry points on one widget prevents the first-run
+/// and returning-user flows from drifting apart.
 ///
-/// The same request signs in an existing address or creates a new account.
-/// A code field is retained as an optional fallback for projects whose Supabase
-/// email template includes `{{ .Token }}` as well as the confirmation link.
+/// The code step requires the Supabase email template to include
+/// `{{ .Token }}`; the confirmation link in the same email remains available
+/// as a fallback.
 class SupabaseAuthForm extends StatefulWidget {
   const SupabaseAuthForm({
     super.key,
     required this.emailController,
-    required this.onSendMagicLink,
-    required this.onVerifyCode,
+    required this.codeController,
+    required this.onRequestCode,
+    required this.onSubmitCode,
     this.supabaseUrlController,
     this.supabaseAnonKeyController,
     this.showProjectConfiguration = false,
@@ -20,10 +26,19 @@ class SupabaseAuthForm extends StatefulWidget {
   });
 
   final TextEditingController emailController;
+  final TextEditingController codeController;
   final TextEditingController? supabaseUrlController;
   final TextEditingController? supabaseAnonKeyController;
-  final Future<bool> Function(String email) onSendMagicLink;
-  final Future<bool> Function(String email, String code) onVerifyCode;
+
+  /// Emails the sign-in link + one-time code. Returns true when the code was
+  /// sent, which reveals the code field; false leaves the form on the email
+  /// step (the caller surfaces why).
+  final Future<bool> Function(String email) onRequestCode;
+
+  /// Redeems the emailed code, signing the user in (or creating the account on
+  /// first use).
+  final Future<void> Function(String email, String code) onSubmitCode;
+
   final bool showProjectConfiguration;
   final bool enabled;
 
@@ -31,208 +46,274 @@ class SupabaseAuthForm extends StatefulWidget {
   State<SupabaseAuthForm> createState() => _SupabaseAuthFormState();
 }
 
-enum _AuthAction { sendLink, verifyCode }
+enum _Busy { none, request, verify }
 
 class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
   final _formKey = GlobalKey<FormState>();
-  final _codeController = TextEditingController();
-  _AuthAction? _busyAction;
+  bool _attempted = false;
+  bool _codeSent = false;
+  _Busy _busy = _Busy.none;
   String? _inlineError;
-  bool _linkSent = false;
 
-  bool get _busy => _busyAction != null;
-
-  @override
-  void dispose() {
-    _codeController.dispose();
-    super.dispose();
-  }
+  bool get _isBusy => _busy != _Busy.none;
 
   @override
   Widget build(BuildContext context) {
-    final enabled = widget.enabled && !_busy;
+    final enabled = widget.enabled && !_isBusy;
     return Form(
       key: _formKey,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (widget.showProjectConfiguration) ...[
-            _ProjectConfigurationFields(
-              urlController: widget.supabaseUrlController,
-              anonKeyController: widget.supabaseAnonKeyController,
-              enabled: enabled,
-            ),
-            const SizedBox(height: 16),
-          ],
-          TextFormField(
-            key: const ValueKey('supabase-email-field'),
-            controller: widget.emailController,
-            enabled: enabled,
-            autofillHints: const [AutofillHints.email],
-            autocorrect: false,
-            enableSuggestions: false,
-            keyboardType: TextInputType.emailAddress,
-            textInputAction: TextInputAction.done,
-            validator: validateAccountEmail,
-            onFieldSubmitted: enabled ? (_) => _submitLink() : null,
-            decoration: const InputDecoration(
-              labelText: 'Email',
-              hintText: 'you@example.com',
-              prefixIcon: Icon(Icons.alternate_email),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'We’ll email a 6-digit Supabase sign-in code. The same code creates '
-            'your account on first use—there is no password.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          if (_linkSent) ...[
-            const SizedBox(height: 14),
-            TextFormField(
-              key: const ValueKey('supabase-code-field'),
-              controller: _codeController,
-              enabled: enabled,
-              keyboardType: TextInputType.number,
-              textInputAction: TextInputAction.done,
-              autofillHints: const [AutofillHints.oneTimeCode],
-              validator: (value) => _linkSent ? validateEmailCode(value) : null,
-              onFieldSubmitted: enabled ? (_) => _verifyCode() : null,
-              decoration: const InputDecoration(
-                labelText: '6-digit email code',
-                helperText: 'Enter the code from your Sonus Auris email.',
-                prefixIcon: Icon(Icons.pin_outlined),
-              ),
-            ),
-          ],
-          if (_inlineError != null) ...[
-            const SizedBox(height: 12),
-            Semantics(
-              liveRegion: true,
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.errorContainer,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  _inlineError!,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onErrorContainer,
-                  ),
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            key: const ValueKey('supabase-send-link-button'),
-            onPressed: enabled ? _submitLink : null,
-            icon: _actionIcon(_AuthAction.sendLink, Icons.mark_email_read),
-            label: Text(
-              _busyAction == _AuthAction.sendLink
-                  ? 'Sending…'
-                  : _linkSent
-                  ? 'Send a fresh code'
-                  : 'Email me a 6-digit code',
-            ),
-          ),
-          if (_linkSent) ...[
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              key: const ValueKey('supabase-verify-code-button'),
-              onPressed: enabled ? _verifyCode : null,
-              icon: _actionIcon(_AuthAction.verifyCode, Icons.login),
-              label: Text(
-                _busyAction == _AuthAction.verifyCode
-                    ? 'Verifying…'
-                    : 'Verify email code',
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Check your inbox and enter the 6-digit code. The one-time link '
-              'in the same email is a fallback. You can close '
-              'this screen while the email opens Sonus Auris.',
-            ),
-          ],
-        ],
+      autovalidateMode: _attempted
+          ? AutovalidateMode.onUserInteraction
+          : AutovalidateMode.disabled,
+      child: AutofillGroup(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: _codeSent
+              ? _codeStep(context, enabled)
+              : _emailStep(context, enabled),
+        ),
       ),
     );
   }
 
-  Widget _actionIcon(_AuthAction action, IconData fallback) {
-    if (_busyAction != action) {
-      return Icon(fallback);
-    }
-    return const SizedBox.square(
-      dimension: 18,
-      child: CircularProgressIndicator(strokeWidth: 2),
+  List<Widget> _emailStep(BuildContext context, bool enabled) {
+    final theme = Theme.of(context);
+    return [
+      if (widget.showProjectConfiguration) ...[
+        _ProjectConfigurationFields(
+          urlController: widget.supabaseUrlController,
+          anonKeyController: widget.supabaseAnonKeyController,
+          enabled: enabled,
+        ),
+        const SizedBox(height: 16),
+      ],
+      TextFormField(
+        key: const ValueKey('supabase-email-field'),
+        controller: widget.emailController,
+        enabled: enabled,
+        autofillHints: const [AutofillHints.username, AutofillHints.email],
+        autocorrect: false,
+        enableSuggestions: false,
+        keyboardType: TextInputType.emailAddress,
+        textInputAction: TextInputAction.done,
+        validator: validateAccountEmail,
+        onFieldSubmitted: enabled ? (_) => _requestCode() : null,
+        decoration: const InputDecoration(
+          labelText: 'Email',
+          hintText: 'you@example.com',
+          prefixIcon: Icon(Icons.alternate_email),
+        ),
+      ),
+      const SizedBox(height: 8),
+      Text(
+        'New here? Signing in creates your account automatically.',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
+      if (_inlineError != null) _errorBox(context),
+      const SizedBox(height: 16),
+      SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          key: const ValueKey('supabase-request-button'),
+          onPressed: enabled ? _requestCode : null,
+          icon: _busy == _Busy.request
+              ? _spinner
+              : const Icon(Icons.mark_email_read_outlined),
+          label: Text(
+            _busy == _Busy.request ? 'Sending…' : 'Email me a 6-digit code',
+          ),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _codeStep(BuildContext context, bool enabled) {
+    final theme = Theme.of(context);
+    final email = widget.emailController.text.trim();
+    return [
+      Text('Enter your sign-in code', style: theme.textTheme.titleSmall),
+      const SizedBox(height: 4),
+      Text(
+        email.isEmpty
+            ? 'We emailed you a 6-digit sign-in code. Enter it to continue; '
+                  'the link is available as a fallback.'
+            : 'We emailed a 6-digit sign-in code to $email. Enter it to '
+                  'continue; the link is available as a fallback.',
+        style: theme.textTheme.bodySmall,
+      ),
+      const SizedBox(height: 16),
+      TextFormField(
+        key: const ValueKey('supabase-code-field'),
+        controller: widget.codeController,
+        enabled: enabled,
+        autofocus: true,
+        autofillHints: const [AutofillHints.oneTimeCode],
+        autocorrect: false,
+        enableSuggestions: false,
+        keyboardType: TextInputType.number,
+        textInputAction: TextInputAction.done,
+        maxLength: 6,
+        inputFormatters: [
+          FilteringTextInputFormatter.digitsOnly,
+          LengthLimitingTextInputFormatter(6),
+        ],
+        validator: validateEmailOtpCode,
+        onFieldSubmitted: enabled ? (_) => _submitCode() : null,
+        decoration: const InputDecoration(
+          labelText: '6-digit code',
+          hintText: '123456',
+          prefixIcon: Icon(Icons.pin_outlined),
+          counterText: '',
+        ),
+      ),
+      if (_inlineError != null) _errorBox(context),
+      const SizedBox(height: 16),
+      SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          key: const ValueKey('supabase-verify-button'),
+          onPressed: enabled ? _submitCode : null,
+          icon: _busy == _Busy.verify ? _spinner : const Icon(Icons.login),
+          label: Text(_busy == _Busy.verify ? 'Signing in…' : 'Sign in'),
+        ),
+      ),
+      const SizedBox(height: 4),
+      Row(
+        children: [
+          TextButton.icon(
+            key: const ValueKey('supabase-change-email-button'),
+            onPressed: enabled ? _useDifferentEmail : null,
+            icon: const Icon(Icons.arrow_back, size: 18),
+            label: const Text('Use a different email'),
+          ),
+          const Spacer(),
+          TextButton.icon(
+            key: const ValueKey('supabase-resend-button'),
+            onPressed: enabled ? _resendCode : null,
+            icon: _busy == _Busy.request
+                ? _spinner
+                : const Icon(Icons.refresh, size: 18),
+            label: Text(_busy == _Busy.request ? 'Sending…' : 'Resend'),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  Widget get _spinner => const SizedBox.square(
+    dimension: 18,
+    child: CircularProgressIndicator(strokeWidth: 2),
+  );
+
+  Widget _errorBox(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Semantics(
+        liveRegion: true,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.errorContainer,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            _inlineError!,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onErrorContainer,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
-  bool _validateBaseFields() {
-    return _formKey.currentState?.validate() ?? false;
-  }
-
-  Future<void> _submitLink() async {
-    if (_busy || !widget.enabled) {
+  Future<void> _requestCode() async {
+    if (_isBusy || !widget.enabled) {
       return;
     }
-    _codeController.clear();
+    // Drop any stale code from a previous attempt before starting a new flow.
+    widget.codeController.clear();
     setState(() {
-      _linkSent = false;
+      _attempted = true;
       _inlineError = null;
     });
-    if (!_validateBaseFields()) {
+    if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
-    setState(() => _busyAction = _AuthAction.sendLink);
-    try {
-      final sent = await widget.onSendMagicLink(
-        widget.emailController.text.trim(),
-      );
-      if (mounted && sent) {
-        setState(() => _linkSent = true);
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() => _inlineError = describeAuthError(error));
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busyAction = null);
-      }
-    }
+    await _sendCode();
   }
 
-  Future<void> _verifyCode() async {
-    if (_busy || !widget.enabled) {
+  Future<void> _resendCode() async {
+    if (_isBusy || !widget.enabled) {
       return;
     }
     setState(() => _inlineError = null);
-    final emailError = validateAccountEmail(widget.emailController.text);
-    final codeError = validateEmailCode(_codeController.text);
-    if (emailError != null || codeError != null) {
-      _formKey.currentState?.validate();
-      return;
-    }
-    setState(() => _busyAction = _AuthAction.verifyCode);
+    await _sendCode();
+  }
+
+  Future<void> _sendCode() async {
+    setState(() => _busy = _Busy.request);
+    final email = widget.emailController.text.trim();
     try {
-      await widget.onVerifyCode(
-        widget.emailController.text.trim(),
-        _codeController.text.trim(),
-      );
+      final sent = await widget.onRequestCode(email);
+      if (mounted && sent) {
+        setState(() {
+          _codeSent = true;
+          // Don't flag the freshly revealed, still-empty code field as invalid.
+          _attempted = false;
+        });
+      }
     } catch (error) {
       if (mounted) {
         setState(() => _inlineError = describeAuthError(error));
       }
     } finally {
       if (mounted) {
-        setState(() => _busyAction = null);
+        setState(() => _busy = _Busy.none);
       }
     }
+  }
+
+  Future<void> _submitCode() async {
+    if (_isBusy || !widget.enabled) {
+      return;
+    }
+    setState(() {
+      _attempted = true;
+      _inlineError = null;
+    });
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+    setState(() => _busy = _Busy.verify);
+    final email = widget.emailController.text.trim();
+    final code = widget.codeController.text.trim();
+    try {
+      await widget.onSubmitCode(email, code);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _inlineError = describeAuthError(error));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = _Busy.none);
+      }
+    }
+  }
+
+  void _useDifferentEmail() {
+    if (_isBusy) {
+      return;
+    }
+    widget.codeController.clear();
+    setState(() {
+      _codeSent = false;
+      _attempted = false;
+      _inlineError = null;
+    });
   }
 }
 
@@ -323,14 +404,14 @@ String? validateAccountEmail(String? value) {
   return null;
 }
 
-String? validateEmailCode(String? value) {
+String? validateEmailOtpCode(String? value) {
   final code = value?.trim() ?? '';
   if (code.isEmpty) {
-    return 'Enter the one-time code from your email.';
+    return 'Enter the 6-digit code from the email.';
   }
   if (code.length != 6 ||
       !code.runes.every((rune) => rune >= 0x30 && rune <= 0x39)) {
-    return 'Enter the 6-digit code from your email.';
+    return 'Enter the 6-digit code from the email.';
   }
   return null;
 }

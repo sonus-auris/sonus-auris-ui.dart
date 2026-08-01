@@ -21,6 +21,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart'
     show FlutterExceptionHandler, TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
@@ -41,7 +42,7 @@ import 'src/platform/desktop_autostart.dart';
 import 'src/services/cloud_oauth_flow.dart';
 import 'src/services/supabase_device_presence_client.dart';
 import 'src/widgets/supabase_auth_form.dart';
-import 'src/widgets/mandatory_mfa_gate.dart';
+import 'src/widgets/supabase_mfa_gate.dart';
 
 const _green = Color(0xFF1FAA6C);
 const _greenBright = Color(0xFF34C585);
@@ -69,6 +70,10 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
   late final AppController _controller;
   late final Future<void> _ready;
   Future<void>? _controllerDisposal;
+  late final AppLinks _appLinks;
+  StreamSubscription<Uri>? _authLinkSubscription;
+  Uri? _pendingAuthLink;
+  bool _controllerReady = false;
   FlutterExceptionHandler? _previousFlutterOnError;
   ui.ErrorCallback? _previousPlatformOnError;
   bool _trayReady = false;
@@ -80,6 +85,12 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
     WidgetsBinding.instance.addObserver(this);
     DesktopAutostart.setup();
     _controller = AppController();
+    _appLinks = AppLinks();
+    unawaited(_captureInitialAuthLink());
+    _authLinkSubscription = _appLinks.uriLinkStream.listen(
+      _handleAuthLink,
+      onError: (_) {},
+    );
     _installTelemetryErrorHooks(_controller);
     windowManager.addListener(this);
     trayManager.addListener(this);
@@ -88,7 +99,27 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
     // accepted the current recording disclosure. The controller independently
     // enforces the same rule for every manual/scheduled start.
     _ready = _controller.init();
+    unawaited(_consumePendingAuthLinkAfterInit());
     unawaited(_startAlwaysOnRecorderAfterInit());
+  }
+
+  /// Adopt any auth callback that arrived before the controller finished
+  /// initialising. Runs off the loading-screen critical path: `_ready` gates
+  /// only controller init, never auth-link or microphone startup.
+  Future<void> _consumePendingAuthLinkAfterInit() async {
+    try {
+      await _ready;
+    } catch (_) {
+      // Init failures surface through the FutureBuilder on `_ready` and the
+      // recorder startup path; a pending link cannot be consumed without init.
+      return;
+    }
+    _controllerReady = true;
+    final pending = _pendingAuthLink;
+    _pendingAuthLink = null;
+    if (pending != null) {
+      await _controller.consumeSupabaseMagicLink(pending);
+    }
   }
 
   Future<void> _startAlwaysOnRecorderAfterInit() async {
@@ -186,6 +217,25 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
     }
   }
 
+  Future<void> _captureInitialAuthLink() async {
+    try {
+      final link = await _appLinks.getInitialLink();
+      if (link != null) {
+        _handleAuthLink(link);
+      }
+    } catch (_) {
+      // Deep-link support is unavailable in some test/preview environments.
+    }
+  }
+
+  void _handleAuthLink(Uri link) {
+    if (!_controllerReady) {
+      _pendingAuthLink = link;
+      return;
+    }
+    unawaited(_controller.consumeSupabaseMagicLink(link));
+  }
+
   Future<void> _startAlwaysOnRecorder() async {
     await DesktopAutostart.enableByDefaultOnce();
     final prefs = await SharedPreferences.getInstance();
@@ -232,6 +282,7 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
     WidgetsBinding.instance.removeObserver(this);
     windowManager.removeListener(this);
     trayManager.removeListener(this);
+    _authLinkSubscription?.cancel();
     FlutterError.onError = _previousFlutterOnError;
     ui.PlatformDispatcher.instance.onError = _previousPlatformOnError;
     unawaited(_disposeController());
@@ -305,8 +356,23 @@ class _DesktopRootState extends State<_DesktopRoot> {
         if (vm == null || vm.isInitializing) {
           return const _Loading();
         }
-        if (vm.hasSupabaseSession && !vm.isSignedIn) {
-          return MandatoryMfaGate(controller: widget.controller);
+        if (vm.hasFirstFactorSession && !vm.isSignedIn) {
+          return Scaffold(
+            body: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 460),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(28),
+                      child: SupabaseMfaGate(controller: widget.controller),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
         }
         return Scaffold(
           body: Row(
@@ -384,18 +450,37 @@ class _DesktopRootState extends State<_DesktopRoot> {
 
   Future<void> _showSignInDialog() async {
     final email = TextEditingController();
+    final code = TextEditingController();
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Sign in'),
         content: SizedBox(
           width: 440,
-          child: SupabaseAuthForm(
-            emailController: email,
-            onSendMagicLink: (email) =>
-                widget.controller.requestSupabaseEmailOtp(email: email),
-            onVerifyCode: (email, code) => widget.controller
-                .confirmSupabaseEmailOtp(email: email, code: code),
+          child: StreamBuilder(
+            stream: widget.controller.accountStatus,
+            initialData: widget.controller.accountStatusValue,
+            builder: (context, snapshot) {
+              final status = snapshot.data;
+              final needsMfa =
+                  status?.mfaEnrollmentRequired == true ||
+                  status?.mfaRequired == true ||
+                  status?.mfaCheckFailed == true;
+              if (needsMfa) {
+                return SupabaseMfaGate(
+                  controller: widget.controller,
+                  onAuthorized: () => Navigator.pop(ctx),
+                );
+              }
+              return SupabaseAuthForm(
+                emailController: email,
+                codeController: code,
+                onRequestCode: (email) =>
+                    widget.controller.requestSupabaseEmailOtp(email: email),
+                onSubmitCode: (email, code) => widget.controller
+                    .confirmSupabaseEmailOtp(email: email, code: code),
+              );
+            },
           ),
         ),
         actions: [
@@ -407,6 +492,7 @@ class _DesktopRootState extends State<_DesktopRoot> {
       ),
     );
     email.dispose();
+    code.dispose();
   }
 }
 

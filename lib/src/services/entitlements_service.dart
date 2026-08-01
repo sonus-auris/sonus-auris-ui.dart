@@ -10,6 +10,7 @@ import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
 
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
+import '../models/supabase_session.dart';
 import 'supabase_key_policy.dart';
 
 /// Devices included with the free tier when no entitlements row exists yet.
@@ -99,7 +100,8 @@ class EntitlementsService {
   bool canUse(AppConfig config, CloudSecrets secrets) {
     return config.supabaseUrl.trim().isNotEmpty &&
         config.supabaseAnonKey.trim().isNotEmpty &&
-        secrets.hasSupabaseToken;
+        secrets.hasFreshSupabaseToken() &&
+        supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken);
   }
 
   /// Returns the account's entitlements: the cached copy while fresh, else the

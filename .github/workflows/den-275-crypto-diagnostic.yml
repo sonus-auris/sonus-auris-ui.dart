@@ -1,0 +1,67 @@
+name: Diagnose DEN-275 Flutter crypto hardening
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: den-275-crypto-diagnostic-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-and-focused-tests:
+    if: github.head_ref == 'agent/den-275-flutter-crypto-hardening'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: 3.44.3
+          cache: true
+      - run: flutter pub get
+      - name: Capture analyzer output
+        id: analyze
+        shell: bash
+        run: |
+          set +e
+          flutter analyze > "$RUNNER_TEMP/analyze.log" 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          tail -n 200 "$RUNNER_TEMP/analyze.log"
+          exit 0
+      - name: Capture focused crypto tests
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          flutter test \
+            test/account_recipient_test.dart \
+            test/segment_cipher_test.dart \
+            test/key_manager_test.dart \
+            test/sync_v1_interop_vector_test.dart \
+            > "$RUNNER_TEMP/tests.log" 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          tail -n 200 "$RUNNER_TEMP/tests.log"
+          exit 0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: den-275-crypto-diagnostics-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/analyze.log
+            ${{ runner.temp }}/tests.log
+          if-no-files-found: error
+          retention-days: 3
+      - name: Require clean analysis and focused tests
+        run: |
+          test '${{ steps.analyze.outputs.exit_code }}' = 0
+          test '${{ steps.tests.outputs.exit_code }}' = 0

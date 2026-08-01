@@ -53,25 +53,51 @@ class KeyManager {
   final Random _random = Random.secure();
 
   SecretKey? _cachedMasterKey;
+  Future<SecretKey>? _masterKeyInitialization;
 
   /// Returns the device master key, generating and persisting one on first use.
-  Future<SecretKey> getOrCreateMasterKey() async {
+  Future<SecretKey> getOrCreateMasterKey() {
     final cached = _cachedMasterKey;
     if (cached != null) {
-      return cached;
+      return Future<SecretKey>.value(cached);
     }
-    final existing = await _store.read(masterKeyStorageId);
-    if (existing != null && existing.trim().isNotEmpty) {
-      final bytes = base64Decode(existing.trim());
-      if (bytes.length != SegmentCipher.dekLength) {
-        throw StateError('Stored master key has an unexpected length.');
+    final initialization = _masterKeyInitialization;
+    if (initialization != null) {
+      return initialization;
+    }
+    final started = _loadOrCreateMasterKey();
+    _masterKeyInitialization = started;
+    return started;
+  }
+
+  Future<SecretKey> _loadOrCreateMasterKey() async {
+    try {
+      final existing = await _store.read(masterKeyStorageId);
+      if (existing != null && existing.trim().isNotEmpty) {
+        final bytes = base64Decode(existing.trim());
+        if (bytes.length != SegmentCipher.dekLength) {
+          throw StateError('Stored master key has an unexpected length.');
+        }
+        return _cachedMasterKey = SecretKeyData(
+          bytes,
+          overwriteWhenDestroyed: true,
+        );
       }
-      return _cachedMasterKey = SecretKey(bytes);
+      final created = await _aead.newSecretKey();
+      try {
+        final bytes = await created.extractBytes();
+        if (bytes.length != SegmentCipher.dekLength) {
+          throw StateError('Generated master key has an unexpected length.');
+        }
+        await _store.write(masterKeyStorageId, base64Encode(bytes));
+        return _cachedMasterKey = created;
+      } catch (_) {
+        created.destroy();
+        rethrow;
+      }
+    } finally {
+      _masterKeyInitialization = null;
     }
-    final created = await _aead.newSecretKey();
-    final bytes = await created.extractBytes();
-    await _store.write(masterKeyStorageId, base64Encode(bytes));
-    return _cachedMasterKey = created;
   }
 
   /// True once a master key exists on this device.
@@ -84,17 +110,30 @@ class KeyManager {
   }
 
   /// Wraps a per-segment DEK with the master key. Suitable as the `wrapDek`
-  /// callback for [SegmentCipher.seal].
+  /// callback for [SegmentCipher.seal]. The encoded device wrapper is exactly
+  /// nonce(12) + ciphertext(32) + tag(16) = 60 bytes.
   Future<Uint8List> wrapDek(SecretKey dek) async {
     final mk = await getOrCreateMasterKey();
     final dekBytes = await dek.extractBytes();
+    if (dekBytes.length != SegmentCipher.dekLength) {
+      throw ArgumentError('Data encryption key must be 32 bytes.');
+    }
     final box = await _aead.encrypt(dekBytes, secretKey: mk);
-    return box.concatenation();
+    final encoded = box.concatenation();
+    if (encoded.length != SegmentCipher.wrappedDekLength) {
+      throw StateError('Device-wrapped DEK has an invalid encoded length.');
+    }
+    return encoded;
   }
 
   /// Recovers a per-segment DEK from its wrapped form. Suitable as the
   /// `unwrapDek` callback for [SegmentCipher.open].
   Future<SecretKey> unwrapDek(Uint8List wrappedDek) async {
+    if (wrappedDek.length != SegmentCipher.wrappedDekLength) {
+      throw FormatException(
+        'Device-wrapped DEK must be exactly ${SegmentCipher.wrappedDekLength} bytes.',
+      );
+    }
     final mk = await getOrCreateMasterKey();
     final box = SecretBox.fromConcatenation(
       wrappedDek,
@@ -102,7 +141,12 @@ class KeyManager {
       macLength: SegmentCipher.macLength,
     );
     final dekBytes = await _aead.decrypt(box, secretKey: mk);
-    return SecretKey(dekBytes);
+    if (dekBytes.length != SegmentCipher.dekLength) {
+      throw const FormatException(
+        'Device-wrapped DEK did not contain a 32-byte key.',
+      );
+    }
+    return SecretKeyData(dekBytes, overwriteWhenDestroyed: true);
   }
 
   /// Hands a single DEK to the caller in the clear, for the rare, user-initiated
@@ -110,7 +154,11 @@ class KeyManager {
   /// into Google Drive). Only ever called per-clip and never exposes the MK.
   Future<Uint8List> releaseDekForJob(Uint8List wrappedDek) async {
     final dek = await unwrapDek(wrappedDek);
-    return Uint8List.fromList(await dek.extractBytes());
+    try {
+      return Uint8List.fromList(await dek.extractBytes());
+    } finally {
+      dek.destroy();
+    }
   }
 
   // --- Recovery: passphrase -------------------------------------------------
@@ -128,17 +176,21 @@ class KeyManager {
       password: passphrase,
       nonce: salt,
     );
-    final mkBytes = await mk.extractBytes();
-    final box = await _aead.encrypt(mkBytes, secretKey: wrappingKey);
-    return <String, Object?>{
-      'v': 1,
-      'kdf': 'argon2id',
-      'mem': _passphraseKdf.memory,
-      'par': _passphraseKdf.parallelism,
-      'it': _passphraseKdf.iterations,
-      'salt': base64Encode(salt),
-      'blob': base64Encode(box.concatenation()),
-    };
+    try {
+      final mkBytes = await mk.extractBytes();
+      final box = await _aead.encrypt(mkBytes, secretKey: wrappingKey);
+      return <String, Object?>{
+        'v': 1,
+        'kdf': 'argon2id',
+        'mem': _passphraseKdf.memory,
+        'par': _passphraseKdf.parallelism,
+        'it': _passphraseKdf.iterations,
+        'salt': base64Encode(salt),
+        'blob': base64Encode(box.concatenation()),
+      };
+    } finally {
+      wrappingKey.destroy();
+    }
   }
 
   /// Restores and persists the master key from a passphrase recovery blob.
@@ -160,11 +212,15 @@ class KeyManager {
       password: passphrase,
       nonce: salt,
     );
-    final mkBytes = await _decryptConcat(
-      recovery['blob'] as String,
-      wrappingKey,
-    );
-    await _persistMasterKey(mkBytes);
+    try {
+      final mkBytes = await _decryptConcat(
+        recovery['blob'] as String,
+        wrappingKey,
+      );
+      await _persistMasterKey(mkBytes);
+    } finally {
+      wrappingKey.destroy();
+    }
   }
 
   // --- Recovery: account escrow (Supabase 2FA gated) ------------------------
@@ -180,17 +236,21 @@ class KeyManager {
     final secret = _randomBytes(32);
     final salt = _randomBytes(16);
     final wrappingKey = await _deriveAccountKey(secret, salt);
-    final mkBytes = await mk.extractBytes();
-    final box = await _aead.encrypt(mkBytes, secretKey: wrappingKey);
-    return AccountRecoveryMaterial(
-      recoverySecretBase64: base64Encode(secret),
-      blob: <String, Object?>{
-        'v': 1,
-        'kdf': 'hkdf-sha256',
-        'salt': base64Encode(salt),
-        'blob': base64Encode(box.concatenation()),
-      },
-    );
+    try {
+      final mkBytes = await mk.extractBytes();
+      final box = await _aead.encrypt(mkBytes, secretKey: wrappingKey);
+      return AccountRecoveryMaterial(
+        recoverySecretBase64: base64Encode(secret),
+        blob: <String, Object?>{
+          'v': 1,
+          'kdf': 'hkdf-sha256',
+          'salt': base64Encode(salt),
+          'blob': base64Encode(box.concatenation()),
+        },
+      );
+    } finally {
+      wrappingKey.destroy();
+    }
   }
 
   /// Restores the master key from an account-recovery blob plus its secret.
@@ -201,23 +261,32 @@ class KeyManager {
     final secret = base64Decode(recoverySecretBase64.trim());
     final salt = base64Decode(recovery['salt'] as String);
     final wrappingKey = await _deriveAccountKey(secret, salt);
-    final mkBytes = await _decryptConcat(
-      recovery['blob'] as String,
-      wrappingKey,
-    );
-    await _persistMasterKey(mkBytes);
+    try {
+      final mkBytes = await _decryptConcat(
+        recovery['blob'] as String,
+        wrappingKey,
+      );
+      await _persistMasterKey(mkBytes);
+    } finally {
+      wrappingKey.destroy();
+    }
   }
 
   Future<SecretKey> _deriveAccountKey(List<int> secret, List<int> salt) async {
-    final hkdf = Hkdf(
-      hmac: Hmac.sha256(),
-      outputLength: SegmentCipher.dekLength,
-    );
-    return hkdf.deriveKey(
-      secretKey: SecretKey(secret),
-      nonce: salt,
-      info: utf8.encode('sonus-auris/account-recovery/v1'),
-    );
+    final input = SecretKey(secret);
+    try {
+      final hkdf = Hkdf(
+        hmac: Hmac.sha256(),
+        outputLength: SegmentCipher.dekLength,
+      );
+      return await hkdf.deriveKey(
+        secretKey: input,
+        nonce: salt,
+        info: utf8.encode('sonus-auris/account-recovery/v1'),
+      );
+    } finally {
+      input.destroy();
+    }
   }
 
   // --- internals ------------------------------------------------------------
@@ -236,7 +305,8 @@ class KeyManager {
       throw StateError('Recovered master key has an unexpected length.');
     }
     await _store.write(masterKeyStorageId, base64Encode(mkBytes));
-    _cachedMasterKey = SecretKey(mkBytes);
+    _cachedMasterKey?.destroy();
+    _cachedMasterKey = SecretKeyData(mkBytes, overwriteWhenDestroyed: true);
   }
 
   void _requireStrongPassphrase(String passphrase) {

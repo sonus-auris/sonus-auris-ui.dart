@@ -23,6 +23,8 @@ class KeywordMatch {
   final String transcript;
   final SpokenPhraseKind kind;
 
+  /// True when the hit came from [AppConfig.safeWords] rather than
+  /// [AppConfig.keywords]. Both trigger the same alert/ding/quality boost.
   bool get isSafeWord => kind == SpokenPhraseKind.safeWord;
 }
 
@@ -86,6 +88,8 @@ class SpeechToTextClient {
   /// bounded by non-alphanumeric characters to avoid short phrases matching
   /// inside unrelated words.
   KeywordMatch? matchKeyword(AppConfig config, String transcript) {
+    // Safe words first: if a distress word and an ordinary keyword are both
+    // present, the safe word is the one worth surfacing.
     for (final entry in [
       (phrases: config.safeWords, kind: SpokenPhraseKind.safeWord),
       (phrases: config.keywords, kind: SpokenPhraseKind.keyword),

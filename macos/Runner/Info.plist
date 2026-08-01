@@ -22,7 +22,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>app.sonusauris.audioDashcam.oauth</string>
+			<string>com.ores.audioDashcam.oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>sonusauris</string>

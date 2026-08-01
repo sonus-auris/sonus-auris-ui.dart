@@ -1,4 +1,5 @@
-// Configures and drives the Android foreground-service notification that keeps audio capture alive in the background.
+// Configures and drives the Android microphone foreground-service notification
+// that keeps an already user-started recording alive in the background.
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:io';
@@ -8,8 +9,14 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'diagnostic_log.dart';
 
 enum BackgroundCaptureMode {
+  /// Compatibility mode used by the schedule orchestrator while it converges on
+  /// the desired idle state. It is deliberately notification-only: an armed
+  /// schedule must never keep a microphone-typed foreground service alive while
+  /// the microphone is closed.
   scheduleStandby,
   recording;
+
+  bool get startsMicrophoneService => this == BackgroundCaptureMode.recording;
 
   String get notificationTitle {
     switch (this) {
@@ -23,7 +30,7 @@ enum BackgroundCaptureMode {
   String get notificationText {
     switch (this) {
       case BackgroundCaptureMode.scheduleStandby:
-        return 'Waiting for your next declared recording window.';
+        return 'A reminder will ask you to open the app at the next window.';
       case BackgroundCaptureMode.recording:
         return 'Rolling local window and cloud upload are active.';
     }
@@ -47,8 +54,9 @@ class BackgroundCaptureService {
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
         channelId: 'audio_dashcam_capture',
-        channelName: 'Sonus Auris',
-        channelDescription: 'Shows while audio capture is active.',
+        channelName: 'Sonus Auris recording',
+        channelDescription:
+            'Shows only while microphone recording is actively running.',
         onlyAlertOnce: true,
         playSound: false,
         enableVibration: false,
@@ -63,10 +71,8 @@ class BackgroundCaptureService {
         allowWakeLock: true,
         allowWifiLock: false,
         // Android 14+ forbids starting a microphone-typed foreground service
-        // from a boot/restart receiver (ForegroundServiceStartNotAllowedException),
-        // and Play policy treats it as background mic access. After reboot the
-        // alarm-manager receiver re-arms schedules instead, and capture resumes
-        // from a user-visible trigger.
+        // from a boot/restart receiver. Reboot recovery re-arms schedule
+        // reminders only; capture starts after foreground user interaction.
         allowAutoRestart: false,
         stopWithTask: false,
       ),
@@ -80,6 +86,20 @@ class BackgroundCaptureService {
       _diagnostics?.add('Foreground service skipped: platform is not Android.');
       return null;
     }
+
+    // Policy boundary: schedule standby is not microphone use. Never start or
+    // retain a microphone-typed foreground service merely because a schedule is
+    // armed. Exact/inexact local notifications handle the next boundary and the
+    // user brings the app to the foreground before capture starts.
+    if (!mode.startsMicrophoneService) {
+      _diagnostics?.add(
+        'Schedule armed without a microphone foreground service; '
+        'boundary reminders require foreground user action.',
+      );
+      await stop();
+      return null;
+    }
+
     try {
       _diagnostics?.add('Checking Android notification permission.');
       final notificationPermission =
@@ -106,9 +126,7 @@ class BackgroundCaptureService {
         }
         return null;
       }
-      _diagnostics?.add(
-        'Starting microphone foreground service (${mode.name}).',
-      );
+      _diagnostics?.add('Starting microphone foreground service.');
       final result = await FlutterForegroundTask.startService(
         serviceId: 500,
         serviceTypes: const [ForegroundServiceTypes.microphone],

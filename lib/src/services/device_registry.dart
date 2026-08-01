@@ -9,6 +9,7 @@ import 'package:sonus_auris_interfaces/sonus_auris_interfaces.dart'
 
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
+import '../models/supabase_session.dart';
 import 'supabase_key_policy.dart';
 
 /// Client app version reported on device rows, injected at build time with
@@ -88,6 +89,8 @@ typedef DeviceRegistryResult = ({
   interfaces.DeviceRecord? device,
   String? error,
 });
+
+/// Result of a registry mutation (revoke/rename): the updated row and error.
 typedef DeviceRegistryMutationResult = ({
   interfaces.DeviceRecord? device,
   String? error,
@@ -111,7 +114,8 @@ class DeviceRegistry {
   bool canUse(AppConfig config, CloudSecrets secrets) {
     return config.supabaseUrl.trim().isNotEmpty &&
         config.supabaseAnonKey.trim().isNotEmpty &&
-        secrets.hasSupabaseToken;
+        secrets.hasFreshSupabaseToken() &&
+        supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken);
   }
 
   /// Loads this install's own row, or null when it was never registered.

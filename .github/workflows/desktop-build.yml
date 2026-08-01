@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Linux desktop toolchain
         run: >-
           sudo apt-get update && sudo apt-get install -y
@@ -66,7 +66,7 @@ jobs:
       - name: Package Linux desktop alpha
         shell: bash
         run: tar -C build/linux/x64/release -czf sonus-auris-flutter-linux-x64.tar.gz bundle
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonus-auris-flutter-linux-x64
           path: sonus-auris-flutter-linux-x64.tar.gz
@@ -77,7 +77,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
@@ -106,7 +106,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent
           "build/macos/Build/Products/Release/Sonus Auris.app"
           sonus-auris-flutter-macos-arm64.zip
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonus-auris-flutter-macos-arm64
           path: sonus-auris-flutter-macos-arm64.zip
@@ -117,7 +117,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
@@ -147,7 +147,7 @@ jobs:
           Compress-Archive
           -Path build/windows/x64/runner/Release/*
           -DestinationPath sonus-auris-flutter-windows-x64.zip
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonus-auris-flutter-windows-x64
           path: sonus-auris-flutter-windows-x64.zip

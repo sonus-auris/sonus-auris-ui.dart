@@ -26,10 +26,15 @@ import 'package:cryptography/cryptography.dart';
 /// 0       4     magic            "SAC1"
 /// 4       1     version          0x01
 /// 5       1     flags            bit0 = DEK wrapped by device master key
-/// 6       2     wrappedDekLen    uint16, big-endian
-/// 8       L     wrappedDek       AES-256-GCM(DEK) as nonce|cipher|mac
-/// 8+L     ...   contentBox       AES-256-GCM(audio) as nonce|cipher|mac
+/// 6       2     wrappedDekLen    uint16, big-endian; exactly 60
+/// 8       60    wrappedDek       nonce(12)|ciphertext(32)|tag(16)
+/// 68      ...   contentBox       nonce(12)|ciphertext|tag(16)
 /// ```
+///
+/// Version 2 sets flags `0x03` and inserts an exactly 92-byte account-recipient
+/// wrapped DEK between the device wrapper and content box. Protocol v1 fixes the
+/// flag combinations and wrapper sizes exactly; unknown or inconsistent values
+/// fail closed.
 ///
 /// The container is provider-agnostic: it is prepended to the object body so it
 /// works identically for an S3 `PUT`, a Drive upload, or an iCloud file.
@@ -46,6 +51,10 @@ class SegmentCipher {
   static const int nonceLength = 12;
   static const int macLength = 16;
   static const int dekLength = 32;
+  static const int wrappedDekLength = nonceLength + dekLength + macLength;
+  static const int accountWrappedDekLength =
+      32 + nonceLength + dekLength + macLength;
+  static const int minimumContentBoxLength = nonceLength + macLength;
   static const int _headerFixedLength = 8; // magic+version+flags+u16 len
 
   final AesGcm _aead;
@@ -58,62 +67,97 @@ class SegmentCipher {
   /// the DEK is *also* sealed to the account recipient, producing a v2
   /// multi-recipient container that the desktop master can open with the account
   /// private key. Without it, a v1 container is produced exactly as before.
+  ///
+  /// Both wrapping callbacks borrow the generated DEK for the duration of the
+  /// awaited call. They must not retain or destroy it; [seal] destroys it after
+  /// every success or failure path.
   Future<Uint8List> seal({
     required Uint8List plaintext,
     required Future<Uint8List> Function(SecretKey dek) wrapDek,
     Future<Uint8List> Function(SecretKey dek)? wrapForAccount,
   }) async {
-    final dek = await _aead.newSecretKey();
-    final wrappedDek = await wrapDek(dek);
-    final accountWrapped = wrapForAccount == null
-        ? null
-        : await wrapForAccount(dek);
-    if (wrappedDek.length > 0xFFFF ||
-        (accountWrapped != null && accountWrapped.length > 0xFFFF)) {
-      throw ArgumentError('Wrapped DEK is too large to encode.');
-    }
-    final contentBox = await _aead.encrypt(plaintext, secretKey: dek);
-    final contentBytes = contentBox.concatenation();
+    final plaintextSnapshot = Uint8List.fromList(plaintext);
+    try {
+      final dek = await _aead.newSecretKey();
+      try {
+        final wrappedDek = await wrapDek(dek);
+        if (wrappedDek.length != wrappedDekLength) {
+          throw ArgumentError(
+            'Device-wrapped DEK must be exactly $wrappedDekLength bytes.',
+          );
+        }
+        final accountWrapped = wrapForAccount == null
+            ? null
+            : await wrapForAccount(dek);
+        if (accountWrapped != null &&
+            accountWrapped.length != accountWrappedDekLength) {
+          throw ArgumentError(
+            'Account-wrapped DEK must be exactly $accountWrappedDekLength bytes.',
+          );
+        }
 
-    final out = BytesBuilder(copy: false);
-    out.add(magic);
-    if (accountWrapped == null) {
-      out.addByte(version);
-      out.addByte(_flagWrappedByMasterKey);
-      out.add(_u16be(wrappedDek.length));
-      out.add(wrappedDek);
-    } else {
-      out.addByte(versionMultiRecipient);
-      out.addByte(_flagWrappedByMasterKey | _flagAccountRecipient);
-      out.add(_u16be(wrappedDek.length));
-      out.add(wrappedDek);
-      out.add(_u16be(accountWrapped.length));
-      out.add(accountWrapped);
+        final contentBox = await _aead.encrypt(
+          plaintextSnapshot,
+          secretKey: dek,
+        );
+        final contentBytes = contentBox.concatenation();
+        if (contentBytes.length < minimumContentBoxLength) {
+          throw StateError('Encrypted content box is unexpectedly truncated.');
+        }
+
+        final out = BytesBuilder(copy: false);
+        out.add(magic);
+        if (accountWrapped == null) {
+          out.addByte(version);
+          out.addByte(_flagWrappedByMasterKey);
+          out.add(_u16be(wrappedDek.length));
+          out.add(wrappedDek);
+        } else {
+          out.addByte(versionMultiRecipient);
+          out.addByte(_flagWrappedByMasterKey | _flagAccountRecipient);
+          out.add(_u16be(wrappedDek.length));
+          out.add(wrappedDek);
+          out.add(_u16be(accountWrapped.length));
+          out.add(accountWrapped);
+        }
+        out.add(contentBytes);
+        return out.toBytes();
+      } finally {
+        dek.destroy();
+      }
+    } finally {
+      plaintextSnapshot.fillRange(0, plaintextSnapshot.length, 0);
     }
-    out.add(contentBytes);
-    return out.toBytes();
   }
 
-  /// Reverses [seal]. [unwrapDek] is supplied by the [KeyManager] and recovers
-  /// the DEK from its wrapped form using the device master key.
+  /// Reverses [seal]. [unwrapDek] is supplied by the [KeyManager] and transfers
+  /// ownership of a fresh DEK recovered with the device master key. [open]
+  /// destroys that key after every success or failure path, so callbacks must
+  /// never return a cached or otherwise shared key.
   Future<Uint8List> open({
     required Uint8List container,
     required Future<SecretKey> Function(Uint8List wrappedDek) unwrapDek,
   }) async {
     final header = peekHeader(container);
-    final dek = await unwrapDek(header.wrappedDek);
     final contentBytes = Uint8List.sublistView(container, header.contentOffset);
     final box = SecretBox.fromConcatenation(
       contentBytes,
       nonceLength: nonceLength,
       macLength: macLength,
     );
-    final clear = await _aead.decrypt(box, secretKey: dek);
-    return Uint8List.fromList(clear);
+    final dek = await unwrapDek(header.wrappedDek);
+    try {
+      final clear = await _aead.decrypt(box, secretKey: dek);
+      return clear is Uint8List ? clear : Uint8List.fromList(clear);
+    } finally {
+      dek.destroy();
+    }
   }
 
   /// Parses the fixed header without decrypting. Throws [FormatException] when
-  /// the bytes are not a recognised container (e.g. legacy plaintext objects).
+  /// the bytes are not a recognised, protocol-consistent container (for example,
+  /// legacy plaintext, truncation, an unsupported version, incompatible flags,
+  /// or a non-canonical wrapper length).
   static SegmentHeader peekHeader(Uint8List container) {
     if (container.length < _headerFixedLength) {
       throw const FormatException('Encrypted segment is truncated.');
@@ -128,33 +172,51 @@ class SegmentCipher {
       throw FormatException('Unsupported segment cipher version: $ver.');
     }
     final flags = container[5];
+    final expectedFlags = ver == version
+        ? _flagWrappedByMasterKey
+        : _flagWrappedByMasterKey | _flagAccountRecipient;
+    if (flags != expectedFlags) {
+      throw FormatException(
+        'Unsupported segment cipher flags for version $ver: 0x${flags.toRadixString(16).padLeft(2, '0')}.',
+      );
+    }
+
     final wrappedDekLen = (container[6] << 8) | container[7];
+    if (wrappedDekLen != wrappedDekLength) {
+      throw FormatException(
+        'Device-wrapped DEK must be exactly $wrappedDekLength bytes.',
+      );
+    }
     var offset = _headerFixedLength + wrappedDekLen;
-    if (container.length < offset + 2) {
+    if (container.length < offset) {
       throw const FormatException('Encrypted segment is truncated.');
     }
-    final wrappedDek = Uint8List.sublistView(
-      container,
-      _headerFixedLength,
-      offset,
+    final wrappedDek = Uint8List.fromList(
+      Uint8List.sublistView(container, _headerFixedLength, offset),
     );
 
     Uint8List? accountWrappedDek;
-    if (ver == versionMultiRecipient && (flags & _flagAccountRecipient) != 0) {
+    if (ver == versionMultiRecipient) {
+      if (container.length < offset + 2) {
+        throw const FormatException('Encrypted segment is truncated.');
+      }
       final accountLen = (container[offset] << 8) | container[offset + 1];
+      if (accountLen != accountWrappedDekLength) {
+        throw FormatException(
+          'Account-wrapped DEK must be exactly $accountWrappedDekLength bytes.',
+        );
+      }
       final accountStart = offset + 2;
       final accountEnd = accountStart + accountLen;
       if (container.length < accountEnd) {
         throw const FormatException('Encrypted segment is truncated.');
       }
-      accountWrappedDek = Uint8List.sublistView(
-        container,
-        accountStart,
-        accountEnd,
+      accountWrappedDek = Uint8List.fromList(
+        Uint8List.sublistView(container, accountStart, accountEnd),
       );
       offset = accountEnd;
     }
-    if (container.length < offset + nonceLength + macLength) {
+    if (container.length < offset + minimumContentBoxLength) {
       throw const FormatException('Encrypted segment is truncated.');
     }
     return SegmentHeader(
@@ -202,7 +264,7 @@ class SegmentHeader {
   /// DEK wrapped to this device's master key (lets the device read its own).
   final Uint8List wrappedDek;
 
-  /// DEK sealed to the account public key (lets the desktop master read it),
+  /// DEK sealed to the account public key (lets an authorized peer read it),
   /// present only in v2 multi-recipient containers.
   final Uint8List? accountWrappedDek;
 

@@ -56,6 +56,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
   final _accountGroups = AccountGroupService();
   final _devicePresenceClient = SupabaseDevicePresenceClient();
   final _email = TextEditingController();
+  final _code = TextEditingController();
   final _supabaseUrl = TextEditingController(
     text: AppConfig.defaultSupabaseUrl,
   );
@@ -137,6 +138,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     _auth.close();
     _rest.close();
     _email.dispose();
+    _code.dispose();
     _supabaseUrl.dispose();
     _supabaseKey.dispose();
     super.dispose();
@@ -199,7 +201,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     if (mounted) {
       setState(() {
         _config = config;
-        _status = 'Magic link sent. Check your email.';
+        _status = 'We emailed you a sign-in link and a 6-digit code.';
       });
     }
     return true;
@@ -590,11 +592,12 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
                 if (!signedIn)
                   SupabaseAuthForm(
                     emailController: _email,
+                    codeController: _code,
                     supabaseUrlController: _supabaseUrl,
                     supabaseAnonKeyController: _supabaseKey,
                     showProjectConfiguration: true,
-                    onSendMagicLink: _sendMagicLink,
-                    onVerifyCode: _verifyEmailCode,
+                    onRequestCode: _sendMagicLink,
+                    onSubmitCode: _verifyEmailCode,
                   )
                 else ...[
                   Card(

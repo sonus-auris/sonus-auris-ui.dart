@@ -11,6 +11,11 @@ import '../models/supabase_mfa.dart';
 import '../models/supabase_session.dart';
 import 'supabase_key_policy.dart';
 
+const String kSupabaseAuthRedirectUrl = String.fromEnvironment(
+  'SONUS_AUTH_REDIRECT_URL',
+  defaultValue: 'sonusauris://auth/callback',
+);
+
 /// Thin client for Supabase's GoTrue REST auth API. Implemented over plain
 /// `http` (no native plugin) so it is fully testable and adds no dependency.
 ///
@@ -48,7 +53,7 @@ class SupabaseAuthClient {
     required AppConfig config,
     required String email,
     required String codeVerifier,
-    String redirectTo = '',
+    String redirectTo = kSupabaseAuthRedirectUrl,
   }) async {
     _validateEmail(email);
     final normalizedRedirect = _validateAuthRedirect(redirectTo);
@@ -86,11 +91,7 @@ class SupabaseAuthClient {
     required String code,
   }) async {
     _validateEmail(email);
-    final trimmedCode = code.trim();
-    if (trimmedCode.length != 6 ||
-        !trimmedCode.runes.every((rune) => rune >= 0x30 && rune <= 0x39)) {
-      throw const FormatException('Enter the 6-digit code from the email.');
-    }
+    final trimmedCode = _requireSixDigitCode(code);
     final uri = _authUri(config, 'verify');
     return _session(
       config,
@@ -193,6 +194,69 @@ class SupabaseAuthClient {
     );
   }
 
+  /// Adopts a Supabase magic-link callback only when it targets this build's
+  /// exact application URI. The callback itself must never be logged or stored.
+  Future<SupabaseSession> consumeMagicLink({
+    required AppConfig config,
+    required Uri callback,
+  }) async {
+    final expected = _authRedirectUri;
+    if (callback.scheme != expected.scheme ||
+        callback.host != expected.host ||
+        callback.port != expected.port ||
+        callback.path != expected.path) {
+      throw const FormatException('That sign-in link targets another app.');
+    }
+
+    final parameters = <String, String>{
+      ...callback.queryParameters,
+      ...Uri.splitQueryString(
+        callback.fragment,
+        encoding: const Utf8Codec(allowMalformed: false),
+      ),
+    };
+    final callbackError =
+        parameters['error_description'] ?? parameters['error'];
+    if ((callbackError ?? '').trim().isNotEmpty) {
+      throw StateError(callbackError!.trim());
+    }
+
+    final accessToken = (parameters['access_token'] ?? '').trim();
+    final tokenHash = (parameters['token_hash'] ?? '').trim();
+    if (accessToken.isNotEmpty && tokenHash.isNotEmpty) {
+      throw const FormatException(
+        'The sign-in callback contained conflicting credentials.',
+      );
+    }
+    if (accessToken.isNotEmpty) {
+      final refreshToken = (parameters['refresh_token'] ?? '').trim();
+      if (refreshToken.isEmpty) {
+        throw const FormatException(
+          'The sign-in callback contained no refresh token.',
+        );
+      }
+      final expiresIn = int.tryParse(parameters['expires_in'] ?? '');
+      return SupabaseSession.fromJson({
+        'access_token': accessToken,
+        'refresh_token': refreshToken,
+        'expires_in': ?expiresIn,
+      });
+    }
+
+    if (tokenHash.isNotEmpty) {
+      final uri = _authUri(config, 'verify');
+      return _session(
+        config,
+        uri,
+        {'type': 'magiclink', 'token_hash': tokenHash},
+        'That magic link was not accepted. Request a fresh one and try again.',
+      );
+    }
+    throw const FormatException(
+      'The sign-in link contained no usable Supabase session.',
+    );
+  }
+
   // --- Multi-factor auth (Bearer = the user's current access token) ---------
 
   /// Lists the user's enrolled MFA factors via `GET /auth/v1/user`.
@@ -255,8 +319,10 @@ class SupabaseAuthClient {
     String? friendlyName,
   }) async {
     final trimmedPhone = phone.trim();
-    if (trimmedPhone.isEmpty) {
-      throw const FormatException('Enter the phone number to enroll.');
+    if (!RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(trimmedPhone)) {
+      throw const FormatException(
+        'Enter a phone number in E.164 form, such as +15551234567.',
+      );
     }
     final uri = _authUri(config, 'factors');
     final decoded = await _post(
@@ -322,10 +388,7 @@ class SupabaseAuthClient {
     if (trimmedChallenge.isEmpty) {
       throw const FormatException('The verification challenge is missing.');
     }
-    final trimmedCode = code.trim();
-    if (trimmedCode.isEmpty) {
-      throw const FormatException('Enter the 6-digit code.');
-    }
+    final trimmedCode = _requireSixDigitCode(code);
     final uri = _authUri(config, 'factors/$id/verify');
     return _session(
       config,
@@ -521,6 +584,11 @@ class SupabaseAuthClient {
         'Supabase URL must not contain credentials, a query, or a fragment.',
       );
     }
+    if (base.hasQuery || base.hasFragment) {
+      throw const FormatException(
+        'Supabase URL must not contain a query or fragment.',
+      );
+    }
     final baseSegments = base.pathSegments.where((part) => part.isNotEmpty);
     return base.replace(
       pathSegments: [
@@ -534,6 +602,21 @@ class SupabaseAuthClient {
       queryParameters: query,
       fragment: '',
     );
+  }
+
+  Uri get _authRedirectUri {
+    final uri = Uri.parse(kSupabaseAuthRedirectUrl.trim());
+    if (!uri.hasScheme || uri.host.isEmpty) {
+      throw const FormatException(
+        'The auth redirect URL must include a scheme and host.',
+      );
+    }
+    if (uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment) {
+      throw const FormatException(
+        'The auth redirect URL must not contain credentials, a query, or a fragment.',
+      );
+    }
+    return uri;
   }
 
   Map<String, String> _headers(AppConfig config, {String? accessToken}) {
@@ -605,6 +688,14 @@ class SupabaseAuthClient {
       );
     }
     return uri.toString();
+  }
+
+  String _requireSixDigitCode(String code) {
+    final normalized = code.trim();
+    if (!RegExp(r'^[0-9]{6}$').hasMatch(normalized)) {
+      throw const FormatException('Enter the 6-digit verification code.');
+    }
+    return normalized;
   }
 
   void close() {

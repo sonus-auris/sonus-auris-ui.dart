@@ -47,6 +47,7 @@ import '../services/crypto/key_manager.dart';
 import '../services/crypto/segment_encryptor.dart';
 import '../services/icloud_sync_service.dart';
 import '../services/location_service.dart';
+import '../services/local_export_service.dart';
 import '../services/diagnostic_log.dart';
 import '../services/context_trigger_service.dart';
 import '../services/context_trigger_sources.dart';
@@ -82,6 +83,7 @@ import '../services/voice/handlers/recording_command_handler.dart';
 import '../services/voice/voice_command_dispatcher.dart';
 import '../services/voice/voice_command_parser.dart';
 import '../services/voice_id/voice_profile_service.dart';
+import '../retention/local_retention_policy.dart';
 import 'app_view_model.dart';
 
 /// Consent string recorded against the device on registration. Bump when the
@@ -106,6 +108,8 @@ const String kSupabaseAuthRedirectUrl = String.fromEnvironment(
   defaultValue: 'sonusauris://auth/callback',
 );
 
+enum _MfaGateDecision { enroll, challenge, authorized }
+
 class AppController {
   factory AppController({
     SettingsStore? settingsStore,
@@ -120,6 +124,7 @@ class AppController {
     DiagnosticLog? diagnosticLog,
     RecordingFeedback? feedback,
     LocationService? locationService,
+    LocalExportService? localExportService,
     PowerNetworkGate? powerNetworkGate,
     SupabaseRestClient? supabaseRestClient,
     DeviceRegistry? deviceRegistry,
@@ -173,6 +178,7 @@ class AppController {
       diagnostics: effectiveDiagnostics,
       feedback: feedback ?? RecordingFeedback(),
       locationService: locationService ?? LocationService(),
+      localExportService: localExportService ?? LocalExportService(),
       powerNetworkGate: powerNetworkGate ?? PowerNetworkGate(),
       supabaseRestClient: supabaseRestClient ?? SupabaseRestClient(),
       deviceRegistry: deviceRegistry ?? DeviceRegistry(),
@@ -226,6 +232,7 @@ class AppController {
     required this._diagnostics,
     required this._feedback,
     required this._locationService,
+    required this._localExportService,
     required this._powerNetworkGate,
     required this._supabaseRestClient,
     required this._deviceRegistry,
@@ -384,6 +391,7 @@ class AppController {
   final DiagnosticLog _diagnostics;
   final RecordingFeedback _feedback;
   final LocationService _locationService;
+  final LocalExportService _localExportService;
   final PowerNetworkGate _powerNetworkGate;
   final SupabaseRestClient _supabaseRestClient;
   final SupabaseTelemetryRealtimeClient _telemetryRealtimeClient;
@@ -530,11 +538,11 @@ class AppController {
   late final Stream<AppViewModel> _viewModels;
   StreamSubscription<void>? _closedSegmentsSubscription;
   StreamSubscription<dynamic>? _triggerSubscription;
+  StreamSubscription<CollisionEvent>? _collisionSubscription;
   StreamSubscription<dynamic>? _detectionsSubscription;
   StreamSubscription<dynamic>? _uploadSubscription;
   StreamSubscription<String>? _resumeRequestsSubscription;
   StreamSubscription<DiagnosticEntry>? _diagnosticTelemetrySubscription;
-  StreamSubscription<CollisionEvent>? _collisionSubscription;
   StreamSubscription<Uri>? _authLinkSubscription;
   StreamSubscription<DevicePresenceSnapshot>? _devicePresenceSubscription;
   StreamSubscription<RustPresenceSnapshot>? _rustPresenceSubscription;
@@ -600,12 +608,6 @@ class AppController {
 
   Future<void> init() async {
     _diagnostics.add('App controller init started.');
-    _collisionSubscription = _collisionSensors.events.listen(
-      (event) => unawaited(_onPossibleCollision(event)),
-      onError: (Object error) {
-        _diagnostics.add('Collision sensor stream error: $error');
-      },
-    );
     _diagnosticTelemetrySubscription = _diagnostics.events.listen(
       _queueDiagnosticTelemetry,
       onError: (_) {},
@@ -989,7 +991,9 @@ class AppController {
   }
 
   Future<void> saveConfig(AppConfig config) async {
-    final deviceRetentionHours = config.deviceRetentionHours.clamp(1, 500);
+    final deviceRetentionHours = config.deviceRetentionHours
+        .clamp(1, LocalRetentionPolicy.maxPlaintextRetentionHours)
+        .toInt();
     final cloudRetentionHours = config.cloudRetentionHours.clamp(
       deviceRetentionHours,
       2000,
@@ -1328,6 +1332,23 @@ class AppController {
     _message.add('Signed out.');
   }
 
+  Future<void> _invalidateSupabaseSession({required String message}) async {
+    final secrets = _secrets.valueOrNull ?? const CloudSecrets();
+    final cleared = secrets.withoutSupabaseSession().copyWith(
+      backendDeviceToken: '',
+    );
+    _backendSession = null;
+    _backendSessionKey = null;
+    _supabaseRefreshTimer?.cancel();
+    _supabaseRefreshTimer = null;
+    _telemetryRealtimeClient.close();
+    _pendingTelemetry.clear();
+    await _persistPendingTelemetry();
+    await _persistSecrets(cleared);
+    _accountStatus.add(const AccountStatus());
+    _message.add(message);
+  }
+
   // --- Passwordless sign-in (email code with magic-link fallback) -----------
 
   /// Emails a six-digit sign-in code (plus a magic-link fallback). Same call
@@ -1390,12 +1411,28 @@ class AppController {
       await _settingsStore.clearPendingSupabaseAuth();
       await _requireExpectedSupabaseIdentity(session, email);
       await _applySupabaseSession(session);
-      final mfaPending = await _refreshMfaChallengeState();
-      if (mfaPending) {
-        _message.add(_mandatoryMfaPrompt());
-        return true;
-      }
-      await _onSignedIn(successMessage: 'Signed in.');
+      await _routeFirstFactorSession();
+      return true;
+    } catch (error) {
+      _message.add(_describeError(error));
+      return false;
+    }
+  }
+
+  /// Completes passwordless sign-in from a verified operating-system deep link.
+  /// The callback is never logged or persisted; only the resulting session is.
+  Future<bool> consumeSupabaseMagicLink(Uri callback) async {
+    if (!_config.hasValue || !_config.value.hasSupabaseAuthConfig) {
+      _message.add('Set the Supabase URL and anon key before signing in.');
+      return false;
+    }
+    try {
+      final session = await _authClient.consumeMagicLink(
+        config: _config.value,
+        callback: callback,
+      );
+      await _applySupabaseSession(session);
+      await _routeFirstFactorSession();
       return true;
     } catch (error) {
       _message.add(_describeError(error));
@@ -1606,12 +1643,7 @@ class AppController {
       await _settingsStore.clearPendingSupabaseAuth();
       await _requireExpectedSupabaseIdentity(session, pending.email);
       await _applySupabaseSession(session);
-      final mfaPending = await _refreshMfaChallengeState();
-      if (mfaPending) {
-        _message.add(_mandatoryMfaPrompt());
-        return true;
-      }
-      await _onSignedIn(successMessage: 'Signed in with your magic link.');
+      await _routeFirstFactorSession();
       return true;
     } catch (error) {
       _message.add(_describeError(error));
@@ -1646,9 +1678,13 @@ class AppController {
   /// Lists the signed-in user's MFA factors (for the challenge step and the
   /// Account management screen), refreshing [accountStatus].
   Future<List<MfaFactor>> refreshMfaFactors() async {
-    final factors = await _listMfaFactorsOrEmpty();
-    _accountStatus.add(_accountStatus.value.copyWith(mfaFactors: factors));
-    return factors;
+    try {
+      await _refreshMfaChallengeState();
+      return _accountStatus.value.mfaFactors;
+    } catch (error) {
+      _markMfaCheckFailed(error);
+      return const [];
+    }
   }
 
   /// Begins enrolling an authenticator app; the returned secret/URI must be
@@ -1733,14 +1769,12 @@ class AppController {
         code: code,
       );
       await _applySupabaseSession(session);
-      final factors = await _listMfaFactorsOrEmpty();
-      _accountStatus.add(
-        _accountStatus.value.copyWith(
-          mfaRequired: false,
-          mfaEnrollmentRequired: false,
-          mfaFactors: factors,
-        ),
-      );
+      final decision = await _refreshMfaChallengeState();
+      if (decision != _MfaGateDecision.authorized) {
+        throw StateError(
+          'Supabase did not issue an AAL2 session after verification.',
+        );
+      }
       if (completesSignIn) {
         // Authentication is complete as soon as the AAL2 session and verified
         // factor are persisted. Account/device sync is best-effort background
@@ -1775,7 +1809,7 @@ class AppController {
       return false;
     }
     try {
-      final factors = await _listMfaFactorsOrEmpty();
+      final factors = await _listMfaFactors();
       final target = factors
           .where((factor) => factor.id == factorId)
           .firstOrNull;
@@ -1815,10 +1849,32 @@ class AppController {
 
   // --- Shared post-sign-in + MFA/entitlements helpers -----------------------
 
+  Future<void> _routeFirstFactorSession() async {
+    final decision = await _refreshMfaChallengeState();
+    switch (decision) {
+      case _MfaGateDecision.enroll:
+        _message.add(
+          'Set up an authenticator app or verified phone to finish signing in.',
+        );
+        return;
+      case _MfaGateDecision.challenge:
+        _message.add('Enter your two-factor code to finish signing in.');
+        return;
+      case _MfaGateDecision.authorized:
+        await _onSignedIn(successMessage: 'Signed in.');
+        return;
+    }
+  }
+
   Future<void> _onSignedIn({required String successMessage}) async {
-    if (!_accountStatus.value.isMfaSatisfied) {
+    final secrets = _secrets.valueOrNull;
+    if (secrets == null ||
+        !supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken) ||
+        _accountStatus.value.mfaEnrollmentRequired ||
+        _accountStatus.value.mfaRequired ||
+        _accountStatus.value.mfaCheckFailed) {
       throw StateError(
-        'A verified second factor is required before account access.',
+        'A verified second factor and an AAL2 session are required.',
       );
     }
     await _syncPortableSettingsFromSupabase();
@@ -1836,48 +1892,57 @@ class AppController {
     requestUploadDrain();
   }
 
-  Future<List<MfaFactor>> _listMfaFactorsOrEmpty() async {
+  Future<List<MfaFactor>> _listMfaFactors() async {
     final token = await _freshAccessToken();
     if (token == null) {
-      return const [];
+      throw StateError('The Supabase access token is missing.');
     }
-    try {
-      return await _authClient.listFactors(
-        config: _config.value,
-        accessToken: token,
-      );
-    } catch (error) {
-      _diagnostics.add('Reading MFA factors failed: ${_describeError(error)}');
-      return const [];
-    }
+    return _authClient.listFactors(config: _config.value, accessToken: token);
   }
 
-  /// Enforces mandatory MFA after every first-factor sign-in. Returns true
-  /// while either enrollment or a verification challenge still blocks account
-  /// access.
-  Future<bool> _refreshMfaChallengeState() async {
-    final factors = await _listMfaFactorsOrEmpty();
+  /// Resolves the only safe state after the passwordless first factor.
+  /// Enforces mandatory MFA after every first-factor sign-in: enrollment or a
+  /// verification challenge blocks account access until an AAL2 session exists.
+  Future<_MfaGateDecision> _refreshMfaChallengeState() async {
+    final factors = await _listMfaFactors();
     final hasVerified = factors.any((factor) => factor.isVerified);
     final secrets = _secrets.valueOrNull;
-    final aal = secrets == null
-        ? null
-        : decodeSupabaseAal(secrets.supabaseAccessToken);
+    final passwordlessAal2 =
+        secrets != null &&
+        supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken);
     final enrollmentRequired = !hasVerified;
-    final pending = hasVerified && aal != 'aal2';
+    final pending = hasVerified && !passwordlessAal2;
     _accountStatus.add(
       _accountStatus.value.copyWith(
-        mfaRequired: pending,
         mfaEnrollmentRequired: enrollmentRequired,
+        mfaRequired: pending,
+        mfaCheckFailed: false,
         mfaFactors: factors,
       ),
     );
-    return enrollmentRequired || pending;
+    if (enrollmentRequired) {
+      return _MfaGateDecision.enroll;
+    }
+    if (pending) {
+      return _MfaGateDecision.challenge;
+    }
+    return _MfaGateDecision.authorized;
   }
 
-  String _mandatoryMfaPrompt() {
-    return _accountStatus.value.mfaEnrollmentRequired
-        ? 'Set up an authenticator app or verified phone to finish signing in.'
-        : 'Enter your two-factor code to finish signing in.';
+  void _markMfaCheckFailed(Object error) {
+    _diagnostics.add('Reading MFA factors failed: ${_describeError(error)}');
+    _accountStatus.add(
+      _accountStatus.value.copyWith(
+        mfaEnrollmentRequired: false,
+        mfaRequired: false,
+        mfaCheckFailed: true,
+        mfaFactors: const [],
+      ),
+    );
+    _message.add(
+      'Could not verify two-factor security. Account access remains locked; '
+      'check your connection and retry.',
+    );
   }
 
   Future<String?> _freshAccessToken() async {
@@ -1888,6 +1953,13 @@ class AppController {
     final secrets = _secrets.valueOrNull;
     if (secrets == null || !secrets.hasSupabaseToken) {
       _message.add('Sign in first.');
+      return null;
+    }
+    final expiry = secrets.supabaseTokenExpiresAtUtc;
+    if (expiry == null || !expiry.isAfter(DateTime.now().toUtc())) {
+      await _invalidateSupabaseSession(
+        message: 'Your secure session expired. Sign in again.',
+      );
       return null;
     }
     return secrets.supabaseAccessToken.trim();
@@ -2033,6 +2105,7 @@ class AppController {
         secrets == null ||
         !config.hasSupabaseAuthConfig ||
         !secrets.hasSupabaseToken ||
+        !supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken) ||
         secrets.supabaseUserId.trim().isEmpty) {
       _devicePresenceClient.close();
       _rustDevicePresenceClient.close();
@@ -2138,6 +2211,11 @@ class AppController {
   }
 
   Future<void> _applySupabaseSession(SupabaseSession session) async {
+    if (!session.hasPasswordlessFirstFactor) {
+      throw StateError(
+        'Supabase did not return a passwordless session. Sign in again.',
+      );
+    }
     final current = _secrets.valueOrNull ?? const CloudSecrets();
     // A refresh response often omits the user object; keep the known email then.
     final email = session.email.trim().isEmpty
@@ -2181,13 +2259,27 @@ class AppController {
       await _persistPendingTelemetry();
     }
     await _persistSecrets(next);
-    _connectTelemetryRealtime();
-    _connectDevicePresence();
+    if (session.isPasswordlessAal2) {
+      _connectTelemetryRealtime();
+      _connectDevicePresence();
+      _diagnostics.add(
+        'Supabase telemetry streaming started.',
+        event: 'telemetry.streaming_started',
+      );
+    } else {
+      _telemetryRealtimeClient.close();
+      _devicePresenceClient.close();
+      _rustDevicePresenceClient.close();
+      final hasVerified = _accountStatus.value.verifiedMfaFactors.isNotEmpty;
+      _accountStatus.add(
+        _accountStatus.value.copyWith(
+          mfaEnrollmentRequired: !hasVerified,
+          mfaRequired: hasVerified,
+          mfaCheckFailed: false,
+        ),
+      );
+    }
     _scheduleSupabaseTokenRefresh();
-    _diagnostics.add(
-      'Supabase telemetry streaming started.',
-      event: 'telemetry.streaming_started',
-    );
     _scheduleTelemetryFlush();
   }
 
@@ -2245,6 +2337,7 @@ class AppController {
         secrets == null ||
         !config.hasSupabaseAuthConfig ||
         !secrets.hasSupabaseToken ||
+        !supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken) ||
         secrets.supabaseUserId.trim().isEmpty) {
       return;
     }
@@ -2420,11 +2513,17 @@ class AppController {
   Future<void> _ensureSupabaseReady() async {
     await _ensureFreshSupabaseToken();
     final secrets = _secrets.valueOrNull;
-    if (secrets != null && secrets.hasSupabaseToken) {
-      final blocked = await _refreshMfaChallengeState();
-      if (blocked) {
-        throw StateError(_mandatoryMfaPrompt());
+    if (secrets == null || !secrets.hasSupabaseToken) {
+      return;
+    }
+    try {
+      final decision = await _refreshMfaChallengeState();
+      if (decision != _MfaGateDecision.authorized) {
+        return;
       }
+    } catch (error) {
+      _markMfaCheckFailed(error);
+      return;
     }
     await _ensureDeviceRegistered();
     await _syncSupabaseDeviceAndEntitlements();
@@ -2486,9 +2585,17 @@ class AppController {
     final config = _config.value;
     final secrets = _secrets.valueOrNull;
     if (secrets == null ||
-        !secrets.hasSupabaseRefreshToken ||
         !secrets.supabaseTokenNeedsRefresh() ||
         !config.hasSupabaseAuthConfig) {
+      return;
+    }
+    if (!secrets.hasSupabaseRefreshToken) {
+      final expiry = secrets.supabaseTokenExpiresAtUtc;
+      if (expiry == null || !expiry.isAfter(DateTime.now().toUtc())) {
+        await _invalidateSupabaseSession(
+          message: 'Your secure session expired. Sign in again.',
+        );
+      }
       return;
     }
     final inFlight = _supabaseRefreshInFlight;
@@ -2514,6 +2621,29 @@ class AppController {
         config: config,
         refreshToken: refreshToken,
       );
+      final expectedUserId = (_secrets.valueOrNull?.supabaseUserId ?? '')
+          .trim();
+      if (expectedUserId.isNotEmpty &&
+          session.userId.trim() != expectedUserId) {
+        await _invalidateSupabaseSession(
+          message:
+              'Supabase returned a session for another account. Sign in again.',
+        );
+        _diagnostics.add(
+          'Supabase refresh identity mismatch; the local session was cleared.',
+        );
+        return;
+      }
+      if (!session.hasPasswordlessFirstFactor) {
+        await _invalidateSupabaseSession(
+          message:
+              'Supabase did not preserve passwordless sign-in. Sign in again.',
+        );
+        _diagnostics.add(
+          'Supabase refresh lost passwordless AMR; the local session was cleared.',
+        );
+        return;
+      }
       await _applySupabaseSession(session);
       _supabaseRefreshFailureCount = 0;
       _diagnostics.add('Supabase access token refreshed.');
@@ -2521,7 +2651,15 @@ class AppController {
       _diagnostics.add(
         'Supabase token refresh failed: ${_describeError(error)}',
       );
-      _scheduleSupabaseTokenRefresh(failed: true);
+      final current = _secrets.valueOrNull;
+      final expiry = current?.supabaseTokenExpiresAtUtc;
+      if (expiry == null || !expiry.isAfter(DateTime.now().toUtc())) {
+        await _invalidateSupabaseSession(
+          message: 'Your secure session expired. Sign in again.',
+        );
+      } else {
+        _scheduleSupabaseTokenRefresh(failed: true);
+      }
     }
   }
 
@@ -2548,9 +2686,7 @@ class AppController {
         ? target.difference(now)
         : const Duration(seconds: 5);
     _supabaseRefreshTimer = Timer(delay, () {
-      unawaited(
-        _refreshSupabaseToken(_config.value, secrets.supabaseRefreshToken),
-      );
+      unawaited(_ensureFreshSupabaseToken());
     });
   }
 
@@ -2566,15 +2702,14 @@ class AppController {
   }
 
   Future<void> refreshSupabaseSessionForAppResume() async {
-    await _ensureFreshSupabaseToken();
-    final secrets = _secrets.valueOrNull;
-    if (secrets != null && secrets.hasSupabaseToken) {
-      final blocked = await _refreshMfaChallengeState();
-      if (blocked) {
-        return;
-      }
+    await _ensureSupabaseReady();
+    if (accountStatusValue.mfaEnrollmentRequired ||
+        accountStatusValue.mfaRequired ||
+        accountStatusValue.mfaCheckFailed) {
+      return;
     }
     _connectTelemetryRealtime();
+    _connectDevicePresence();
     _scheduleSupabaseTokenRefresh();
   }
 
@@ -2652,6 +2787,63 @@ class AppController {
     return error.toString();
   }
 
+  /// Watch the accelerometer while recording (when enabled) and, on a detected
+  /// impact, remind the user the app is still capturing — the dashcam-style
+  /// "you were recording when this happened" cue. Best-effort: a sensor that
+  /// never streams (no native support / permission) simply never fires.
+  void _startCollisionMonitoring() {
+    if (!_config.hasValue || !_config.value.collisionRemindersEnabled) {
+      return;
+    }
+    unawaited(_collisionSubscription?.cancel());
+    _collisionSubscription = _collisionSensors
+        .collisions(sensitivityG: _config.value.collisionSensitivityG)
+        .listen(
+          _onCollision,
+          onError: (Object error) =>
+              _diagnostics.add('Collision sensor error: $error'),
+        );
+  }
+
+  Future<void> _stopCollisionMonitoring() async {
+    final subscription = _collisionSubscription;
+    _collisionSubscription = null;
+    await subscription?.cancel();
+  }
+
+  void _onCollision(CollisionEvent event) {
+    if (!_recorder.isRecording) {
+      return;
+    }
+    _diagnostics.add(
+      'Collision detected (${event.peakG.toStringAsFixed(1)}g); '
+      'reminding that capture is live.',
+    );
+    unawaited(
+      _feedback.say(
+        'Sonus Auris is recording. A possible impact was detected.',
+        force: true,
+      ),
+    );
+    _message.add(
+      'Possible collision detected — Sonus Auris is still recording.',
+    );
+    // Also surface the dashcam-style cues that work when the phone is pocketed
+    // or muted for speech: an audible ding plus a system notification.
+    unawaited(_showCollisionCaptureCues());
+  }
+
+  Future<void> _showCollisionCaptureCues() async {
+    try {
+      await Future.wait([
+        _feedback.ding(),
+        _localNotifications.showPossibleCollision(),
+      ]);
+    } catch (error) {
+      _diagnostics.add('Collision reminder failed: $error');
+    }
+  }
+
   Future<void> startRecording({bool scheduleInitiated = false}) async {
     if (!hasValidRecordingConsent) {
       _message.add(
@@ -2681,10 +2873,8 @@ class AppController {
         await _recorder.start(_config.value);
         // Capture is live: from here a dropped stream should be auto-resumed.
         _intendRecording = true;
-        if (_config.value.sleepMotionSensorConsent) {
-          await _collisionSensors.start();
-        }
         _diagnostics.add('PCM microphone stream started.');
+        _startCollisionMonitoring();
         unawaited(_feedback.say('Recording started'));
         _message.add(
           backgroundError == null
@@ -2709,6 +2899,7 @@ class AppController {
     _cancelPendingPauseResume();
     // Clear intent first so an in-flight resume request does not re-start us.
     _intendRecording = false;
+    await _stopCollisionMonitoring();
     Object? recorderError;
     try {
       await _recorder.stop();
@@ -2717,7 +2908,6 @@ class AppController {
       recorderError = error;
       _diagnostics.add('Recorder stop failed: $error.');
     } finally {
-      await _collisionSensors.stop();
       await _backgroundCaptureService.stop();
     }
     unawaited(_feedback.say('Recording stopped'));
@@ -2731,27 +2921,6 @@ class AppController {
     // Idle again — if we're still inside a window, re-arm context sources so a
     // later event can offer to resume.
     await _updateContextTriggers();
-  }
-
-  Future<void> _onPossibleCollision(CollisionEvent event) async {
-    if (!_recorder.isRecording) {
-      return;
-    }
-    _diagnostics.add(
-      'Possible collision detected at '
-      '${event.accelerationMetersPerSecondSquared.toStringAsFixed(1)} m/s².',
-    );
-    _message.add(
-      'Possible collision detected. Recording is active; review or save this moment.',
-    );
-    try {
-      await Future.wait([
-        _feedback.ding(),
-        _localNotifications.showPossibleCollision(),
-      ]);
-    } catch (error) {
-      _diagnostics.add('Collision reminder failed: $error');
-    }
   }
 
   void _cancelPendingPauseResume() {
@@ -3643,6 +3812,75 @@ class AppController {
     }
   }
 
+  /// Re-evaluates the transfer gate and requests the existing upload drain. This
+  /// action never modifies a local plaintext deadline.
+  Future<void> retryPendingBackups() async {
+    final pending = (_segments.valueOrNull ?? const <RecordingSegment>[])
+        .where(
+          (segment) =>
+              segment.isLocal &&
+              (segment.uploadStatus == SegmentUploadStatus.pending ||
+                  segment.uploadStatus == SegmentUploadStatus.uploading ||
+                  segment.uploadStatus == SegmentUploadStatus.failed),
+        )
+        .length;
+    if (pending == 0) {
+      _message.add('No local backups are waiting to retry.');
+      return;
+    }
+    final config = _config.valueOrNull;
+    if (config == null || !config.uploadEnabled) {
+      _message.add(
+        'Backup is disabled. The app-private deletion deadline did not change.',
+      );
+      return;
+    }
+    final gate = await _refreshTransferStatus();
+    if (!gate.allowed) {
+      _message.add(
+        'Backup is still paused by the current power or network policy. The deletion deadline did not change.',
+      );
+      return;
+    }
+    requestUploadDrain();
+    _message.add(
+      'Retrying backup for $pending local ${pending == 1 ? 'copy' : 'copies'}. The deletion deadline did not change.',
+    );
+  }
+
+  /// Runs the existing fail-closed retention cleanup immediately. The user-facing
+  /// result is intentionally content-free and never includes paths or provider
+  /// details.
+  Future<void> runRetentionCleanupNow() async {
+    try {
+      await _enforceRetention();
+      _message.add('Local retention cleanup completed.');
+    } catch (_) {
+      _diagnostics.add('Manual local retention cleanup failed.');
+      _message.add(
+        'Privacy cleanup could not complete. Restart Sonus Auris and try again.',
+      );
+    }
+  }
+
+  /// Exports one explicit user-controlled copy without changing the segment's
+  /// upload state or app-private retention deadline.
+  Future<void> exportLocalCopy(String segmentId) async {
+    RecordingSegment? selected;
+    for (final segment in _segments.valueOrNull ?? const <RecordingSegment>[]) {
+      if (segment.id == segmentId) {
+        selected = segment;
+        break;
+      }
+    }
+    if (selected == null || !selected.isLocal) {
+      _message.add('This local copy is no longer available to export.');
+      return;
+    }
+    final result = await _localExportService.exportSegment(selected);
+    _message.add(result.message);
+  }
+
   Future<void> clearMessage() async {
     _message.add(null);
   }
@@ -3654,12 +3892,12 @@ class AppController {
     await Future.wait([
       _closedSegmentsSubscription?.cancel() ?? Future<void>.value(),
       _triggerSubscription?.cancel() ?? Future<void>.value(),
+      _collisionSubscription?.cancel() ?? Future<void>.value(),
       _detectionsSubscription?.cancel() ?? Future<void>.value(),
       _uploadSubscription?.cancel() ?? Future<void>.value(),
       _resumeRequestsSubscription?.cancel() ?? Future<void>.value(),
       _transferConditionsSubscription?.cancel() ?? Future<void>.value(),
       _diagnosticTelemetrySubscription?.cancel() ?? Future<void>.value(),
-      _collisionSubscription?.cancel() ?? Future<void>.value(),
       _authLinkSubscription?.cancel() ?? Future<void>.value(),
       _devicePresenceSubscription?.cancel() ?? Future<void>.value(),
       _rustPresenceSubscription?.cancel() ?? Future<void>.value(),
@@ -4417,6 +4655,12 @@ class AppController {
       if (match == null) {
         return;
       }
+      // A heard keyword/safe word dings and lifts recording quality for a
+      // sustained window, so the stretch after the phrase stays full fidelity.
+      await _feedback.chime();
+      _recorder.boostQualityForKeyword(
+        Duration(minutes: config.keywordQualityBoostMinutes),
+      );
       final keywordEvent = AcousticDetection(
         kind: AcousticDetectionKind.keyword,
         startedAtUtc: speech.startedAtUtc,
@@ -4427,6 +4671,7 @@ class AppController {
           'keyword': match.keyword,
           'phraseType': match.isSafeWord ? 'safeWord' : 'keyword',
           'transcript': match.transcript,
+          'safeWord': match.isSafeWord,
           if (speakerMatch != null) 'knownVoice': speakerMatch.isMatch,
         },
       );

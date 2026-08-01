@@ -71,6 +71,8 @@ class AppConfig {
     this.keywords = const [],
     this.safeWords = const [],
     this.keywordQualityBoostMinutes = 90,
+    this.collisionRemindersEnabled = false,
+    this.collisionSensitivityG = 2.5,
     this.sttEnabled = false,
     this.sttEndpoint = '',
     this.voiceIdEnabled = false,
@@ -112,7 +114,7 @@ class AppConfig {
   final String s3Endpoint;
 
   /// Supabase project URL (e.g. https://abc.supabase.co). Used for GoTrue
-  /// passwordless magic-link sign-in. Non-secret.
+  /// passwordless magic-link / email-code sign-in. Non-secret.
   final String supabaseUrl;
 
   /// Supabase anon/publishable API key. Safe to ship in the client; never the
@@ -222,18 +224,30 @@ class AppConfig {
   /// No-op on Android. Sends a short audio fingerprint to Apple's service.
   final bool shazamEnabled;
 
-  /// General phrases to watch for in transcribed speech (case-insensitive).
-  /// Matches ding, raise a magic-phrase alert, and temporarily keep recording
-  /// at full fidelity.
+  /// Keywords to watch for in transcribed speech (case-insensitive). A match
+  /// raises a magic-phrase alert, dings, and opens a full-quality boost window
+  /// ([keywordQualityBoostMinutes]). Only consulted when [sttEnabled].
   final List<String> keywords;
 
-  /// Urgent user-defined phrases. These behave like [keywords], but are labeled
-  /// as safety words in event metadata and win when a phrase appears in both
-  /// lists.
+  /// Safe words: a second watch list with the same detection behaviour as
+  /// [keywords], kept separate so a user can name distress/help words apart
+  /// from ordinary alert keywords. They are labeled as safety words in event
+  /// metadata and win when a phrase appears in both lists. Case-insensitive;
+  /// consulted when [sttEnabled].
   final List<String> safeWords;
 
-  /// Full-fidelity recording window opened by a keyword or safety-word match.
+  /// How long, in minutes, a heard keyword or safe word forces full recording
+  /// quality (overriding adaptive downsampling of quiet audio). Defaults to 90.
   final int keywordQualityBoostMinutes;
+
+  /// Watch the accelerometer while recording and, on a detected impact
+  /// (collision/drop), remind the user the app is still recording. Requires
+  /// motion-sensor consent; off by default.
+  final bool collisionRemindersEnabled;
+
+  /// Impact sensitivity in g beyond normal gravity — the deviation from 1g that
+  /// counts as a collision. Lower is more sensitive; ~2.5g is a firm knock.
+  final double collisionSensitivityG;
 
   /// Opt-in cloud speech-to-text. When on, short clips of sustained speech are
   /// POSTed to [sttEndpoint] to scan for configured phrases. Off by default;
@@ -422,6 +436,8 @@ class AppConfig {
     List<String>? keywords,
     List<String>? safeWords,
     int? keywordQualityBoostMinutes,
+    bool? collisionRemindersEnabled,
+    double? collisionSensitivityG,
     bool? sttEnabled,
     String? sttEndpoint,
     bool? voiceIdEnabled,
@@ -508,6 +524,10 @@ class AppConfig {
       safeWords: safeWords ?? this.safeWords,
       keywordQualityBoostMinutes:
           keywordQualityBoostMinutes ?? this.keywordQualityBoostMinutes,
+      collisionRemindersEnabled:
+          collisionRemindersEnabled ?? this.collisionRemindersEnabled,
+      collisionSensitivityG:
+          collisionSensitivityG ?? this.collisionSensitivityG,
       sttEnabled: sttEnabled ?? this.sttEnabled,
       sttEndpoint: sttEndpoint ?? this.sttEndpoint,
       voiceIdEnabled: voiceIdEnabled ?? this.voiceIdEnabled,
@@ -581,6 +601,8 @@ class AppConfig {
       'keywords': keywords,
       'safeWords': safeWords,
       'keywordQualityBoostMinutes': keywordQualityBoostMinutes,
+      'collisionRemindersEnabled': collisionRemindersEnabled,
+      'collisionSensitivityG': collisionSensitivityG,
       'sttEnabled': sttEnabled,
       'sttEndpoint': sttEndpoint,
       'voiceIdEnabled': voiceIdEnabled,
@@ -694,10 +716,18 @@ class AppConfig {
             ? (json['safeWords'] as List).map((entry) => entry.toString())
             : const <String>[],
       ),
+      // Clamped to the effective 15–360 minute runtime bound the controller
+      // also enforces at its consumption sites.
       keywordQualityBoostMinutes: _asInt(
         json['keywordQualityBoostMinutes'],
         90,
       ).clamp(15, 360),
+      collisionRemindersEnabled:
+          json['collisionRemindersEnabled'] as bool? ?? false,
+      collisionSensitivityG: _asDouble(
+        json['collisionSensitivityG'],
+        2.5,
+      ).clamp(0.5, 16.0),
       sttEnabled: json['sttEnabled'] as bool? ?? false,
       sttEndpoint: json['sttEndpoint'] as String? ?? '',
       voiceIdEnabled: json['voiceIdEnabled'] as bool? ?? false,

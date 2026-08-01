@@ -1,9 +1,39 @@
-name: Android signed release artifact
+name: Android signed release, install APK, and Play publication
 
-# Produces an upload-key-signed AAB for Play internal testing. This workflow is
-# deliberately manual and never uploads to Google Play.
 on:
   workflow_dispatch:
+    inputs:
+      build_name:
+        description: Public version name (leave blank to use pubspec.yaml)
+        type: string
+        required: false
+      build_number:
+        description: Monotonically increasing Play versionCode (blank uses this workflow run number)
+        type: string
+        required: false
+      publish_to_play:
+        description: Upload and commit this build through the Google Play Developer API
+        type: boolean
+        required: true
+        default: false
+      play_track:
+        description: Target Play track; use internal until physical-device acceptance passes
+        type: choice
+        required: true
+        default: internal
+        options:
+          - internal
+          - alpha
+          - beta
+          - production
+      play_status:
+        description: Release status in the selected track
+        type: choice
+        required: true
+        default: completed
+        options:
+          - draft
+          - completed
 
 permissions:
   contents: read
@@ -16,21 +46,25 @@ jobs:
   android-signed-aab:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 55
     environment:
       name: mobile-production
     env:
       SONUS_BACKEND_BASE_URL: ${{ secrets.SONUS_BACKEND_BASE_URL }}
       SONUS_SUPABASE_URL: ${{ secrets.SONUS_SUPABASE_URL }}
       SONUS_SUPABASE_ANON_KEY: ${{ secrets.SONUS_SUPABASE_ANON_KEY }}
+      SONUS_BUILD_NAME: ${{ inputs.build_name }}
+      SONUS_BUILD_NUMBER: ${{ inputs.build_number != '' && inputs.build_number || github.run_number }}
       KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
       STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
       KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
       KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: temurin
           java-version: '17'
@@ -45,13 +79,27 @@ jobs:
       - name: Require production configuration and upload key
         run: |
           missing=()
-          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY KEYSTORE_B64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY KEYSTORE_B64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD SONUS_BUILD_NUMBER; do
             [[ -n "${!name:-}" ]] || missing+=("$name")
           done
           if (( ${#missing[@]} > 0 )); then
             echo "::error::mobile-production is missing: ${missing[*]}"
             exit 1
           fi
+          [[ "$SONUS_BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
+            echo "::error::build_number must be a positive integer"
+            exit 1
+          }
+
+      - name: Require Google Play publisher only when requested
+        if: ${{ inputs.publish_to_play }}
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          [[ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]] || {
+            echo "::error::mobile-production is missing GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"
+            exit 1
+          }
 
       - name: Install ephemeral Android upload key
         run: |
@@ -73,21 +121,69 @@ jobs:
       - name: Build signed Play App Bundle
         run: scripts/release/android-build-aab.sh
 
-      - name: Create artifact checksum
-        run: |
-          cd build/app/outputs/bundle/release
-          sha256sum app-release.aab > SHA256SUMS
+      - name: Build and verify signed direct-install APK
+        run: bash scripts/release/android-build-apk.sh
 
-      - name: Upload signed AAB and symbols
-        uses: actions/upload-artifact@v7
+      - name: Validate Play publication plan
+        run: >-
+          python3 scripts/release/publish_google_play.py
+          --dry-run
+          --package-name com.ores.audio_dashcam
+          --aab build/app/outputs/bundle/release/app-release.aab
+          --track '${{ inputs.play_track }}'
+          --status '${{ inputs.play_status }}'
+
+      - name: Create Android checksums and install notice
+        run: |
+          mkdir -p build/android-release
+          sha256sum \
+            build/app/outputs/bundle/release/app-release.aab \
+            build/app/outputs/flutter-apk/app-release.apk \
+            > build/android-release/SHA256SUMS
+          cat > build/android-release/INSTALL.txt <<'EOF'
+          Sonus Auris direct-install candidate
+
+          The app-release.apk file is a signed physical-device acceptance build.
+          It was produced in the protected mobile-production environment and
+          signature-verified before upload. Verify SHA256SUMS before installing.
+
+          Android may require permission for the browser or file manager to
+          install unknown apps. Disable that permission again after installation.
+
+          The APK uses the Android upload certificate. If Google Play App Signing
+          serves the production app with a different app-signing certificate,
+          uninstall this sideloaded candidate before installing from Google Play.
+          Uninstalling deletes this app installation's app-private local data.
+          EOF
+
+      - name: Upload signed AAB, install APK, checksums, and symbols
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: sonus-auris-android-${{ github.run_number }}
+          name: sonus-auris-android-${{ env.SONUS_BUILD_NUMBER }}
           path: |
             build/app/outputs/bundle/release/app-release.aab
-            build/app/outputs/bundle/release/SHA256SUMS
+            build/app/outputs/flutter-apk/app-release.apk
+            build/android-release/SHA256SUMS
+            build/android-release/INSTALL.txt
             build/symbols/**
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
+
+      - name: Install Google Play API dependencies
+        if: ${{ inputs.publish_to_play }}
+        run: python3 -m pip install --disable-pip-version-check --no-cache-dir 'google-auth>=2.40,<3' 'requests>=2.32,<3'
+
+      - name: Publish to Google Play
+        if: ${{ inputs.publish_to_play }}
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: >-
+          python3 scripts/release/publish_google_play.py
+          --package-name com.ores.audio_dashcam
+          --aab build/app/outputs/bundle/release/app-release.aab
+          --track '${{ inputs.play_track }}'
+          --status '${{ inputs.play_status }}'
+          --release-name 'Sonus Auris ${{ env.SONUS_BUILD_NAME }}+${{ env.SONUS_BUILD_NUMBER }}'
 
       - name: Remove ephemeral upload key
         if: always()

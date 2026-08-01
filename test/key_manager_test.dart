@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:audio_dashcam/src/services/crypto/key_manager.dart';
 import 'package:audio_dashcam/src/services/crypto/segment_cipher.dart';
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/in_memory_key_store.dart';
@@ -21,6 +22,36 @@ void main() {
     final km2 = KeyManager(store: store);
     final mk2 = await km2.getOrCreateMasterKey();
     expect(await mk1.extractBytes(), equals(await mk2.extractBytes()));
+  });
+
+  test('concurrent first use creates and persists one master key', () async {
+    final store = _CountingKeyStore();
+    final km = KeyManager(store: store);
+
+    final keys = await Future.wait(
+      List<Future<SecretKey>>.generate(32, (_) => km.getOrCreateMasterKey()),
+    );
+
+    expect(store.writeAttempts, 1);
+    expect(keys.skip(1).every((key) => identical(key, keys.first)), isTrue);
+    expect(
+      base64Decode(store.snapshot[KeyManager.masterKeyStorageId]!),
+      await keys.first.extractBytes(),
+    );
+  });
+
+  test('failed master-key persistence is retryable', () async {
+    final store = _CountingKeyStore(failFirstWrite: true);
+    final km = KeyManager(store: store);
+
+    await expectLater(km.getOrCreateMasterKey(), throwsStateError);
+    final recovered = await km.getOrCreateMasterKey();
+
+    expect(store.writeAttempts, 2);
+    expect(
+      base64Decode(store.snapshot[KeyManager.masterKeyStorageId]!),
+      await recovered.extractBytes(),
+    );
   });
 
   test(
@@ -100,7 +131,35 @@ void main() {
     },
   );
 
-  test('wrapped DEK is the expected envelope size', () async {
+  test('wrapped DEK uses and opens the exact 60-byte envelope', () async {
+    final km = KeyManager(store: InMemoryKeyStore());
+    final dek = SecretKey(List<int>.generate(32, (index) => index));
+    final wrapped = await km.wrapDek(dek);
+    expect(wrapped, hasLength(SegmentCipher.wrappedDekLength));
+
+    final opened = await km.unwrapDek(wrapped);
+    try {
+      expect(await opened.extractBytes(), await dek.extractBytes());
+    } finally {
+      opened.destroy();
+      dek.destroy();
+    }
+  });
+
+  test(
+    'device wrapper rejects malformed lengths before AES-GCM parsing',
+    () async {
+      final km = KeyManager(store: InMemoryKeyStore());
+      for (final length in [0, 59, 61, 65535]) {
+        await expectLater(
+          () => km.unwrapDek(Uint8List(length)),
+          throwsFormatException,
+        );
+      }
+    },
+  );
+
+  test('wrapped DEK is the expected envelope size inside SAC1', () async {
     final km = KeyManager(store: InMemoryKeyStore());
     final cipher = SegmentCipher();
     final container = await cipher.seal(
@@ -108,8 +167,7 @@ void main() {
       wrapDek: km.wrapDek,
     );
     final header = SegmentCipher.peekHeader(container);
-    // nonce(12) + dek(32) + mac(16)
-    expect(header.wrappedDek.length, 60);
+    expect(header.wrappedDek.length, SegmentCipher.wrappedDekLength);
   });
 }
 
@@ -118,4 +176,35 @@ String base64Wrong(String b64) {
   final bytes = base64Decode(b64);
   bytes[0] ^= 0xFF;
   return base64Encode(bytes);
+}
+
+class _CountingKeyStore implements SecureKeyStore {
+  _CountingKeyStore({this.failFirstWrite = false});
+
+  final bool failFirstWrite;
+  final Map<String, String> _values = <String, String>{};
+  var writeAttempts = 0;
+
+  Map<String, String> get snapshot => Map.unmodifiable(_values);
+
+  @override
+  Future<String?> read(String key) async {
+    await Future<void>.delayed(Duration.zero);
+    return _values[key];
+  }
+
+  @override
+  Future<void> write(String key, String value) async {
+    writeAttempts++;
+    await Future<void>.delayed(Duration.zero);
+    if (failFirstWrite && writeAttempts == 1) {
+      throw StateError('synthetic secure-store failure');
+    }
+    _values[key] = value;
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    _values.remove(key);
+  }
 }
