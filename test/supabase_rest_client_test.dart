@@ -416,7 +416,12 @@ void main() {
       );
       expect(row[field], isNot(contains('sIgNaTuRe')), reason: field);
     }
-    expect(row['message'], contains('[redacted-jwt]'));
+    // In `message` the JWT sits behind `token=`, so the query-parameter rule
+    // claims it first; in `stack` it is bare, which is what the JWT-shape rule
+    // exists for. Both must end up redacted.
+    expect(row['message'], contains('token=[redacted]'));
+    expect(row['stack'], contains('[redacted-jwt]'));
+    expect(row['stack'], contains('to PostgREST'));
     expect(row['message'], isNot(contains('pkce-auth-code-value')));
     expect(row['message'], isNot(contains('verifier-value')));
     expect(row['message'], contains('auth_code=[redacted]'));
