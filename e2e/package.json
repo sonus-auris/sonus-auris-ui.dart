@@ -11,7 +11,8 @@
     "pretest": "node -e \"require('fs').existsSync('../build/web/index.html')||(console.error('Run: flutter build web --release (from the app root) before e2e'),process.exit(1))\"",
     "test:puppeteer": "node --test puppeteer.smoke.test.mjs",
     "test:playwright": "node --test playwright.smoke.test.mjs",
-    "test": "node --test --test-reporter=spec \"*.smoke.test.mjs\"",
+    "test:auth": "node --test --test-reporter=spec playwright.auth.test.mjs",
+    "test": "node --test --test-reporter=spec \"*.test.mjs\"",
     "browsers": "playwright install --with-deps chromium"
   },
   "devDependencies": {
