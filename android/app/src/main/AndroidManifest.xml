@@ -71,7 +71,7 @@
                 <data
                     android:scheme="sonusauris"
                     android:host="auth"
-                    android:pathPrefix="/callback" />
+                    android:path="/callback" />
             </intent-filter>
             <!-- Single-use account/device invitation accepted only after the
                  recipient completes passwordless Supabase sign-in. -->
@@ -125,7 +125,7 @@
                 <data
                     android:scheme="sonusauris"
                     android:host="oauth"
-                    android:pathPrefix="/callback" />
+                    android:path="/callback" />
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

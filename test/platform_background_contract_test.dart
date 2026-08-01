@@ -74,7 +74,7 @@ void main() {
 
     expect(pubspec, contains('sensors_plus:'));
     expect(sensor, contains('userAccelerometerEventStream'));
-    expect(controller, contains('_collisionSensors.start()'));
+    expect(controller, contains('.collisions(sensitivityG:'));
     expect(controller, contains('showPossibleCollision'));
     expect(controller, contains('sleepMotionSensorConsent'));
     expect(plist, contains('<key>NSMotionUsageDescription</key>'));
