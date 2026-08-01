@@ -66,6 +66,6 @@ void main() {
       'deviceId': 'd',
       'keywordQualityBoostMinutes': 999999,
     });
-    expect(absurd.keywordQualityBoostMinutes, 24 * 60);
+    expect(absurd.keywordQualityBoostMinutes, 360);
   });
 }
