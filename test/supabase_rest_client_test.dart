@@ -363,6 +363,86 @@ void main() {
     expect((details['nested'] as Map)['note'], 'safe');
   });
 
+  test('redacts auth material that arrives without a Bearer prefix', () async {
+    // A failing HTTP client typically echoes the request URI and body into its
+    // exception message. That path carries a bare JWT and the PKCE verifier,
+    // neither of which is preceded by "Bearer".
+    const bareJwt =
+        'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEiLCJhYWwiOiJhYWwyIn0.sIgNaTuRe';
+    late http.Request captured;
+    final client = SupabaseRestClient(
+      httpClient: MockClient((request) async {
+        captured = request;
+        return http.Response('', 201);
+      }),
+    );
+
+    final error = await client.insertTelemetry(
+      config: config,
+      secrets: secrets,
+      events: [
+        ClientTelemetryEvent(
+          level: 'error',
+          event: 'token_exchange_failed',
+          message:
+              'POST /auth/v1/token?grant_type=pkce failed; session token=$bareJwt '
+              'body auth_code=pkce-auth-code-value&code_verifier=verifier-value',
+          occurredAtUtc: DateTime.utc(2026, 7, 15, 12, 2),
+          stack: 'ClientException while sending $bareJwt to PostgREST',
+          details: const {
+            'code_verifier': 'verifier-value',
+            'auth_code': 'pkce-auth-code-value',
+            'jwt': 'header.payload.signature',
+            'otp': '123456',
+            'credential': 'anything',
+            // Diagnostic keys must survive: redacting these would blind
+            // telemetry without protecting a secret.
+            'status_code': 400,
+            'session_id': 'trace-session-1',
+          },
+        ),
+      ],
+    );
+
+    expect(error, isNull);
+    final body = jsonDecode(captured.body) as Map<String, dynamic>;
+    final row = (body['entries'] as List).single as Map<String, dynamic>;
+
+    for (final field in ['message', 'stack']) {
+      expect(
+        row[field],
+        isNot(contains(bareJwt)),
+        reason: '$field leaked a bare JWT',
+      );
+      expect(row[field], isNot(contains('sIgNaTuRe')), reason: field);
+    }
+    // In `message` the JWT sits behind `token=`, so the query-parameter rule
+    // claims it first; in `stack` it is bare, which is what the JWT-shape rule
+    // exists for. Both must end up redacted.
+    expect(row['message'], contains('token=[redacted]'));
+    expect(row['stack'], contains('[redacted-jwt]'));
+    expect(row['stack'], contains('to PostgREST'));
+    expect(row['message'], isNot(contains('pkce-auth-code-value')));
+    expect(row['message'], isNot(contains('verifier-value')));
+    expect(row['message'], contains('auth_code=[redacted]'));
+    expect(row['message'], contains('code_verifier=[redacted]'));
+    // The non-secret part of the URL is still readable.
+    expect(row['message'], contains('/auth/v1/token?grant_type=pkce'));
+
+    final details = (row['metadata'] as Map)['details'] as Map<String, dynamic>;
+    for (final key in [
+      'code_verifier',
+      'auth_code',
+      'jwt',
+      'otp',
+      'credential',
+    ]) {
+      expect(details[key], '[redacted]', reason: 'details.$key leaked');
+    }
+    expect(details['status_code'], 400);
+    expect(details['session_id'], 'trace-session-1');
+  });
+
   test('refuses telemetry writes with a secret client key', () async {
     var called = false;
     final client = SupabaseRestClient(
