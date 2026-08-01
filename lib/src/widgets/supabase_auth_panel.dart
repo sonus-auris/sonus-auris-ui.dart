@@ -21,8 +21,8 @@ class SupabaseAuthPanel extends StatefulWidget {
         'We email a one-time code to sign you in.',
   });
 
-  /// Emails the sign-in link + one-time code. Returns true when the code was
-  /// sent, which reveals the code field.
+  /// Emails the one-time code. Returns true when the code was sent, which
+  /// reveals the code field.
   final Future<bool> Function(String email) onRequestCode;
 
   /// Redeems the emailed code, signing the user in (or creating the account on
