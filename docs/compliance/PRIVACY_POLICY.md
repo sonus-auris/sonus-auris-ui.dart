@@ -106,9 +106,9 @@ user-entered notes. We do not bundle advertising SDKs.
   coordination metadata, and features you request.
 - **To an optional processing provider:** only when you explicitly enable a
   feature that needs it; the app sends the minimum declared data for that
-  feature (for example the bounded audio excerpt required for a recognition
-  request). Connected-storage encryption does not apply to an excerpt
-  deliberately sent for recognition.
+  feature (for example the bounded audio excerpt an external recognition
+  provider needs for that request). Connected-storage encryption does not apply
+  to an excerpt deliberately sent for recognition.
 
 ## Retention
 
