@@ -577,7 +577,8 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final signedIn = _session != null;
+    final hasSession = _session != null;
+    final signedIn = _isAuthorized;
     return MaterialApp(
       title: 'Sonus Auris Web',
       debugShowCheckedModeBanner: false,
