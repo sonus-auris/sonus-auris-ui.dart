@@ -44,8 +44,10 @@ jobs:
       - name: Install Playwright Chromium
         working-directory: e2e
         run: npm run browsers
+      # Boot smokes (both drivers) plus the passwordless auth guarantees.
       - name: Boot the real Flutter build in Puppeteer and Playwright
         working-directory: e2e
+        timeout-minutes: 15
         run: npm test
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

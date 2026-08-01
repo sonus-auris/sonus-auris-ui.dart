@@ -1,9 +1,15 @@
 name: e2e
 
-# Browser end-to-end smokes: the SAME node:test assertions run under both
-# Puppeteer and Playwright against the real web build. Mirrors the browser
-# runners in ~/codes/ores/k8s-cluster (remote/deployments/browser-test-server),
-# which back every driver with one bundled Chromium.
+# Browser end-to-end tests against the real `flutter build web --release`
+# bundle, in two layers:
+#   * boot smokes — the SAME node:test assertions under both Puppeteer and
+#     Playwright. Mirrors the browser runners in ~/codes/ores/k8s-cluster
+#     (remote/deployments/browser-test-server), which back every driver with
+#     one bundled Chromium.
+#   * passwordless auth guarantees — Playwright only, driving the sign-in
+#     surface and magic-link callback handling to pin the invariants that live
+#     entirely client-side (in-memory web sessions, PKCE binding, link expiry).
+# Both layers are hermetic: no Supabase project and no network are involved.
 on:
   push:
     branches: [main]
@@ -47,13 +53,25 @@ jobs:
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
-      - name: Puppeteer + Playwright smokes
+      - name: Boot smokes (Puppeteer + Playwright)
+        id: smokes
         working-directory: e2e
-        run: npm test
+        timeout-minutes: 10
+        run: |
+          npm run test:puppeteer
+          npm run test:playwright
+
+      # Runs even when the smokes fail so one report covers both layers.
+      - name: Passwordless auth guarantees (Playwright)
+        if: always() && steps.smokes.outcome != 'skipped'
+        working-directory: e2e
+        timeout-minutes: 10
+        run: npm run test:auth
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: e2e-screenshots
           path: e2e/artifacts/*.png
+          if-no-files-found: warn
           retention-days: 7
