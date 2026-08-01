@@ -14,15 +14,18 @@ services. If any value is absent, the resolver replaces **all three** with inert
 localhost/sentinel values, reports `mode=compile-only`, and reports
 `distributable=false`. The workflow still proves that Linux, macOS, or Windows
 compiles, but it does not package or upload a binary that could be mistaken for
-a configured release.
+a configured release. A partial real/fallback configuration is never allowed.
 
 A manual run with `publish_r2=true` sets `SONUS_REQUIRE_REAL_CONFIG=true`. In
-that mode every value is mandatory, URLs must be absolute credential-free
-HTTP(S) URLs without query strings or fragments, and the compile-only key is
-rejected. Failure messages name missing variables but never print values.
+that mode every value is mandatory. Every distributable mode—protected publish
+or repository-configured artifact retention—requires credential-free HTTPS,
+rejects loopback hosts, rejects query strings/fragments, and rejects Supabase
+`sb_secret_*` or service-role-shaped keys. The compile-only sentinel is valid
+only in compile-only mode. Failure messages name invalid/missing variables but
+never print values.
 
-When all repository values are present during an ordinary non-publishing run,
-the resolver reports `mode=configured` and allows the build archive to be
+When all repository values pass those checks during an ordinary non-publishing
+run, the resolver reports `mode=configured` and allows the build archive to be
 retained as a workflow artifact. Only the protected `publish` mode can reach the
 R2 publication job.
 
@@ -32,9 +35,10 @@ Run the dependency-free policy suite with:
 bash tests/ci/desktop-build-config.test.sh
 ```
 
-The test covers empty, partially configured, fully configured, protected
-publish, missing publish configuration, credential-bearing URL, invalid boolean,
-secret-redaction, and no-partial-output behavior.
+The suite covers empty, partially configured, fully configured, protected
+publish, missing publish configuration, credential-bearing URL, insecure URL,
+loopback URL, privileged Supabase key, invalid boolean, secret-redaction, and
+no-partial-output behavior.
 
 The Linux desktop workflow also probes `ayatana-appindicator3-0.1` or
 `appindicator3-0.1` with `pkg-config` before Flutter invokes CMake. Keep
