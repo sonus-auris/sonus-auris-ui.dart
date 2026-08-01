@@ -162,8 +162,9 @@ jobs:
     environment: desktop-alpha
     steps:
       # Pinned: this job holds the R2 publishing credentials, so a retagged
-      # mutable ref here would run alongside them.
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v6
+      # mutable ref here would run alongside them. Same SHA (and now the same
+      # major) as the uploads above and as desktop-release.yml.
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: sonus-auris-flutter-*
           path: dist
