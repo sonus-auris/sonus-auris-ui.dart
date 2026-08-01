@@ -27,6 +27,12 @@ assert_absent() {
   fi
 }
 
+assert_no_partial_outputs() {
+  local name="$1"
+  [[ ! -s "$temporary/$name.env" ]] || fail "$name wrote a partial GITHUB_ENV"
+  [[ ! -s "$temporary/$name.output" ]] || fail "$name wrote a partial GITHUB_OUTPUT"
+}
+
 run_success() {
   local name="$1"
   shift
@@ -111,8 +117,7 @@ run_failure publish_missing \
 assert_line "$temporary/publish_missing.log" 'Publishing requires real desktop build configuration; missing: SONUS_SUPABASE_URL'
 assert_absent "$temporary/publish_missing.log" 'publish-backend.example.test'
 assert_absent "$temporary/publish_missing.log" 'publish-secret-must-not-log'
-[[ ! -s "$temporary/publish_missing.env" ]] || fail 'failed publish resolution wrote a partial GITHUB_ENV'
-[[ ! -s "$temporary/publish_missing.output" ]] || fail 'failed publish resolution wrote a partial GITHUB_OUTPUT'
+assert_no_partial_outputs publish_missing
 
 run_success publish \
   SONUS_REQUIRE_REAL_CONFIG=true \
@@ -132,12 +137,35 @@ run_failure credential_url \
   SONUS_SUPABASE_ANON_KEY=sb_publishable_configured_fixture
 assert_line "$temporary/credential_url.log" 'SONUS_BACKEND_BASE_URL must contain a credential-free host.'
 assert_absent "$temporary/credential_url.log" 'embedded-secret'
-[[ ! -s "$temporary/credential_url.env" ]] || fail 'invalid URL wrote a partial GITHUB_ENV'
-[[ ! -s "$temporary/credential_url.output" ]] || fail 'invalid URL wrote a partial GITHUB_OUTPUT'
+assert_no_partial_outputs credential_url
+
+run_failure insecure_url \
+  SONUS_REQUIRE_REAL_CONFIG=false \
+  SONUS_BACKEND_BASE_URL=http://backend.example.test \
+  SONUS_SUPABASE_URL=https://project.supabase.co \
+  SONUS_SUPABASE_ANON_KEY=sb_publishable_configured_fixture
+assert_line "$temporary/insecure_url.log" 'SONUS_BACKEND_BASE_URL must use HTTPS for a distributable desktop build.'
+assert_no_partial_outputs insecure_url
+
+run_failure loopback_url \
+  SONUS_REQUIRE_REAL_CONFIG=false \
+  SONUS_BACKEND_BASE_URL=https://backend.example.test \
+  SONUS_SUPABASE_URL=https://127.0.0.1:54321 \
+  SONUS_SUPABASE_ANON_KEY=sb_publishable_configured_fixture
+assert_line "$temporary/loopback_url.log" 'SONUS_SUPABASE_URL may not use a loopback host for a distributable desktop build.'
+assert_no_partial_outputs loopback_url
+
+run_failure secret_key \
+  SONUS_REQUIRE_REAL_CONFIG=true \
+  SONUS_BACKEND_BASE_URL=https://backend.example.test \
+  SONUS_SUPABASE_URL=https://project.supabase.co \
+  SONUS_SUPABASE_ANON_KEY=sb_secret_must_never_ship
+assert_line "$temporary/secret_key.log" 'SONUS_SUPABASE_ANON_KEY must be a public publishable/anon key, never a secret or service-role key.'
+assert_absent "$temporary/secret_key.log" 'sb_secret_must_never_ship'
+assert_no_partial_outputs secret_key
 
 run_failure invalid_boolean SONUS_REQUIRE_REAL_CONFIG=maybe
 assert_line "$temporary/invalid_boolean.log" 'Expected a boolean flag, got an unsupported value.'
-[[ ! -s "$temporary/invalid_boolean.env" ]] || fail 'invalid boolean wrote GITHUB_ENV'
-[[ ! -s "$temporary/invalid_boolean.output" ]] || fail 'invalid boolean wrote GITHUB_OUTPUT'
+assert_no_partial_outputs invalid_boolean
 
 echo "Desktop build configuration tests passed: $pass_count cases."
