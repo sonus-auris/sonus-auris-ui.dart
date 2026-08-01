@@ -270,7 +270,7 @@ void main() {
       _expectNoPasswordControl(tester, 'code step');
 
       // The way back must restore the email step so a typo is recoverable.
-      await tester.tap(find.byKey(changeEmailButton));
+      await _tapButton(tester, changeEmailButton);
       await _pumpUntil(
         tester,
         () => find.byKey(emailField).evaluate().isNotEmpty,
