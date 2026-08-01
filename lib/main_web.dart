@@ -346,6 +346,18 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     if (!mounted) {
       return;
     }
+    // An email code or magic link establishes only AAL1. Mobile and desktop
+    // hold that behind SupabaseMfaGate; the browser must not be the one
+    // surface where a first factor alone opens the account.
+    if (!session.isPasswordlessAal2) {
+      setState(() {
+        _config = config;
+        _session = session;
+        _status = _secondFactorRequiredStatus;
+      });
+      _scheduleRefresh();
+      return;
+    }
     setState(() {
       _config = config;
       _session = session;
