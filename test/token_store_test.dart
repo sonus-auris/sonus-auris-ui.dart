@@ -50,4 +50,21 @@ void main() {
     expect(id, isNotEmpty);
     expect(await PrefsTokenStore().deviceInstallId(), id);
   });
+
+  test('hostile browser storage never escapes as an internal error', () async {
+    // Browser storage is writable by any injected script, so a stored value of
+    // the wrong *type* makes `getString` throw before decoding is reached.
+    SharedPreferences.setMockInitialValues({
+      'sonus.console.pendingAuth.v1': <String>['not', 'a', 'string'],
+      'sonus.console.deviceId': 42,
+    });
+    final store = PrefsTokenStore();
+
+    expect(await store.readPendingMagicLink(), isNull);
+    expect(await store.deviceInstallId(), isNotEmpty);
+
+    // The unreadable pending record is dropped rather than kept forever.
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.get('sonus.console.pendingAuth.v1'), isNull);
+  });
 }

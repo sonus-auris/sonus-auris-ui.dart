@@ -115,6 +115,42 @@ class AuthClient {
         _samePort(callback, expected);
   }
 
+  /// Query/fragment keys that mean a URL is actually a sign-in callback.
+  static const _magicLinkKeys = {
+    'code',
+    'error',
+    'error_code',
+    'error_description',
+    'access_token',
+    'refresh_token',
+    'token_hash',
+  };
+
+  /// Whether [callback] carries any magic-link material at all.
+  ///
+  /// On web the ordinary page URL is delivered through the same deep-link
+  /// channel as a real callback, so without this check every plain visit to the
+  /// console is parsed as a malformed callback and greets the user with a
+  /// sign-in error. Anything carrying a recognised key — including the
+  /// deliberately-refused implicit `access_token` form — still goes through the
+  /// full validation in [authorizationCodeFromCallback].
+  bool hasMagicLinkPayload(Uri callback) {
+    if (callback.queryParametersAll.keys.any(_magicLinkKeys.contains)) {
+      return true;
+    }
+    if (callback.fragment.isEmpty) {
+      return false;
+    }
+    try {
+      return Uri.splitQueryString(
+        callback.fragment,
+      ).keys.any(_magicLinkKeys.contains);
+    } on FormatException {
+      // An opaque fragment (a client-side route, say) is not a callback.
+      return false;
+    }
+  }
+
   String authorizationCodeFromCallback(Uri callback) {
     if (!isExpectedMagicLinkCallback(callback)) {
       throw const FormatException(
@@ -190,13 +226,27 @@ class AuthClient {
   }
 
   /// Adopts a Supabase magic-link callback after verifying that it targets the
-  /// exact application URI configured for this build. Supabase may return an
-  /// implicit session in the fragment or a token hash in the query string.
+  /// exact application URI configured for this build.
+  ///
+  /// Only the server-verified `token_hash` form is accepted. Implicit-flow
+  /// callbacks carrying `access_token`/`refresh_token` in the URL are refused:
+  /// a URL bearer token is bound to nothing this client generated, so anybody
+  /// who can put a crafted link in front of the user could fixate a session on
+  /// them. [authorizationCodeFromCallback] rejects the same shape on the PKCE
+  /// path; this keeps both entry points consistent.
   Future<SupabaseSession> consumeMagicLink(Uri callback) async {
-    final expected = magicLinkRedirectUri ?? config.authRedirectUri;
+    // Fail closed rather than falling back to [ConsoleConfig.authRedirectUri],
+    // which does not apply the scheme/host allowlist that produced a null here.
+    final expected = magicLinkRedirectUri;
+    if (expected == null) {
+      throw const FormatException(
+        'Configure an HTTPS magic-link callback before signing in.',
+      );
+    }
     if (callback.scheme != expected.scheme ||
         callback.host != expected.host ||
-        callback.port != expected.port ||
+        callback.userInfo.isNotEmpty ||
+        !_samePort(callback, expected) ||
         callback.path != expected.path) {
       throw const FormatException('That sign-in link targets another app.');
     }
@@ -214,28 +264,14 @@ class AuthClient {
       throw StateError(callbackError!.trim());
     }
 
-    final accessToken = (parameters['access_token'] ?? '').trim();
-    final tokenHash = (parameters['token_hash'] ?? '').trim();
-    if (accessToken.isNotEmpty && tokenHash.isNotEmpty) {
+    if ((parameters['access_token'] ?? '').trim().isNotEmpty ||
+        (parameters['refresh_token'] ?? '').trim().isNotEmpty) {
       throw const FormatException(
-        'The sign-in callback contained conflicting credentials.',
+        'This older sign-in link is not accepted. Request a fresh magic link.',
       );
     }
-    if (accessToken.isNotEmpty) {
-      final refreshToken = (parameters['refresh_token'] ?? '').trim();
-      if (refreshToken.isEmpty) {
-        throw const FormatException(
-          'The sign-in callback contained no refresh token.',
-        );
-      }
-      final expiresIn = int.tryParse(parameters['expires_in'] ?? '');
-      return SupabaseSession.fromJson({
-        'access_token': accessToken,
-        'refresh_token': refreshToken,
-        'expires_in': ?expiresIn,
-      });
-    }
 
+    final tokenHash = (parameters['token_hash'] ?? '').trim();
     if (tokenHash.isNotEmpty) {
       final json = await _post(
         'verify',

@@ -78,6 +78,7 @@ String sessionJson({String aal = 'aal1', String email = 'a@example.test'}) =>
 /// the account has a verified MFA factor.
 ConsoleController controllerWith({
   List<Map<String, Object?>> factors = const [],
+  List<Map<String, Object?>>? liveFactors,
   List<Map<String, Object?>> devices = const [],
   List<Map<String, Object?>> entitlements = const [],
   TokenStore? store,
@@ -85,7 +86,11 @@ ConsoleController controllerWith({
   Duration tokenDelay = Duration.zero,
   List<String>? requests,
 }) {
-  final factorState = factors.map(Map<String, Object?>.from).toList();
+  // Callers that need to change the account's factors mid-test (a factor
+  // revoked from another session) own the list via [liveFactors]; otherwise the
+  // mock keeps a private copy of [factors].
+  final factorState =
+      liveFactors ?? factors.map(Map<String, Object?>.from).toList();
   final client = MockClient((req) async {
     final path = req.url.path;
     requests?.add(path);
@@ -213,6 +218,31 @@ void main() {
     expect(accepted, isTrue);
     expect(controller.phase, AuthPhase.mfaEnrollmentRequired);
     expect(controller.email, 'a@example.test');
+  });
+
+  test('a plain page URL is not treated as a sign-in callback', () async {
+    final requests = <String>[];
+    final controller = controllerWith(requests: requests);
+    await controller.bootstrap();
+
+    // On web the ordinary page URL is delivered on the same channel as a real
+    // callback. It carries no sign-in material, so it must be ignored rather
+    // than reported to the user as a broken magic link.
+    for (final plain in [
+      'https://console.example/auth/callback',
+      'https://console.example/auth/callback?utm_source=newsletter',
+      'https://console.example/auth/callback#/devices',
+    ]) {
+      expect(
+        await controller.acceptMagicLink(Uri.parse(plain)),
+        isFalse,
+        reason: '$plain is not a callback',
+      );
+    }
+
+    expect(controller.phase, AuthPhase.signedOut);
+    expect(controller.message, isNull);
+    expect(requests, isEmpty);
   });
 
   test('an implicit-token callback is handled but never signs in', () async {
@@ -425,6 +455,83 @@ void main() {
     await controller.submitMfaChallenge('123456');
     expect(controller.activeRecorderCount, 3);
     expect(controller.lockedDeviceIds, hasLength(1)); // 1 over the limit of 2
+  });
+
+  test('losing the last verified factor drops out of the console', () async {
+    final liveFactors = <Map<String, Object?>>[
+      {'id': 'f1', 'factor_type': 'totp', 'status': 'verified'},
+    ];
+    final controller = controllerWith(
+      liveFactors: liveFactors,
+      devices: [
+        {
+          'user_id': 'user-1',
+          'device_id': 'phone-1',
+          'display_name': 'Pixel',
+          'platform': 'android',
+          'role': 'recorder',
+          'last_seen_at': '2026-07-17T00:00:00Z',
+          'created_at': '2026-07-01T00:00:00Z',
+        },
+      ],
+      store: FakeTokenStore(
+        SupabaseSession(
+          accessToken: token(aal: 'aal2'),
+          refreshToken: 'r',
+          expiresAtUtc: DateTime.now().toUtc().add(const Duration(hours: 1)),
+          userId: 'user-1',
+          email: 'a@example.test',
+        ),
+      ),
+    );
+
+    await controller.bootstrap();
+    expect(controller.phase, AuthPhase.signedIn);
+    expect(controller.devices, isNotEmpty);
+
+    // Another session (or an admin) unenrolls the only verified factor. The
+    // access token is still aal2, so nothing but the factor list reveals it.
+    liveFactors.clear();
+    await controller.refreshFactors();
+
+    expect(controller.phase, AuthPhase.mfaEnrollmentRequired);
+    expect(controller.isSignedIn, isFalse);
+    expect(controller.devices, isEmpty, reason: 'account data must be dropped');
+    expect(controller.events, isEmpty);
+    expect(controller.entitlement.deviceLimit, kFreeTierDeviceLimit);
+  });
+
+  test('refreshFactors keeps a still-valid session in the console', () async {
+    final liveFactors = <Map<String, Object?>>[
+      {'id': 'f1', 'factor_type': 'totp', 'status': 'verified'},
+    ];
+    final controller = controllerWith(
+      liveFactors: liveFactors,
+      store: FakeTokenStore(
+        SupabaseSession(
+          accessToken: token(aal: 'aal2'),
+          refreshToken: 'r',
+          expiresAtUtc: DateTime.now().toUtc().add(const Duration(hours: 1)),
+          userId: 'user-1',
+          email: 'a@example.test',
+        ),
+      ),
+    );
+
+    await controller.bootstrap();
+    expect(controller.phase, AuthPhase.signedIn);
+
+    // Adding a second factor must not knock the user out of the console.
+    liveFactors.add({
+      'id': 'f2',
+      'factor_type': 'phone',
+      'status': 'verified',
+      'phone': '+15551234567',
+    });
+    await controller.refreshFactors();
+
+    expect(controller.phase, AuthPhase.signedIn);
+    expect(controller.factors, hasLength(2));
   });
 
   test('sign-out returns to the signedOut phase and clears data', () async {

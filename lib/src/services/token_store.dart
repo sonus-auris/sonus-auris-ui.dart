@@ -263,11 +263,15 @@ class PrefsTokenStore implements TokenStore {
   @override
   Future<PendingMagicLink?> readPendingMagicLink() async {
     final prefs = await _p;
-    final raw = prefs.getString(_kPendingAuth);
-    if (raw == null || raw.trim().isEmpty) {
-      return null;
-    }
+    // The whole read is guarded, not just the decode: browser storage is
+    // writable by any injected script, and a value of the wrong *type* makes
+    // `getString` throw before decoding is ever reached. Drop anything
+    // unreadable and self-heal rather than surfacing an internal error.
     try {
+      final raw = prefs.getString(_kPendingAuth);
+      if (raw == null || raw.trim().isEmpty) {
+        return null;
+      }
       return PendingMagicLink.decode(raw);
     } catch (_) {
       await prefs.remove(_kPendingAuth);
@@ -284,7 +288,12 @@ class PrefsTokenStore implements TokenStore {
   @override
   Future<String> deviceInstallId() async {
     final prefs = await _p;
-    final existing = (prefs.getString(_kDeviceId) ?? '').trim();
+    String existing;
+    try {
+      existing = (prefs.getString(_kDeviceId) ?? '').trim();
+    } catch (_) {
+      existing = ''; // corrupt/hostile stored value: mint a fresh id below
+    }
     if (existing.isNotEmpty) {
       return existing;
     }

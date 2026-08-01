@@ -212,7 +212,11 @@ class ConsoleController extends ChangeNotifier {
   }
 
   Future<bool> acceptMagicLink(Uri callback) async {
-    if (!_auth.isExpectedMagicLinkCallback(callback)) {
+    // On web the plain page URL arrives on the same channel as a real callback.
+    // Treat a URL with no sign-in material as "not mine" rather than reporting
+    // a malformed link, which otherwise greets every visitor with an error.
+    if (!_auth.isExpectedMagicLinkCallback(callback) ||
+        !_auth.hasMagicLinkPayload(callback)) {
       return false;
     }
     if (_authCallbackInProgress) {
@@ -328,11 +332,8 @@ class ConsoleController extends ChangeNotifier {
     }
     await _clearSession();
     await _store.clearPendingMagicLink();
-    _deviceList = const [];
-    _events_ = const [];
+    _dropAccountData();
     _factors = const [];
-    _entitlement = Entitlement.free;
-    _lockedDeviceIds = const {};
     _pendingEmail = '';
     _message = 'Signed out.';
     _setPhase(AuthPhase.signedOut);
@@ -411,7 +412,21 @@ class ConsoleController extends ChangeNotifier {
         _phase != AuthPhase.mfaEnrollmentRequired) {
       return;
     }
-    await _refreshMfaState();
+    final nextPhase = await _refreshMfaState();
+    // `_refreshMfaState` returns the only safe state for the current token, and
+    // every other caller acts on it. Adopt it here too whenever it is a
+    // downgrade: if the last verified factor disappears (removed from another
+    // session, or revoked by an admin) the console must leave the signed-in
+    // surface instead of continuing to stream account-scoped devices/events.
+    // Upgrades still go through `_enterConsole`, which re-checks aal2.
+    if (_phase == AuthPhase.signedIn && nextPhase != AuthPhase.signedIn) {
+      _dropAccountData();
+      _message =
+          'Two-factor verification is required again before accessing your '
+          'account.';
+      _setPhase(nextPhase);
+      return;
+    }
     notifyListeners();
   }
 
@@ -646,13 +661,21 @@ class ConsoleController extends ChangeNotifier {
     }
   }
 
-  Future<void> _expireSession() async {
-    await _clearSession();
+  /// Drops everything loaded under an authenticated session. Kept separate from
+  /// [_clearSession] so a phase downgrade can discard account-scoped data
+  /// without throwing away the first-factor session the user still needs to
+  /// finish verifying.
+  void _dropAccountData() {
     _deviceList = const [];
     _events_ = const [];
-    _factors = const [];
     _entitlement = Entitlement.free;
     _lockedDeviceIds = const {};
+  }
+
+  Future<void> _expireSession() async {
+    await _clearSession();
+    _dropAccountData();
+    _factors = const [];
     _setPhase(AuthPhase.signedOut);
   }
 
