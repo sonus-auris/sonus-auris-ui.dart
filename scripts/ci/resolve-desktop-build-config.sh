@@ -53,6 +53,20 @@ validate_http_url() {
     echo "$name must contain a credential-free host." >&2
     return 1
   fi
+
+  if [[ "$mode" != 'compile-only' ]]; then
+    if [[ "$value" != https://* ]]; then
+      echo "$name must use HTTPS for a distributable desktop build." >&2
+      return 1
+    fi
+    local normalized_authority="${authority,,}"
+    case "$normalized_authority" in
+      localhost|localhost:*|127.*|0.0.0.0|0.0.0.0:*|'[::1]'|'[::1]':*)
+        echo "$name may not use a loopback host for a distributable desktop build." >&2
+        return 1
+        ;;
+    esac
+  fi
 }
 
 validate_publishable_key() {
@@ -65,6 +79,13 @@ validate_publishable_key() {
   if [[ "$mode" != 'compile-only' && "$value" == "$compile_supabase_key" ]]; then
     echo "SONUS_SUPABASE_ANON_KEY may use the compile-only sentinel only in compile-only mode." >&2
     return 1
+  fi
+  if [[ "$mode" != 'compile-only' ]]; then
+    local normalized_key="${value,,}"
+    if [[ "$normalized_key" == sb_secret_* || "$normalized_key" == *service_role* ]]; then
+      echo "SONUS_SUPABASE_ANON_KEY must be a public publishable/anon key, never a secret or service-role key." >&2
+      return 1
+    fi
   fi
 }
 
