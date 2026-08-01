@@ -75,6 +75,15 @@ append_environment() {
   printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
 }
 
+append_output() {
+  local name="$1"
+  local value="$2"
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    reject_multiline "$name" "$value"
+    printf '%s=%s\n' "$name" "$value" >> "$GITHUB_OUTPUT"
+  fi
+}
+
 strict=false
 if is_true "${SONUS_REQUIRE_REAL_CONFIG:-false}"; then
   strict=true
@@ -123,6 +132,12 @@ append_environment SONUS_BACKEND_BASE_URL "$SONUS_BACKEND_BASE_URL"
 append_environment SONUS_SUPABASE_URL "$SONUS_SUPABASE_URL"
 append_environment SONUS_SUPABASE_ANON_KEY "$SONUS_SUPABASE_ANON_KEY"
 append_environment SONUS_DESKTOP_BUILD_CONFIG_MODE "$mode"
+append_output mode "$mode"
+if [[ "$mode" == 'compile-only' ]]; then
+  append_output distributable false
+else
+  append_output distributable true
+fi
 
 case "$mode" in
   compile-only)
