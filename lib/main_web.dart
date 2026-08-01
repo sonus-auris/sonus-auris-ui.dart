@@ -590,7 +590,9 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
         appBar: AppBar(
           title: const Text('Sonus Auris'),
           actions: [
-            if (signedIn)
+            // Offered for a first-factor-only session too, so a user held at
+            // the second-factor gate can still leave.
+            if (hasSession)
               TextButton.icon(
                 onPressed: () => unawaited(_signOut()),
                 icon: const Icon(Icons.logout),
