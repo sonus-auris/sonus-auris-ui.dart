@@ -60,11 +60,12 @@ jobs:
 
       # Installs Chrome and a byte-matched chromedriver on PATH. Pinned to a
       # commit SHA like every other action here.
-      - uses: browser-actions/setup-chrome@b94431e051d1c52dcbe9a7092a4f10f827795416 # v2
+      - uses: browser-actions/setup-chrome@2e1d749697dd1612b833dba4a722266286fbefcd # v2.1.2
         id: chrome
         with:
           chrome-version: stable
           install-chromedriver: true
+          install-dependencies: true
 
       - run: flutter --version
       - run: flutter pub get
