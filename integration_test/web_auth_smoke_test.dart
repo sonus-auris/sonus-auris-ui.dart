@@ -329,12 +329,16 @@ void main() {
 
       // The same form still accepts a legitimate address, so the guard is a
       // filter rather than a wall.
-      await tester.enterText(find.byKey(emailField), 'person@example.com');
-      await tester.tap(find.byKey(requestButton));
+      await _enterText(tester, emailField, 'person@example.com');
+      await _tapButton(tester, requestButton);
       await _pumpUntil(
         tester,
         () => find.byKey(codeField).evaluate().isNotEmpty,
         reason: 'a valid address was rejected too',
+        diagnose: () =>
+            'email field="${_textOf(tester, emailField)}" requested=$requested '
+            'validationErrorShown='
+            '${find.text('Enter a valid email address.').evaluate().isNotEmpty}',
       );
       expect(requested, ['person@example.com']);
       expect(tester.takeException(), isNull);
