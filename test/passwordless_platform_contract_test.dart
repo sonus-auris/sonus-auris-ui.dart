@@ -96,6 +96,24 @@ void main() {
     }
   });
 
+  test('account authentication UI advertises the code, not a magic link', () {
+    // Both surfaces are 6-digit OTP flows: the request button reveals a code
+    // field, and the emulator permission gate greps for the code wording. A
+    // button offering a "sign-in link" therefore contradicts the screen it
+    // opens, so neither widget may carry the retired magic-link copy.
+    final form = File(
+      'lib/src/widgets/supabase_auth_form.dart',
+    ).readAsStringSync();
+    final panel = File(
+      'lib/src/widgets/supabase_auth_panel.dart',
+    ).readAsStringSync();
+
+    for (final source in [form, panel]) {
+      expect(source, contains("'Email me a 6-digit code'"));
+      expect(source, isNot(contains('Email me a sign-in link')));
+    }
+  });
+
   test('offline escape hatch is structurally release-gated', () {
     final source = File(
       'lib/src/platform/offline_development_mode.dart',
