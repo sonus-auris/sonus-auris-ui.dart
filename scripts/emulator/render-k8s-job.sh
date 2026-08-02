@@ -24,8 +24,12 @@ if [[ "$output" == "$template" ]]; then
   echo "rendered output must not overwrite the source template" >&2
   exit 1
 fi
+if [[ -L "$output" ]]; then
+  echo "rendered output must not replace a symlink: $output" >&2
+  exit 1
+fi
 
-match_count="$(grep -Fo "$placeholder" "$template" | wc -l | tr -d '[:space:]')"
+match_count="$((grep -Fo "$placeholder" "$template" || true) | wc -l | tr -d '[:space:]')"
 if [[ "$match_count" != '1' ]]; then
   echo "emulator Job template must contain the image placeholder exactly once; found $match_count" >&2
   exit 1
@@ -34,7 +38,7 @@ fi
 mkdir -p "$(dirname "$output")"
 temporary="${output}.tmp-$$"
 trap 'rm -f "$temporary"' EXIT
-sed "s|${placeholder}|${image_ref}|" "$template" > "$temporary"
+sed "s|${placeholder}|${image_ref}|" "$template" >"$temporary"
 
 if grep -Fq "$placeholder" "$temporary"; then
   echo "rendered emulator Job still contains the image placeholder" >&2
