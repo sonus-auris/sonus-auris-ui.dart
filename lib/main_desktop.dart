@@ -11,8 +11,7 @@
 //   * phone   (main.dart)         → touch UI, records THIS device.
 //   * desktop (main_desktop.dart) → windowed UI; records this device today and
 //     is the home of the future "All devices" master viewer (browse + decrypt
-//     every device's audio with the account private key — see MULTI_DEVICE.md;
-//     the pure-Rust `desktop.app.rs` owns that role too).
+//     every device's audio with the account private key — see MULTI_DEVICE.md).
 //
 // Keeping them as distinct entrypoints means desktop look *and* logic can
 // diverge freely without leaking the phone layout onto the desktop.
@@ -39,6 +38,7 @@ import 'src/models/cloud_connection.dart';
 import 'src/models/cloud_provider.dart';
 import 'src/models/consent.dart';
 import 'src/platform/desktop_autostart.dart';
+import 'src/platform/desktop_shutdown.dart';
 import 'src/services/cloud_oauth_flow.dart';
 import 'src/services/supabase_device_presence_client.dart';
 import 'src/widgets/supabase_auth_form.dart';
@@ -78,6 +78,8 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
   ui.ErrorCallback? _previousPlatformOnError;
   bool _trayReady = false;
   bool _quitting = false;
+  final DesktopShutdownCoordinator _shutdown =
+      const DesktopShutdownCoordinator();
 
   @override
   void initState() {
@@ -175,10 +177,18 @@ class _SonusDesktopAppState extends State<SonusDesktopApp>
   Future<void> _quitDesktopApp() async {
     if (_quitting) return;
     _quitting = true;
-    await windowManager.setPreventClose(false);
-    await trayManager.destroy();
-    await _disposeController();
-    await windowManager.destroy();
+    // Stop receiving close/tray callbacks while shutdown is in progress. The
+    // coordinator bounds every asynchronous cleanup step and always terminates
+    // the process, so a stuck recorder/plugin cannot leave a zombie menu-bar app.
+    windowManager.removeListener(this);
+    trayManager.removeListener(this);
+    await _shutdown.shutdown(
+      allowClose: () => windowManager.setPreventClose(false),
+      destroyTray: trayManager.destroy,
+      disposeController: _disposeController,
+      destroyWindow: windowManager.destroy,
+      terminateProcess: exit,
+    );
   }
 
   Future<void> _disposeController() {
