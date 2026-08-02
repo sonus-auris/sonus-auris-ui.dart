@@ -1,0 +1,117 @@
+name: Formal Dart upload refinement
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/formal-dart-upload-refinement.yml'
+      - 'formal/fm.toml'
+      - 'formal/segment_lifecycle.qnt'
+      - 'formal/segment_lifecycle_test.qnt'
+      - 'lib/src/models/recording_segment.dart'
+      - 'lib/src/services/segment_upload_state_machine.dart'
+      - 'test/segment_upload_state_machine_test.dart'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/formal-dart-upload-refinement.yml'
+      - 'formal/fm.toml'
+      - 'formal/segment_lifecycle.qnt'
+      - 'formal/segment_lifecycle_test.qnt'
+      - 'lib/src/models/recording_segment.dart'
+      - 'lib/src/services/segment_upload_state_machine.dart'
+      - 'test/segment_upload_state_machine_test.dart'
+  schedule:
+    - cron: '43 8 * * 4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: formal-dart-upload-refinement-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  refinement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.3
+          cache: true
+
+      - name: Resolve locked application dependencies
+        run: flutter pub get
+
+      - name: Verify exact formatting
+        run: |
+          dart format --output=none --set-exit-if-changed \
+            lib/src/models/recording_segment.dart \
+            lib/src/services/segment_upload_state_machine.dart \
+            test/segment_upload_state_machine_test.dart
+
+      - name: Render canonical Dart formatting after a mismatch
+        if: failure()
+        run: |
+          dart format \
+            lib/src/models/recording_segment.dart \
+            lib/src/services/segment_upload_state_machine.dart \
+            test/segment_upload_state_machine_test.dart
+
+      - name: Upload canonical Dart formatter output
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: formal-dart-canonical-format
+          path: |
+            lib/src/models/recording_segment.dart
+            lib/src/services/segment_upload_state_machine.dart
+            test/segment_upload_state_machine_test.dart
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Analyze production transition seam and tests
+        run: |
+          flutter analyze --no-fatal-infos \
+            lib/src/models/recording_segment.dart \
+            lib/src/services/segment_upload_state_machine.dart \
+            test/segment_upload_state_machine_test.dart
+
+      - name: Run upload-generation refinement regressions
+        run: flutter test test/segment_upload_state_machine_test.dart
+
+      - name: Record exact refinement inputs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .formal-artifacts/dart-upload-refinement
+          {
+            printf 'commit=%s\n' "$GITHUB_SHA"
+            printf 'flutter=' && flutter --version | head -n 1
+            printf 'dart=' && dart --version 2>&1
+            sha256sum \
+              formal/fm.toml \
+              formal/segment_lifecycle.qnt \
+              formal/segment_lifecycle_test.qnt \
+              lib/src/models/recording_segment.dart \
+              lib/src/services/segment_upload_state_machine.dart \
+              test/segment_upload_state_machine_test.dart
+          } > .formal-artifacts/dart-upload-refinement/provenance.txt
+
+      - name: Upload refinement provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: formal-dart-upload-refinement
+          path: .formal-artifacts/dart-upload-refinement/
+          if-no-files-found: error
+          retention-days: 14
