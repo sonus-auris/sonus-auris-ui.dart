@@ -38,3 +38,82 @@ jobs:
         run: flutter analyze --no-fatal-infos
       - name: Unit tests (hard gate)
         run: flutter test
+
+  # Drives the Flutter web build in a real headless Chrome via chromedriver, so
+  # the passwordless auth invariants are proved against browser output rather
+  # than the VM widget harness. Hermetic: the code step is exercised through a
+  # stubbed request/submit harness, so no live Supabase project is needed.
+  web-browser-test:
+    name: Web auth smoke (headless Chrome)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.3
+          cache: true
+
+      - run: flutter --version
+      - run: flutter pub get
+
+      # The runner image already ships Google Chrome, and chromedriver resolves
+      # that binary from its fixed /opt path regardless of what else is on
+      # PATH. So rather than installing a second Chrome (whose driver then
+      # mismatches the one actually launched), fetch the chromedriver built for
+      # the Chrome that is really here. chromedriver requires the major version
+      # to match.
+      - name: Install chromedriver matching the runner's Chrome
+        run: |
+          set -euo pipefail
+          chrome_version="$(google-chrome --version | grep -oE '[0-9]+(\.[0-9]+){2,3}' | head -1)"
+          major="${chrome_version%%.*}"
+          echo "Runner Chrome: ${chrome_version} (milestone ${major})"
+          driver_version="$(curl -fsSL \
+            "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${major}")"
+          echo "Matching chromedriver: ${driver_version}"
+          curl -fsSL -o "${RUNNER_TEMP}/chromedriver.zip" \
+            "https://storage.googleapis.com/chrome-for-testing-public/${driver_version}/linux64/chromedriver-linux64.zip"
+          unzip -q -o "${RUNNER_TEMP}/chromedriver.zip" -d "${RUNNER_TEMP}"
+          sudo install -m 0755 \
+            "${RUNNER_TEMP}/chromedriver-linux64/chromedriver" /usr/local/bin/chromedriver
+          chromedriver --version
+
+      - name: Start chromedriver
+        run: |
+          set -euo pipefail
+          chromedriver --port=4444 --log-path="${RUNNER_TEMP}/chromedriver.log" &
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4444/status >/dev/null; then
+              echo "chromedriver is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "chromedriver did not start" >&2
+          cat "${RUNNER_TEMP}/chromedriver.log" >&2 || true
+          exit 1
+
+      - name: Web auth smoke tests in headless Chrome
+        run: >-
+          flutter drive
+          --driver=test_driver/integration_test.dart
+          --target=integration_test/web_auth_smoke_test.dart
+          -d web-server
+          --browser-name=chrome
+          --headless
+
+      - name: Upload browser test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: web-browser-test-diagnostics
+          path: |
+            ${{ runner.temp }}/chromedriver.log
+            build/integration_response_data.json
+          if-no-files-found: warn
+          retention-days: 7
