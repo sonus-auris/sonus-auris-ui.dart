@@ -86,22 +86,25 @@ void main() {
       expect(late.remoteKey, isNull);
     });
 
-    test('failed current attempt remains retryable with a newer generation', () {
-      final first = SegmentUploadStateMachine.begin(_segment());
-      final failed = SegmentUploadStateMachine.fail(
-        current: first,
-        generation: first.activeUploadGeneration,
-        error: 'network unavailable',
-      );
-      expect(failed.uploadStatus, SegmentUploadStatus.failed);
-      expect(failed.activeUploadGeneration, 0);
-      expect(failed.nextUploadGeneration, 2);
+    test(
+      'failed current attempt remains retryable with a newer generation',
+      () {
+        final first = SegmentUploadStateMachine.begin(_segment());
+        final failed = SegmentUploadStateMachine.fail(
+          current: first,
+          generation: first.activeUploadGeneration,
+          error: 'network unavailable',
+        );
+        expect(failed.uploadStatus, SegmentUploadStatus.failed);
+        expect(failed.activeUploadGeneration, 0);
+        expect(failed.nextUploadGeneration, 2);
 
-      final retry = SegmentUploadStateMachine.begin(failed);
-      expect(retry.activeUploadGeneration, 2);
-      expect(retry.nextUploadGeneration, 3);
-      expect(retry.error, isNull);
-    });
+        final retry = SegmentUploadStateMachine.begin(failed);
+        expect(retry.activeUploadGeneration, 2);
+        expect(retry.nextUploadGeneration, 3);
+        expect(retry.error, isNull);
+      },
+    );
 
     test('formal projection is content-free and stable', () {
       final uploading = SegmentUploadStateMachine.begin(_segment());
