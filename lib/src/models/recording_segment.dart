@@ -201,8 +201,7 @@ class RecordingSegment {
           : permanentError as String?,
       error: identical(error, _unset) ? this.error : error as String?,
       geoTag: identical(geoTag, _unset) ? this.geoTag : geoTag as GeoTag?,
-      nextUploadGeneration:
-          nextUploadGeneration ?? this.nextUploadGeneration,
+      nextUploadGeneration: nextUploadGeneration ?? this.nextUploadGeneration,
       activeUploadGeneration:
           activeUploadGeneration ?? this.activeUploadGeneration,
       acknowledgedUploadGeneration:
@@ -243,9 +242,7 @@ class RecordingSegment {
 
   factory RecordingSegment.fromJson(Map<String, dynamic> json) {
     final nextGeneration = _asPositiveInt(json['nextUploadGeneration']);
-    final activeGeneration = _asNonNegativeInt(
-      json['activeUploadGeneration'],
-    );
+    final activeGeneration = _asNonNegativeInt(json['activeUploadGeneration']);
     final acknowledgedGeneration = _asNonNegativeInt(
       json['acknowledgedUploadGeneration'],
     );
