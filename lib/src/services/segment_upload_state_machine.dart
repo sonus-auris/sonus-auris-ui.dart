@@ -83,18 +83,13 @@ abstract final class SegmentUploadStateMachine {
   }
 
   /// Invalidates any in-flight result before local deletion becomes durable.
-  static RecordingSegment invalidateForLocalDeletion(
-    RecordingSegment segment,
-  ) {
+  static RecordingSegment invalidateForLocalDeletion(RecordingSegment segment) {
     final invalidatedGeneration = segment.activeUploadGeneration;
     return segment.copyWith(
       activeUploadGeneration: 0,
       nextUploadGeneration: invalidatedGeneration <= 0
           ? _atLeast(segment.nextUploadGeneration, 1)
-          : _atLeast(
-              segment.nextUploadGeneration,
-              invalidatedGeneration + 1,
-            ),
+          : _atLeast(segment.nextUploadGeneration, invalidatedGeneration + 1),
     );
   }
 
@@ -118,10 +113,7 @@ abstract final class SegmentUploadStateMachine {
   static int _nextGeneration(RecordingSegment segment) {
     var generation = _atLeast(segment.nextUploadGeneration, 1);
     generation = _atLeast(generation, segment.activeUploadGeneration + 1);
-    generation = _atLeast(
-      generation,
-      segment.acknowledgedUploadGeneration + 1,
-    );
+    generation = _atLeast(generation, segment.acknowledgedUploadGeneration + 1);
     return generation;
   }
 
