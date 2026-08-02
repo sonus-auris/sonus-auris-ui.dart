@@ -14,6 +14,14 @@ Dart/Flutter client — always-on rolling-window audio recorder (a dashcam for a
 - Linear project: `github.com/sonus-auris` in the Denman workspace.
 - Locate or create the matching Linear issue before substantial work, and record PR links, tests, blockers, and remaining work there.
 
+## Desktop implementation parity
+
+- Sonus Auris actively maintains two desktop applications: this repository's Flutter desktop entrypoint and `sonus-auris/desktop.app.rs` in Rust.
+- Implement user-facing desktop features, privacy controls, lifecycle behavior, and bug fixes in both desktop applications unless a tracked design decision explicitly marks a capability as platform-specific or intentionally deferred.
+- Keep behavior, terminology, defaults, retention limits, consent text, authentication requirements, cloud contracts, and release expectations aligned across the Rust and Flutter desktop implementations.
+- When a change lands in only one desktop repository, create or update the paired Linear issue and document the remaining parity work in the PR.
+- Shared protocol/schema behavior belongs in the existing Sonus Auris interface or backend contracts; do not create a third UI-components repository merely to share widgets between Rust and Flutter.
+
 ## Flutter and privacy invariants
 
 - The default local plaintext rolling-audio retention ceiling is 100 hours. Do not increase it, silently make it unlimited, or bypass expiration enforcement.
