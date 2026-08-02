@@ -29,7 +29,7 @@ if [[ -L "$output" ]]; then
   exit 1
 fi
 
-match_count="$((grep -Fo "$placeholder" "$template" || true) | wc -l | tr -d '[:space:]')"
+match_count="$( (grep -Fo "$placeholder" "$template" || true) | wc -l | tr -d '[:space:]')"
 if [[ "$match_count" != '1' ]]; then
   echo "emulator Job template must contain the image placeholder exactly once; found $match_count" >&2
   exit 1
