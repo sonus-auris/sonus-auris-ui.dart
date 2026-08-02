@@ -33,32 +33,83 @@ jobs:
 
           replace_once(
               "lib/main_desktop.dart",
-              """  await windowManager.ensureInitialized();\n  runApp(const SonusDesktopApp());\n""",
-              """  await windowManager.ensureInitialized();\n  await DesktopAutostart.setup();\n  runApp(const SonusDesktopApp());\n""",
+              """  await windowManager.ensureInitialized();
+  runApp(const SonusDesktopApp());
+""",
+              """  await windowManager.ensureInitialized();
+  await DesktopAutostart.setup();
+  runApp(const SonusDesktopApp());
+""",
           )
           replace_once(
               "lib/main_desktop.dart",
-              """    WidgetsBinding.instance.addObserver(this);\n    DesktopAutostart.setup();\n    _controller = AppController();\n""",
-              """    WidgetsBinding.instance.addObserver(this);\n    _controller = AppController();\n""",
+              """    WidgetsBinding.instance.addObserver(this);
+    DesktopAutostart.setup();
+    _controller = AppController();
+""",
+              """    WidgetsBinding.instance.addObserver(this);
+    _controller = AppController();
+""",
           )
 
           autostart = Path("lib/src/platform/desktop_autostart.dart")
           text = autostart.read_text()
-          old = """  /// Wires the cross-platform package on Windows/Linux. macOS uses the native\n  /// ServiceManagement bridge, which needs no executable path.\n  static void setup() {\n    if (!(Platform.isWindows || Platform.isLinux)) return;\n    launchAtStartup.setup(\n      appName: 'Sonus Auris',\n      appPath: Platform.resolvedExecutable,\n    );\n  }\n"""
-          new = """  /// Wires the legacy cross-platform package, then removes any old macOS\n  /// LaunchAgent that may point at a Terminal/debug executable. Packaged macOS\n  /// startup is re-registered later through `SMAppService.mainApp`.\n  static Future<void> setup() async {\n    if (!isSupported) return;\n    launchAtStartup.setup(\n      appName: 'Sonus Auris',\n      appPath: Platform.resolvedExecutable,\n    );\n    if (Platform.isMacOS) {\n      try {\n        await launchAtStartup.disable();\n      } catch (_) {\n        // Migration cleanup is best-effort. The native bundle registration is\n        // still authoritative for packaged release builds.\n      }\n    }\n  }\n"""
+          old = """  /// Wires the cross-platform package on Windows/Linux. macOS uses the native
+  /// ServiceManagement bridge, which needs no executable path.
+  static void setup() {
+    if (!(Platform.isWindows || Platform.isLinux)) return;
+    launchAtStartup.setup(
+      appName: 'Sonus Auris',
+      appPath: Platform.resolvedExecutable,
+    );
+  }
+"""
+          new = """  /// Wires the legacy cross-platform package, then removes any old macOS
+  /// LaunchAgent that may point at a Terminal/debug executable. Packaged macOS
+  /// startup is re-registered later through `SMAppService.mainApp`.
+  static Future<void> setup() async {
+    if (!isSupported) return;
+    launchAtStartup.setup(
+      appName: 'Sonus Auris',
+      appPath: Platform.resolvedExecutable,
+    );
+    if (Platform.isMacOS) {
+      try {
+        await launchAtStartup.disable();
+      } catch (_) {
+        // Migration cleanup is best-effort. The native bundle registration is
+        // still authoritative for packaged release builds.
+      }
+    }
+  }
+"""
           if old not in text:
               raise SystemExit("expected DesktopAutostart.setup block not found")
           autostart.write_text(text.replace(old, new, 1))
 
-          replace_once(
-              ".github/workflows/desktop-build.yml",
-              """  macos:\n    if: ${{ github.event_name != 'pull_request' }}\n    runs-on: macos-15\n""",
-              """  macos:\n    runs-on: macos-15\n""",
-          )
+          workflow = Path(".github/workflows/desktop-build.yml")
+          text = workflow.read_text()
+          expression = "$" + "{{ github.event_name != 'pull_request' }}"
+          old = f"  macos:\n    if: {expression}\n    runs-on: macos-15\n"
+          new = "  macos:\n    runs-on: macos-15\n"
+          if old not in text:
+              raise SystemExit("expected macOS PR condition not found")
+          workflow.write_text(text.replace(old, new, 1))
 
           readme = Path("README.md")
-          marker = """## Desktop builds (macOS / Windows / Linux)\n\n"""
-          note = """## Desktop builds (macOS / Windows / Linux)\n\nOn macOS, `flutter run` is a debug process launched by the invoking development\ntool and macOS may attribute its first microphone prompt to Terminal. Validate\nproduction permission branding by building and opening the packaged `Sonus\nAuris.app`. Launch-at-login is registered only by packaged release builds via\n`SMAppService.mainApp`; startup also removes the legacy debug LaunchAgent used by\nolder builds.\n\n"""
+          marker = """## Desktop builds (macOS / Windows / Linux)
+
+"""
+          note = """## Desktop builds (macOS / Windows / Linux)
+
+On macOS, `flutter run` is a debug process launched by the invoking development
+tool and macOS may attribute its first microphone prompt to Terminal. Validate
+production permission branding by building and opening the packaged `Sonus
+Auris.app`. Launch-at-login is registered only by packaged release builds via
+`SMAppService.mainApp`; startup also removes the legacy debug LaunchAgent used by
+older builds.
+
+"""
           text = readme.read_text()
           if marker not in text:
               raise SystemExit("desktop README heading not found")
