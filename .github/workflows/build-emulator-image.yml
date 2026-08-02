@@ -1,56 +1,324 @@
 name: Build Android emulator image
 
-# Builds ci/android-emulator/Dockerfile on a real amd64 runner and pushes it to
-# GHCR so the cluster (Hetzner/EC2 amd64 nodes) can pull it for the permission
-# test Job. This proves the Dockerfile (SDK install + AVD creation) works, and
-# produces the exact image referenced by
-# ci/android-emulator/k8s/emulator-permission-test.job.yaml.
-
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - ci/android-emulator/**
-      - scripts/emulator/**
       - .github/workflows/build-emulator-image.yml
+      - android/**
+      - assets/**
+      - ci/android-emulator/**
+      - lib/**
+      - pubspec.lock
+      - pubspec.yaml
+      - scripts/emulator/**
+      - tests/ci/android-emulator-image-policy.test.sh
   pull_request:
+    branches: [main]
     paths:
-      - ci/android-emulator/**
-      - scripts/emulator/**
       - .github/workflows/build-emulator-image.yml
+      - android/**
+      - assets/**
+      - ci/android-emulator/**
+      - lib/**
+      - pubspec.lock
+      - pubspec.yaml
+      - scripts/emulator/**
+      - tests/ci/android-emulator-image-policy.test.sh
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: android-emulator-image-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.44.2
+  VERIFY_IMAGE: sonus-android-emulator:verify
+  PUBLISHED_IMAGE: ghcr.io/sonus-auris/android-emulator
 
 jobs:
-  build-push:
+  policy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      # Pull requests build the Dockerfile to prove it still works, but must not
-      # publish: the :latest tag is consumed by the production k8s permission-test
-      # Job, and a PR branch is unreviewed code. Only main/dispatch publishes.
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+          show-progress: false
+
+      - name: Validate scripts and immutable handoff policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/emulator/render-k8s-job.sh
+          bash -n tests/ci/android-emulator-image-policy.test.sh
+          bash tests/ci/android-emulator-image-policy.test.sh
+
+  verify-image:
+    if: github.event_name == 'pull_request'
+    needs: policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push
+          persist-credentials: false
+          show-progress: false
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Build exact debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter build apk --debug \
+            --dart-define=SONUS_BACKEND_BASE_URL=http://127.0.0.1:8126 \
+            --dart-define=SONUS_SUPABASE_URL=http://127.0.0.1:54321 \
+            --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_compile_only
+
+      - name: Record exact APK digest
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          test -s "$apk"
+          sha256="$(sha256sum "$apk" | awk '{print $1}')"
+          [[ "$sha256" =~ ^[0-9a-f]{64}$ ]]
+          printf 'sha256=%s\n' "$sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build locally without registry credentials
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: ci/android-emulator/Dockerfile
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/android-emulator:latest
-            ghcr.io/${{ github.repository_owner }}/android-emulator:${{ github.sha }}
+          push: false
+          load: true
+          tags: ${{ env.VERIFY_IMAGE }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            APK_SHA256=${{ steps.apk.outputs.sha256 }}
+          provenance: false
+          sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Inspect exact APK and Android package evidence
+        env:
+          APK_SHA256: ${{ steps.apk.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          label="$(docker image inspect "$VERIFY_IMAGE" --format '{{ index .Config.Labels "app.sonusauris.apk.sha256" }}')"
+          test "$label" = "$APK_SHA256"
+          docker run --rm \
+            --entrypoint sh \
+            --env EXPECTED_APK_SHA256="$APK_SHA256" \
+            "$VERIFY_IMAGE" \
+            -eu -c '
+              test -s /work/app-under-test.apk
+              printf "%s  %s\n" "$EXPECTED_APK_SHA256" /work/app-under-test.apk | sha256sum --check --strict
+              test -s "$ANDROID_SDK_ROOT/installed-packages.txt"
+              test -s "$ANDROID_SDK_ROOT/source-properties.sha256"
+            '
+
+  publish-image:
+    if: github.event_name != 'pull_request'
+    needs: policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_ref: ${{ steps.identity.outputs.image_ref }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Build exact debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter build apk --debug \
+            --dart-define=SONUS_BACKEND_BASE_URL=http://127.0.0.1:8126 \
+            --dart-define=SONUS_SUPABASE_URL=http://127.0.0.1:54321 \
+            --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_compile_only
+
+      - name: Record exact APK digest
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          test -s "$apk"
+          sha256="$(sha256sum "$apk" | awk '{print $1}')"
+          [[ "$sha256" =~ ^[0-9a-f]{64}$ ]]
+          printf 'sha256=%s\n' "$sha256" >> "$GITHUB_OUTPUT"
+          printf '%s  %s\n' "$sha256" "$apk" > apk.sha256
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish exact-commit image with attestations
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ci/android-emulator/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.PUBLISHED_IMAGE }}:sha-${{ github.sha }}
+            ${{ env.PUBLISHED_IMAGE }}:latest
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            APK_SHA256=${{ steps.apk.outputs.sha256 }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Record immutable image identity
+        id: identity
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          image_ref="${PUBLISHED_IMAGE}@${DIGEST}"
+          printf 'image_ref=%s\n' "$image_ref" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$image_ref" > image-ref.txt
+          docker buildx imagetools inspect "$image_ref" > image-inspect.txt
+
+      - name: Upload immutable release evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-emulator-image-${{ github.sha }}
+          path: |
+            apk.sha256
+            image-inspect.txt
+            image-ref.txt
+          retention-days: 30
+          if-no-files-found: error
+
+  cluster-permission-test:
+    if: github.event_name != 'pull_request'
+    needs: publish-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Determine whether cluster credentials are configured
+        id: cluster
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_DATA }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$KUBECONFIG_DATA" ]]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo 'KUBECONFIG_DATA is not configured; immutable image publication remains valid and the cluster smoke is skipped.'
+          fi
+
+      - name: Configure read-scoped cluster client
+        if: steps.cluster.outputs.enabled == 'true'
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_DATA }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v kubectl >/dev/null
+          printf '%s' "$KUBECONFIG_DATA" | base64 --decode > "$RUNNER_TEMP/kubeconfig"
+          chmod 0600 "$RUNNER_TEMP/kubeconfig"
+
+      - name: Run digest-pinned permission Job
+        if: steps.cluster.outputs.enabled == 'true'
+        env:
+          IMAGE_REF: ${{ needs.publish-image.outputs.image_ref }}
+          KUBECONFIG: ${{ runner.temp }}/kubeconfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          namespace=sonus-auris
+          job=sonus-emulator-permission-test
+          rendered="$RUNNER_TEMP/emulator-permission-test.job.yaml"
+          bash scripts/emulator/render-k8s-job.sh \
+            ci/android-emulator/k8s/emulator-permission-test.job.yaml \
+            "$rendered" \
+            "$IMAGE_REF"
+          kubectl -n "$namespace" delete job "$job" --ignore-not-found --wait=true
+          kubectl apply -f "$rendered"
+          kubectl -n "$namespace" wait --for=condition=complete "job/$job" --timeout=35m
+
+      - name: Collect cluster evidence
+        if: always() && steps.cluster.outputs.enabled == 'true'
+        env:
+          IMAGE_REF: ${{ needs.publish-image.outputs.image_ref }}
+          KUBECONFIG: ${{ runner.temp }}/kubeconfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p cluster-evidence
+          printf '%s\n' "$IMAGE_REF" > cluster-evidence/image-ref.txt
+          cp "$RUNNER_TEMP/emulator-permission-test.job.yaml" cluster-evidence/rendered-job.yaml
+          kubectl -n sonus-auris get job sonus-emulator-permission-test -o yaml > cluster-evidence/job.yaml 2>&1 || true
+          kubectl -n sonus-auris describe job sonus-emulator-permission-test > cluster-evidence/job.describe.txt 2>&1 || true
+          kubectl -n sonus-auris logs job/sonus-emulator-permission-test --all-containers=true > cluster-evidence/job.log 2>&1 || true
+
+      - name: Upload cluster evidence
+        if: always() && steps.cluster.outputs.enabled == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-emulator-cluster-${{ github.sha }}
+          path: cluster-evidence
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Remove cluster credentials
+        if: always() && steps.cluster.outputs.enabled == 'true'
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/kubeconfig"
