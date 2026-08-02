@@ -58,6 +58,26 @@ jobs:
             lib/src/services/segment_upload_state_machine.dart \
             test/segment_upload_state_machine_test.dart
 
+      - name: Render canonical Dart formatting after a mismatch
+        if: failure()
+        run: |
+          dart format \
+            lib/src/models/recording_segment.dart \
+            lib/src/services/segment_upload_state_machine.dart \
+            test/segment_upload_state_machine_test.dart
+
+      - name: Upload canonical Dart formatter output
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: formal-dart-canonical-format
+          path: |
+            lib/src/models/recording_segment.dart
+            lib/src/services/segment_upload_state_machine.dart
+            test/segment_upload_state_machine_test.dart
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Analyze production transition seam and tests
         run: |
           flutter analyze --no-fatal-infos \
