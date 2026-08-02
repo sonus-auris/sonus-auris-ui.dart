@@ -704,15 +704,46 @@ class SupabaseRestClient {
     return _redactAndTruncate(value.toString(), 1000);
   }
 
+  /// Whether a telemetry `details` key names something that must never be
+  /// shipped verbatim.
+  ///
+  /// Deliberately NOT matched: bare `code` and `session`. `error_code`,
+  /// `status_code`, and `session_id` are diagnostic rather than secret, and
+  /// redacting them would blind telemetry without protecting anything.
   bool _looksSecretKey(String key) {
     final lower = key.toLowerCase();
     return lower.contains('token') ||
         lower.contains('secret') ||
         lower.contains('password') ||
+        lower.contains('passphrase') ||
         lower.contains('authorization') ||
+        lower.contains('credential') ||
         lower.contains('apikey') ||
-        lower.contains('api_key');
+        lower.contains('api_key') ||
+        // PKCE material: `code_verifier` / `codeVerifier` / `auth_code`.
+        lower.contains('verifier') ||
+        lower.contains('auth_code') ||
+        lower.contains('authcode') ||
+        lower.contains('jwt') ||
+        lower.contains('otp');
   }
+
+  /// Bare `header.payload.signature` JWT, matched without needing a `Bearer`
+  /// prefix. Supabase access/refresh tokens and legacy anon keys all start
+  /// `eyJ` (base64url of `{"`), which keeps this from eating ordinary text.
+  static final RegExp _bareJwtPattern = RegExp(
+    r'eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*',
+  );
+
+  /// Auth material carried in a URL query string or a form-encoded body — the
+  /// shape an HTTP client uses when it echoes a failed request back into an
+  /// exception message.
+  static final RegExp _authQueryParameterPattern = RegExp(
+    r'''\b(access_token|refresh_token|id_token|provider_token'''
+    r'''|provider_refresh_token|auth_code|code_verifier|code_challenge'''
+    r'''|apikey|api_key|token)=[^\s&"']+''',
+    caseSensitive: false,
+  );
 
   String _redactAndTruncate(String value, int maxLength) {
     var clean = value
@@ -724,6 +755,11 @@ class SupabaseRestClient {
           RegExp(r'sb_(?:secret|service_role)_[A-Za-z0-9._~-]+'),
           'sb_[redacted]',
         )
+        .replaceAllMapped(
+          _authQueryParameterPattern,
+          (match) => '${match.group(1)}=[redacted]',
+        )
+        .replaceAll(_bareJwtPattern, '[redacted-jwt]')
         .replaceAll(
           RegExp(r'postgresql://[^\s]+', caseSensitive: false),
           'postgresql://[redacted]',
