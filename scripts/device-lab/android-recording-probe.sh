@@ -105,11 +105,14 @@ recent_logcat() {
 }
 
 capture_lab_notification() {
+  # Android's indentation around NotificationRecord changed across emulator
+  # releases. Match the record token at any indentation, then retain enough of
+  # only the isolated package's stanza to include title/text extras.
   adb_ shell dumpsys notification --noredact 2>/dev/null |
     awk -v package="$LAB_PKG" '
-      /^  NotificationRecord\(/ {
+      /NotificationRecord\(/ {
         keep = index($0, package) > 0
-        remaining = keep ? 45 : 0
+        remaining = keep ? 120 : 0
       }
       keep && remaining > 0 {
         print
@@ -193,6 +196,10 @@ cleanup() {
 }
 
 main() {
+  # The outer evidence pipeline temporarily disables errexit so it can collect
+  # all three component statuses. Restore fail-closed behavior inside main.
+  set -euo pipefail
+
   need adb
   need flutter
   need python3
@@ -293,14 +300,17 @@ ISOLATION
   echo "== drive isolated real-microphone test =="
   local drive_log="$EVIDENCE_DIR/drive.log"
   (
-    cd "$ROOT"
-    SONUS_DEVICE_LAB_ANDROID=1 flutter drive \
-      --driver=test_driver/integration_test.dart \
-      --target="$TARGET" \
-      --use-application-binary="$APK" \
-      --dart-define=SONUS_DEVICE_LAB_RECORDING_PROBE=true \
-      -d "$SERIAL"
-  ) > >(python3 "$EVIDENCE_POLICY" --stream | tee "$drive_log") 2>&1 &
+    set -o pipefail
+    (
+      cd "$ROOT"
+      SONUS_DEVICE_LAB_ANDROID=1 flutter drive \
+        --driver=test_driver/integration_test.dart \
+        --target="$TARGET" \
+        --use-application-binary="$APK" \
+        --dart-define=SONUS_DEVICE_LAB_RECORDING_PROBE=true \
+        -d "$SERIAL"
+    ) 2>&1 | python3 "$EVIDENCE_POLICY" --stream | tee "$drive_log"
+  ) &
   DRIVE_PID=$!
 
   local deadline=$((SECONDS + 900))
@@ -318,12 +328,17 @@ ISOLATION
   wait "$DRIVE_PID" || drive_status=$?
   DRIVE_PID=""
   if [[ "$drive_status" != "0" ]]; then
-    echo "Isolated Flutter drive failed with status $drive_status." >&2
+    echo "Isolated Flutter drive/evidence pipeline failed with status $drive_status." >&2
     exit "$drive_status"
   fi
 
-  wait "$PROBE_PID"
+  local background_status=0
+  wait "$PROBE_PID" || background_status=$?
   PROBE_PID=""
+  if [[ "$background_status" != "0" ]]; then
+    echo "Android background lifecycle probe failed with status $background_status." >&2
+    exit "$background_status"
+  fi
 
   grep -Fq 'SONUS_DEVICE_LAB_RECORDING_RESULT' "$drive_log"
   grep -Fq 'SONUS_DEVICE_LAB_AUDIO_CLEANUP_PASSED' "$drive_log"
@@ -343,6 +358,7 @@ explicit_recording_consent=true
 package=$LAB_PKG
 production_package_addressed=false
 record_audio_granted_to_isolated_package=true
+persistent_notification_verified=true
 shared_logcat_cleared=false
 raw_audio_exported=false
 probe_audio_cleanup_passed=true
@@ -354,13 +370,24 @@ RESULT
 
 set +e
 main 2>&1 | python3 "$EVIDENCE_POLICY" --stream | tee "$EVIDENCE_DIR/run.log"
-main_status=${PIPESTATUS[0]}
+pipeline_status=("${PIPESTATUS[@]}")
 set -e
+main_status="${pipeline_status[0]}"
+stream_status="${pipeline_status[1]}"
+tee_status="${pipeline_status[2]}"
 
 policy_status=0
 python3 "$EVIDENCE_POLICY" --redact "$EVIDENCE_DIR" || policy_status=$?
 if [[ "$main_status" != "0" ]]; then
   exit "$main_status"
+fi
+if [[ "$stream_status" != "0" ]]; then
+  echo "Evidence stream sanitization failed with status $stream_status." >&2
+  exit "$stream_status"
+fi
+if [[ "$tee_status" != "0" ]]; then
+  echo "Evidence log capture failed with status $tee_status." >&2
+  exit "$tee_status"
 fi
 if [[ "$policy_status" != "0" ]]; then
   exit "$policy_status"
