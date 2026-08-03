@@ -1,0 +1,39 @@
+name: Physical iOS target resolution
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/device-lab/macos-end-device-smoke.sh
+      - scripts/device-lab/resolve-physical-ios.py
+      - tests/ci/ios-device-target-resolution.test.py
+      - .github/workflows/ios-device-target-resolution.yml
+  pull_request:
+    paths:
+      - scripts/device-lab/macos-end-device-smoke.sh
+      - scripts/device-lab/resolve-physical-ios.py
+      - tests/ci/ios-device-target-resolution.test.py
+      - .github/workflows/ios-device-target-resolution.yml
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Required/auto physical-iOS selection contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate resolver and orchestration
+        run: |
+          set -euo pipefail
+          bash -n scripts/device-lab/macos-end-device-smoke.sh
+          python3 -m py_compile \
+            scripts/device-lab/resolve-physical-ios.py \
+            tests/ci/ios-device-target-resolution.test.py
+          python3 scripts/device-lab/resolve-physical-ios.py --self-test
+          python3 tests/ci/ios-device-target-resolution.test.py
