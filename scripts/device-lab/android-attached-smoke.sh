@@ -2,8 +2,9 @@
 # Non-destructive launch/lifecycle smoke for an attached Android device.
 #
 # Unlike scripts/emulator/permission-smoke.sh, this physical-device harness
-# never uninstalls the package, clears app data, or changes runtime permissions.
-# It may update/install the supplied APK, force-stop the process, and relaunch it.
+# never uninstalls the package, clears app data, changes runtime permissions, or
+# clears the device-wide logcat buffer. It may update/install the supplied APK,
+# force-stop the Sonus Auris process, and relaunch it.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -15,8 +16,28 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 EVIDENCE_DIR="${SONUS_DEVICE_LAB_DIR:-$ROOT/build/device-lab/android-$STAMP}"
 CAPTURE_SCREENSHOT="${SONUS_CAPTURE_SCREENSHOT:-0}"
 REQUIRE_UI="${SONUS_REQUIRE_ANDROID_UI:-0}"
+ALLOW_EMULATOR="${SONUS_ALLOW_ANDROID_EMULATOR:-0}"
+LOGCAT_SINCE_EPOCH="0"
 mkdir -p "$EVIDENCE_DIR"
-exec > >(tee "$EVIDENCE_DIR/run.log") 2>&1
+
+# Sanitize the complete run log, including Flutter/ADB failures that may contain
+# a local account path, an auth callback, or token-shaped material.
+exec > >(python3 -u -c '
+import re
+import sys
+patterns = [
+    (re.compile(r"/Users/[^/\s]+"), "/Users/<redacted>"),
+    (re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer <redacted>"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), "<redacted-jwt>"),
+    (re.compile(r"(?i)(access_token|refresh_token|id_token|token|code|code_verifier|authorization_code|otp)=([^&\s]+)"), r"\1=<redacted>"),
+    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "<redacted-email>"),
+]
+for line in sys.stdin:
+    for pattern, replacement in patterns:
+        line = pattern.sub(replacement, line)
+    sys.stdout.write(line)
+    sys.stdout.flush()
+' | tee "$EVIDENCE_DIR/run.log") 2>&1
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -27,23 +48,29 @@ need() {
 
 need adb
 need python3
+need shasum
 
 attached_devices() {
-  adb devices | awk 'NR > 1 && $2 == "device" { print $1 }'
+  adb devices | awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { print $1 }'
 }
 
 if [[ -z "$SERIAL" ]]; then
   device_list="$(attached_devices)"
   device_count="$(printf '%s\n' "$device_list" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
   if [[ "$device_count" == "0" ]]; then
-    echo "No authorized Android device is visible. Unlock the handset, enable USB debugging, and accept the RSA prompt." >&2
+    echo "No authorized physical Android device is visible. Unlock the handset, enable USB debugging, and accept the RSA prompt." >&2
     exit 3
   fi
   if [[ "$device_count" != "1" ]]; then
-    echo "More than one authorized Android target is attached. Pass the intended adb serial as argument 2 or set ANDROID_SERIAL." >&2
+    echo "More than one authorized physical Android target is attached. Pass the intended adb serial as argument 2 or set ANDROID_SERIAL." >&2
     exit 3
   fi
   SERIAL="$device_list"
+fi
+
+if [[ "$SERIAL" == emulator-* && "$ALLOW_EMULATOR" != "1" ]]; then
+  echo "This harness preserves physical-device state and refuses emulator serials by default. Use scripts/emulator/permission-smoke.sh for the destructive emulator matrix." >&2
+  exit 3
 fi
 
 adb_() {
@@ -56,15 +83,34 @@ import re
 import sys
 text = sys.stdin.read()
 patterns = [
+    (r"/Users/[^/\s]+", "/Users/<redacted>"),
     (r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer <redacted>"),
     (r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", "<redacted-jwt>"),
-    (r"(?i)(access_token|refresh_token|id_token|code_verifier|authorization_code|otp)=([^&\s]+)", r"\1=<redacted>"),
+    (r"(?i)(access_token|refresh_token|id_token|token|code|code_verifier|authorization_code|otp)=([^&\s]+)", r"\1=<redacted>"),
+    (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", "<redacted-email>"),
     (r"http://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+", "http://127.0.0.1:<port>/<redacted>"),
 ]
 for pattern, replacement in patterns:
     text = re.sub(pattern, replacement, text)
 sys.stdout.write(text)
 '
+}
+
+mark_logcat_start() {
+  local candidate
+  candidate="$(adb_ shell date +%s 2>/dev/null | tr -d '\r' | head -n 1 || true)"
+  if [[ ! "$candidate" =~ ^[0-9]+$ ]]; then
+    candidate="$(date +%s)"
+  fi
+  LOGCAT_SINCE_EPOCH="$candidate"
+}
+
+recent_logcat() {
+  # `-v epoch` gives a numeric timestamp in the first field. Filtering from a
+  # device-derived epoch avoids stale crashes without destroying the shared
+  # device log buffer via `logcat -c`.
+  adb_ logcat -d -v epoch 2>/dev/null \
+    | awk -v since="$LOGCAT_SINCE_EPOCH" '$1 ~ /^[0-9]+([.][0-9]+)?$/ && ($1 + 0) >= (since + 0)'
 }
 
 serial_fingerprint="$(printf '%s' "$SERIAL" | shasum -a 256 | awk '{print substr($1, 1, 12)}')"
@@ -119,7 +165,7 @@ NOTICE
 fi
 
 echo "== launch =="
-adb_ logcat -c
+mark_logcat_start
 launch_output="$(adb_ shell am start -W -n "$ACTIVITY" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER 2>&1 || true)"
 printf '%s\n' "$launch_output" | sanitize_stream | tee "$EVIDENCE_DIR/first-launch.txt"
 
@@ -172,7 +218,7 @@ print("ui_labels=" + ", ".join(sorted(set(labels))) if labels else "ui_labels=<n
 }
 
 capture_crash_evidence() {
-  adb_ logcat -d 2>/dev/null \
+  recent_logcat \
     | grep -E "FATAL EXCEPTION|AndroidRuntime|Process $PKG|am_crash|flutter" \
     | tail -n 200 \
     | sanitize_stream > "$EVIDENCE_DIR/crash-focused-logcat.txt" || true
@@ -182,7 +228,8 @@ capture_crash_evidence() {
     ' > "$EVIDENCE_DIR/package-summary.txt" || true
   adb_ shell dumpsys activity activities 2>/dev/null \
     | grep -E "mResumedActivity|topResumedActivity|$PKG" \
-    | head -n 80 > "$EVIDENCE_DIR/activity-summary.txt" || true
+    | head -n 80 \
+    | sanitize_stream > "$EVIDENCE_DIR/activity-summary.txt" || true
   if [[ "$CAPTURE_SCREENSHOT" == "1" ]]; then
     adb_ exec-out screencap -p > "$EVIDENCE_DIR/screenshot.png" 2>/dev/null || true
   fi
@@ -215,7 +262,7 @@ if [[ -n "$(adb_ shell pidof "$PKG" 2>/dev/null | tr -d '\r')" ]]; then
   echo "force-stop did not terminate the process" >&2
   exit 9
 fi
-adb_ logcat -c
+mark_logcat_start
 relaunch_output="$(adb_ shell am start -W -n "$ACTIVITY" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER 2>&1 || true)"
 printf '%s\n' "$relaunch_output" | sanitize_stream | tee "$EVIDENCE_DIR/cold-relaunch.txt"
 if ! wait_for_process 40; then
@@ -236,6 +283,7 @@ scope=non-destructive-install-launch-cold-relaunch
 package=$PKG
 app_data_cleared=false
 permissions_mutated=false
+log_buffer_cleared=false
 screenshot_captured=$CAPTURE_SCREENSHOT
 RESULT
 
