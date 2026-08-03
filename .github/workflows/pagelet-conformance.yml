@@ -42,12 +42,40 @@ jobs:
           --lock test/fixtures/pagelets/interface-contract.lock.json
           --github-output "$GITHUB_OUTPUT"
 
+      - name: Require least-privilege cross-repository App credentials
+        shell: bash
+        env:
+          APP_ID: ${{ vars.SONUS_CROSS_REPO_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.SONUS_CROSS_REPO_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${APP_ID:-}" ]] || missing+=(SONUS_CROSS_REPO_APP_ID)
+          [[ -n "${APP_PRIVATE_KEY:-}" ]] || missing+=(SONUS_CROSS_REPO_APP_PRIVATE_KEY)
+          if ((${#missing[@]} > 0)); then
+            printf 'Immutable interface checkout requires the Sonus cross-repository GitHub App; missing:' >&2
+            printf ' %s' "${missing[@]}" >&2
+            printf '\n' >&2
+            exit 1
+          fi
+
+      - name: Create a read-only token for the interfaces repository
+        id: interface-app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.SONUS_CROSS_REPO_APP_ID }}
+          private-key: ${{ secrets.SONUS_CROSS_REPO_APP_PRIVATE_KEY }}
+          owner: sonus-auris
+          repositories: sonus-auris-interfaces
+          permission-contents: read
+
       - name: Checkout the exact interface commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ steps.interface-lock.outputs.repository }}
           ref: ${{ steps.interface-lock.outputs.commit }}
           path: .interface-contract
+          token: ${{ steps.interface-app-token.outputs.token }}
           persist-credentials: false
 
       - name: Prove the interface checkout did not move
