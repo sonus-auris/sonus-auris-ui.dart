@@ -13,7 +13,7 @@ in **DEN-296**, and the current Samsung release-candidate acceptance remains in
 
 | Target | Transport | Automated evidence | Manual evidence still required |
 |---|---|---|---|
-| iOS Simulator | CoreSimulator on the MacBook | build, install, launch, process health, PID-scoped crash logs, cold relaunch, in-place reinstall, data-container preservation, post-update relaunch, optional screenshots | microphone/background restrictions that the simulator cannot represent faithfully |
+| iOS Simulator | CoreSimulator on the MacBook | build, install, launch, process health, PID-scoped crash logs, cold relaunch, in-place reinstall, test-sentinel data persistence, post-update relaunch, optional screenshots | microphone/background restrictions that the simulator cannot represent faithfully |
 | Physical iPhone | USB for first pairing, then USB or paired Wi-Fi | development-signed install/update, two bounded launch cycles by default, sanitized Flutter/Xcode output | microphone prompt, recording indicator, lock/background capture, playback, Bluetooth changes, battery/thermal/storage observations |
 | Physical Android | authorized USB ADB | non-destructive install/update, pre/post package-state comparison, launch, process/UI health, Home/foreground resume, time-bounded crash logs without clearing logcat, force-stop and cold relaunch | disclosure-driven permission prompts, recording notification/indicator, lock/background capture, playback, Bluetooth changes, battery/thermal/storage observations |
 | Flutter macOS | isolated packaged `.app` | production bundle/signature verification, side-effect-suppressed isolated launch, crash-focused unified log, bounded app-event Quit | microphone grant and a short explicitly consented recording in the normal app |
@@ -34,6 +34,9 @@ default:
   recovery-code evidence;
 - screenshots are off by default on operator devices because a signed-in screen
   may contain personal information;
+- simulator update persistence is proved with one namespaced, test-owned marker;
+  no existing app-private file is enumerated or read, and only that marker is
+  removed after verification;
 - an APK signature mismatch fails closed rather than uninstalling the existing
   Android app and deleting app-private recordings, keys, settings, or account
   state; and
@@ -42,10 +45,11 @@ default:
   recording.
 
 The orchestrator runs `scripts/device-lab/evidence-policy.py` after every target.
-That policy redacts local account paths, email addresses, tokens, callback/VM
-service URLs, and common API-key forms; rejects raw-audio/key/provisioning files
-and symlinks; and writes `evidence-policy.txt` into each target directory. A
-target fails when its evidence fails this policy.
+That policy redacts local account paths, UUIDs, email addresses, tokens,
+callback/VM service URLs, and common API-key forms; waits for evidence writers
+to close; rejects raw-audio/key/provisioning files and symlinks; and writes
+`evidence-policy.txt` into each target directory. A target fails when its
+evidence fails this policy.
 
 `scripts/emulator/permission-smoke.sh` intentionally performs a clean install and
 mutates permissions. It remains **emulator-only** and must not be substituted for
@@ -153,15 +157,18 @@ bash scripts/device-lab/ios-simulator-smoke.sh <simulator-udid>
 The script preserves installed app data. It builds a debug simulator app with
 inert compile-only endpoints, installs it, launches it, verifies that the process
 stays alive, captures sanitized logs scoped to the PID returned by
-`simctl launch`, terminates the process, and cold-relaunches it. It then installs
-the same candidate in place, compares only hashed data-container paths before
-and after the update, and requires a healthy post-update relaunch. It never reads
-app-private files to make the preservation claim.
+`simctl launch`, terminates the process, and cold-relaunches it. Before installing
+the same candidate in place, it writes one namespaced, test-owned sentinel under
+`Library/Application Support/SonusAurisDeviceLab`. It verifies that sentinel from
+the post-update data container even when CoreSimulator relocates the opaque
+container path, removes only the sentinel, and requires a healthy post-update
+relaunch. It never enumerates or reads existing app-private files to make the
+persistence claim.
 
 First-launch, cold-relaunch, and post-update logs remain separate so a later phase
 cannot overwrite earlier evidence. The same script runs on `macos-15` in
 `.github/workflows/device-lab.yml`, giving pull requests a simulator runtime and
-upgrade-preservation gate in addition to the existing unsigned iPhone compile.
+upgrade-persistence gate in addition to the existing unsigned iPhone compile.
 
 ### Physical iPhone
 
@@ -287,7 +294,7 @@ Attach only the smallest sanitized evidence needed to DEN-1398/DEN-836/DEN-296:
 
 - app version/build/commit and artifact checksum;
 - hashed target identifier plus model/OS/runtime;
-- install/update outcome and package/data-container preservation result;
+- install/update outcome and semantic package/data-persistence result;
 - pass/fail lifecycle result;
 - package permission state without changing it;
 - crash-focused logs with tokens redacted;
