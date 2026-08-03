@@ -36,18 +36,33 @@ jobs:
                   raise SystemExit(
                       f'refusing drifted recording probe: expected {expected}, observed {observed}'
                   )
-              old = '''    recent_logcat |
-                  grep -E "$LAB_PKG|FATAL EXCEPTION|AndroidRuntime|am_crash" |
-                  tail -n 160 > "$EVIDENCE_DIR/crash-focused-logcat.txt" || true
-          '''
-              new = '''    recent_logcat |
-                  grep -E "$LAB_PKG|FATAL EXCEPTION|AndroidRuntime|am_crash" |
-                  python3 "$ROOT/scripts/device-lab/bounded-log.py" --max-bytes 524288 \\
-                  > "$EVIDENCE_DIR/crash-focused-logcat.txt" || true
-          '''
-              if probe_text.count(old) != 1:
-                  raise SystemExit('expected exactly one final-only crash-log block')
-              probe.write_text(probe_text.replace(old, new, 1), encoding='utf-8')
+
+              lines = probe_text.splitlines(keepends=True)
+              matches = []
+              for index in range(len(lines) - 2):
+                  if (
+                      lines[index].strip() == 'recent_logcat |'
+                      and lines[index + 1].strip()
+                      == 'grep -E "$LAB_PKG|FATAL EXCEPTION|AndroidRuntime|am_crash" |'
+                      and lines[index + 2].strip()
+                      == 'tail -n 160 > "$EVIDENCE_DIR/crash-focused-logcat.txt" || true'
+                  ):
+                      matches.append(index)
+              if len(matches) != 1:
+                  raise SystemExit(
+                      f'expected exactly one final-only crash-log block, found {len(matches)}'
+                  )
+              index = matches[0]
+              indent = lines[index][:-len(lines[index].lstrip())]
+              continuation = chr(92)
+              lines[index:index + 3] = [
+                  f'{indent}recent_logcat |\n',
+                  f'{indent}  grep -E "$LAB_PKG|FATAL EXCEPTION|AndroidRuntime|am_crash" |\n',
+                  f'{indent}  python3 "$ROOT/scripts/device-lab/bounded-log.py" '
+                  f'--max-bytes 524288 {continuation}\n',
+                  f'{indent}  > "$EVIDENCE_DIR/crash-focused-logcat.txt" || true\n',
+              ]
+              probe.write_text(''.join(lines), encoding='utf-8')
 
           contract = Path('tests/ci/android-device-lab-recording.test.sh')
           contract_text = contract.read_text(encoding='utf-8')
