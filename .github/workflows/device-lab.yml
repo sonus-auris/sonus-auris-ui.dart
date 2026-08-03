@@ -1,9 +1,10 @@
-name: Device-lab scripts, iOS Simulator, and isolated Android recording
+name: Device-lab scripts, iOS Simulator, and isolated Android probes
 
 on:
   pull_request:
     paths:
       - 'android/**'
+      - 'integration_test/device_lab_permission_denied_test.dart'
       - 'integration_test/device_lab_recording_probe_test.dart'
       - 'lib/**'
       - 'ios/**'
@@ -13,6 +14,8 @@ on:
       - 'pubspec.lock'
       - 'scripts/device-lab/**'
       - 'tests/ci/android-device-lab-recording.test.sh'
+      - 'tests/ci/android-permission-denial.test.sh'
+      - 'docs/android-permission-denial-device-lab.md'
       - 'docs/android-recording-device-lab.md'
       - 'docs/end-device-testing.md'
       - 'docs/mobile-ci.md'
@@ -21,6 +24,7 @@ on:
     branches: [main]
     paths:
       - 'android/**'
+      - 'integration_test/device_lab_permission_denied_test.dart'
       - 'integration_test/device_lab_recording_probe_test.dart'
       - 'lib/**'
       - 'ios/**'
@@ -30,6 +34,8 @@ on:
       - 'pubspec.lock'
       - 'scripts/device-lab/**'
       - 'tests/ci/android-device-lab-recording.test.sh'
+      - 'tests/ci/android-permission-denial.test.sh'
+      - 'docs/android-permission-denial-device-lab.md'
       - 'docs/android-recording-device-lab.md'
       - 'docs/end-device-testing.md'
       - 'docs/mobile-ci.md'
@@ -61,7 +67,9 @@ jobs:
           set -euo pipefail
           bash -n scripts/device-lab/*.sh
           bash -n tests/ci/android-device-lab-recording.test.sh
+          bash -n tests/ci/android-permission-denial.test.sh
           bash tests/ci/android-device-lab-recording.test.sh
+          bash tests/ci/android-permission-denial.test.sh
           python3 -m py_compile scripts/device-lab/evidence-policy.py
           python3 scripts/device-lab/evidence-policy.py --self-test
           grep -Fq '"uuid"' scripts/device-lab/evidence-policy.py
@@ -74,19 +82,23 @@ jobs:
         run: |
           set -euo pipefail
           android=scripts/device-lab/android-attached-smoke.sh
+          android_permission=scripts/device-lab/android-permission-denial-probe.sh
           android_recording=scripts/device-lab/android-recording-probe.sh
           ios_device=scripts/device-lab/ios-attached-smoke.sh
           ios_simulator=scripts/device-lab/ios-simulator-smoke.sh
           orchestrator=scripts/device-lab/macos-end-device-smoke.sh
-          if grep -En 'adb(_)? .*uninstall|pm clear|simctl erase|simctl uninstall|^[[:space:]]*adb(_)?[[:space:]].*logcat[[:space:]]+-c' \
-            "$android" "$android_recording" "$ios_device" "$ios_simulator"; then
-            echo 'Attached-device/simulator scripts may not clear app, device, permission, or shared log data.' >&2
+          if grep -En 'adb(_)? .*uninstall|pm[[:space:]]+clear([[:space:]]|$)|simctl erase|simctl uninstall|^[[:space:]]*adb(_)?[[:space:]].*logcat[[:space:]]+-c' \
+            "$android" "$android_permission" "$android_recording" "$ios_device" "$ios_simulator"; then
+            echo 'Attached-device/simulator scripts may not uninstall, clear app/device data, or clear shared logs.' >&2
             exit 1
           fi
           grep -Fq 'permissions_mutated=false' "$android"
           grep -Fq 'log_buffer_cleared=false' "$android"
           grep -Fq 'package_state_preserved=' "$android"
           grep -Fq '$(basename "$APK")' "$android"
+          grep -Fq 'production_package_addressed=false' "$android_permission"
+          grep -Fq 'recording_lab_package_addressed=false' "$android_permission"
+          grep -Fq 'probe_audio_artifacts=0' "$android_permission"
           grep -Fq 'I_CONSENT_TO_A_15_SECOND_SONUS_DEVICE_LAB_RECORDING' "$android_recording"
           grep -Fq 'production_package_addressed=false' "$android_recording"
           grep -Fq 'raw_audio_exported=false' "$android_recording"
@@ -102,6 +114,7 @@ jobs:
           grep -Fq 'existing_app_files_enumerated=false' "$ios_simulator"
           grep -Fq 'process_scoped_logs=true' "$ios_simulator"
           grep -Fq 'evidence-policy.py' "$orchestrator"
+          grep -Fq 'SONUS_RUN_ANDROID_PERMISSION_DENIAL_PROBE' "$orchestrator"
           grep -Fq 'SONUS_RUN_ANDROID_RECORDING_PROBE' "$orchestrator"
           if grep -Fq 'shasum -a 256 "$APK" >' "$android"; then
             echo 'APK checksum evidence may not embed the operator checkout path.' >&2
@@ -121,8 +134,8 @@ jobs:
           grep -Fq "tell application id \\\"\$RUNTIME_BUNDLE_ID\\\" to quit" "$script"
           grep -Fq "const bool kSonusDeviceLabNoSideEffects" "$source"
           grep -Fq "if (!isSupported || kSonusDeviceLabNoSideEffects) return;" "$source"
-          if grep -En 'rm -|rm$|find .* -delete|simctl erase|pm clear|adb(_)? .*uninstall' scripts/device-lab/*.sh; then
-            echo 'Device-lab scripts may not delete app, recording, permission, or device data.' >&2
+          if grep -En 'rm -|rm$|find .* -delete|simctl erase|pm[[:space:]]+clear([[:space:]]|$)|adb(_)? .*uninstall' scripts/device-lab/*.sh; then
+            echo 'Device-lab scripts may not delete app, recording, or device data.' >&2
             exit 1
           fi
 
@@ -152,13 +165,16 @@ jobs:
         run: |
           set -euo pipefail
           dart format \
+            integration_test/device_lab_permission_denied_test.dart \
             integration_test/device_lab_recording_probe_test.dart \
             lib/src/platform/desktop_autostart.dart
           if ! git diff --exit-code -- \
+            integration_test/device_lab_permission_denied_test.dart \
             integration_test/device_lab_recording_probe_test.dart \
             lib/src/platform/desktop_autostart.dart; then
             echo 'Device-lab Dart source is not formatted; exact formatter delta follows.' >&2
             git diff -- \
+              integration_test/device_lab_permission_denied_test.dart \
               integration_test/device_lab_recording_probe_test.dart \
               lib/src/platform/desktop_autostart.dart
             exit 1
@@ -188,11 +204,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  android-isolated-recording:
-    name: Isolated Android recording/background probe (API 34)
+  android-isolated-probes:
+    name: Isolated Android denial and recording probes (API 34)
     needs: script-contract
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -217,13 +233,12 @@ jobs:
           flutter-version: 3.44.2
           cache: true
 
-      - name: Run the operator-equivalent isolated probe on KVM
+      - name: Run denial then recording probe on one KVM emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         env:
           QEMU_AUDIO_DRV: none
           SONUS_ALLOW_ANDROID_EMULATOR: '1'
           SONUS_ANDROID_RECORDING_PROBE_CONSENT: I_CONSENT_TO_A_15_SECOND_SONUS_DEVICE_LAB_RECORDING
-          SONUS_DEVICE_LAB_DIR: ${{ github.workspace }}/isolated-android-recording-evidence
         with:
           api-level: 34
           target: google_apis
@@ -231,10 +246,35 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect -allow-host-audio
           disable-animations: true
-          script: adb emu avd hostmicon && bash scripts/device-lab/android-recording-probe.sh
+          script: |
+            set +e
+            SONUS_DEVICE_LAB_DIR="$GITHUB_WORKSPACE/isolated-android-permission-evidence" \
+              bash scripts/device-lab/android-permission-denial-probe.sh
+            permission_status=$?
+            adb emu avd hostmicon
+            SONUS_DEVICE_LAB_DIR="$GITHUB_WORKSPACE/isolated-android-recording-evidence" \
+              bash scripts/device-lab/android-recording-probe.sh
+            recording_status=$?
+            if [[ "$permission_status" != "0" ]]; then
+              echo "Permission-denial probe failed with status $permission_status" >&2
+              exit "$permission_status"
+            fi
+            if [[ "$recording_status" != "0" ]]; then
+              echo "Recording probe failed with status $recording_status" >&2
+              exit "$recording_status"
+            fi
 
-      - name: Redact and verify isolated Android evidence
-        id: android_evidence_policy
+      - name: Redact and verify permission-denial evidence
+        id: permission_evidence_policy
+        if: always()
+        env:
+          SONUS_DEVICE_LAB_DIR: ${{ github.workspace }}/isolated-android-permission-evidence
+        run: |
+          mkdir -p "$SONUS_DEVICE_LAB_DIR"
+          python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
+
+      - name: Redact and verify recording evidence
+        id: recording_evidence_policy
         if: always()
         env:
           SONUS_DEVICE_LAB_DIR: ${{ github.workspace }}/isolated-android-recording-evidence
@@ -242,8 +282,17 @@ jobs:
           mkdir -p "$SONUS_DEVICE_LAB_DIR"
           python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
 
-      - name: Upload sanitized isolated Android evidence
-        if: ${{ always() && steps.android_evidence_policy.outcome == 'success' }}
+      - name: Upload sanitized permission-denial evidence
+        if: ${{ always() && steps.permission_evidence_policy.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonus-isolated-android-permission-denial-evidence
+          path: isolated-android-permission-evidence/**
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload sanitized recording evidence
+        if: ${{ always() && steps.recording_evidence_policy.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonus-isolated-android-recording-evidence
