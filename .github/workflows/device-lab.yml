@@ -70,6 +70,8 @@ jobs:
           grep -Fq '$(basename "$APK")' "$android"
           grep -Fq 'app_data_cleared=false' "$ios_device"
           grep -Fq 'launch_cycles_completed=' "$ios_device"
+          grep -Fq 'selected.get("emulator")' "$ios_device"
+          grep -Fq 'The requested Flutter target is an emulator, not a physical iPhone' "$ios_device"
           grep -Fq 'data_container_preserved=true' "$ios_simulator"
           grep -Fq 'process_scoped_logs=true' "$ios_simulator"
           grep -Fq 'evidence-policy.py' "$orchestrator"
