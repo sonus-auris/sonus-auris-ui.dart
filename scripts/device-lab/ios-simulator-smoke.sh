@@ -9,6 +9,7 @@ UDID="${1:-${IOS_SIMULATOR_UDID:-}}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 EVIDENCE_DIR="${SONUS_DEVICE_LAB_DIR:-$ROOT/build/device-lab/ios-simulator-$STAMP}"
 CAPTURE_SCREENSHOT="${SONUS_CAPTURE_SCREENSHOT:-0}"
+CURRENT_PID=""
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -20,11 +21,10 @@ need() {
 need xcrun
 need flutter
 need python3
-need shasum
 
 mkdir -p "$EVIDENCE_DIR"
 # Sanitize the complete run log, including build-tool failures that may contain
-# the local account name or token-shaped values.
+# the local account name, an auth callback, or token-shaped values.
 exec > >(python3 -u -c '
 import re
 import sys
@@ -32,7 +32,8 @@ patterns = [
     (re.compile(r"/Users/[^/\s]+"), "/Users/<redacted>"),
     (re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer <redacted>"),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), "<redacted-jwt>"),
-    (re.compile(r"(?i)(access_token|refresh_token|id_token|code_verifier|authorization_code|otp)=([^&\s]+)"), r"\1=<redacted>"),
+    (re.compile(r"(?i)(access_token|refresh_token|id_token|token|code|code_verifier|authorization_code|otp)=([^&\s]+)"), r"\1=<redacted>"),
+    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "<redacted-email>"),
     (re.compile(r"http://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+"), "http://127.0.0.1:<port>/<redacted>"),
 ]
 for line in sys.stdin:
@@ -152,7 +153,8 @@ patterns = [
     (r"/Users/[^/\s]+", "/Users/<redacted>"),
     (r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer <redacted>"),
     (r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", "<redacted-jwt>"),
-    (r"(?i)(access_token|refresh_token|id_token|code_verifier|authorization_code|otp)=([^&\s]+)", r"\1=<redacted>"),
+    (r"(?i)(access_token|refresh_token|id_token|token|code|code_verifier|authorization_code|otp)=([^&\s]+)", r"\1=<redacted>"),
+    (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", "<redacted-email>"),
     (r"http://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+", "http://127.0.0.1:<port>/<redacted>"),
 ]
 for pattern, replacement in patterns:
@@ -162,38 +164,48 @@ sys.stdout.write(text)
 }
 
 capture_logs() {
+  local label="$1"
+  local predicate='process == "Runner" OR subsystem BEGINSWITH "app.sonusauris"'
+  if [[ "$CURRENT_PID" =~ ^[0-9]+$ ]]; then
+    predicate="processIdentifier == $CURRENT_PID"
+  fi
   xcrun simctl spawn "$UDID" log show \
     --last 3m \
     --style compact \
-    --predicate 'process == "Runner" OR subsystem BEGINSWITH "app.sonusauris"' \
+    --predicate "$predicate" \
     2>/dev/null \
     | tail -n 500 \
-    | sanitize_stream > "$EVIDENCE_DIR/simulator.log" || true
+    | sanitize_stream > "$EVIDENCE_DIR/$label-simulator.log" || true
 }
 
 assert_no_fatal_logs() {
-  if grep -Eq 'Terminating app due to uncaught exception|Fatal error|EXC_CRASH|SIGABRT|Lost connection to device|Library not loaded|dyld.*Reason' "$EVIDENCE_DIR/simulator.log"; then
-    echo "Fatal iOS Simulator evidence was found; inspect $EVIDENCE_DIR/simulator.log" >&2
+  local file="$1"
+  if grep -Eq 'Terminating app due to uncaught exception|Fatal error|EXC_CRASH|SIGABRT|Lost connection to device|Library not loaded|dyld.*Reason' "$file"; then
+    echo "Fatal iOS Simulator evidence was found; inspect $file" >&2
     return 1
   fi
 }
 
 launch_app() {
-  label="$1"
+  local label="$1"
+  local output
+  local pid
   output="$(xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE_ID" 2>&1 || true)"
   printf '%s\n' "$output" | sanitize_stream | tee "$EVIDENCE_DIR/$label.txt"
   pid="$(printf '%s\n' "$output" | awk -F ': ' -v bundle="$BUNDLE_ID" '$1 == bundle && $2 ~ /^[0-9]+$/ { print $2 }' | tail -n 1)"
   if [[ -z "$pid" ]]; then
-    capture_logs
+    CURRENT_PID=""
+    capture_logs "$label-launch-failure"
     echo "simctl did not report a process ID for $BUNDLE_ID" >&2
     return 1
   fi
+  CURRENT_PID="$pid"
   sleep 6
   # `simctl launch` returns the host PID of the Simulator app process. Signal 0
   # checks liveness without sending a signal; invoking `ps` inside the simulated
   # runtime is not portable across the installed iOS runtime images.
   if ! kill -0 "$pid" >/dev/null 2>&1; then
-    capture_logs
+    capture_logs "$label-launch-failure"
     echo "Simulator process $pid did not remain alive after launch" >&2
     return 1
   fi
@@ -210,8 +222,8 @@ launch_app first-launch
 if [[ "$CAPTURE_SCREENSHOT" == "1" ]]; then
   xcrun simctl io "$UDID" screenshot "$EVIDENCE_DIR/first-launch.png" >/dev/null
 fi
-capture_logs
-assert_no_fatal_logs
+capture_logs first-launch
+assert_no_fatal_logs "$EVIDENCE_DIR/first-launch-simulator.log"
 
 # A process termination/relaunch is intentionally exercised, but package data
 # remains intact. This mirrors the safe physical-device lifecycle boundary.
@@ -221,8 +233,8 @@ launch_app cold-relaunch
 if [[ "$CAPTURE_SCREENSHOT" == "1" ]]; then
   xcrun simctl io "$UDID" screenshot "$EVIDENCE_DIR/cold-relaunch.png" >/dev/null
 fi
-capture_logs
-assert_no_fatal_logs
+capture_logs cold-relaunch
+assert_no_fatal_logs "$EVIDENCE_DIR/cold-relaunch-simulator.log"
 
 cat > "$EVIDENCE_DIR/result.txt" <<RESULT
 status=passed
@@ -230,6 +242,7 @@ scope=ios-simulator-install-launch-cold-relaunch
 bundle_id=$BUNDLE_ID
 simulator_erased=false
 app_data_cleared=false
+process_scoped_logs=true
 screenshot_captured=$CAPTURE_SCREENSHOT
 RESULT
 
