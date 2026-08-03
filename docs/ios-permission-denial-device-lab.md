@@ -1,8 +1,8 @@
 # Disposable iOS Simulator microphone-permission denial lab
 
 This lab verifies that Sonus Auris fails closed when iOS microphone access has
-already been denied. It does not use the existing iOS Simulator selected in
-Xcode, and it never addresses a physical iPhone.
+already been denied. It does not select or mutate the existing iOS Simulator
+chosen in Xcode, and it never selects or mutates a physical iPhone.
 
 The harness creates a new simulator, runs the denial test, verifies that the app
 remains installed long enough to collect post-test evidence, and then deletes
@@ -23,7 +23,8 @@ Isolation comes from the device boundary rather than rewriting the signed app:
 2. `simctl create` returns a new UUID owned by this run.
 3. Every boot, install, privacy, log, container, terminate, shutdown, and delete
    command uses that exact UUID.
-4. Existing booted or shut-down simulators are never selected.
+4. Existing simulators and physical iPhones may be enumerated by read-only
+   discovery, but they are never selected as the target or mutated.
 5. Flutter must discover the created UUID exactly once and classify it as an iOS
    emulator before the app is built.
 6. The test-created simulator is deleted after evidence collection and also from
@@ -115,8 +116,9 @@ SONUS_IOS_PERMISSION_DRIVE_TIMEOUT_SECONDS=480 \
   bash scripts/device-lab/ios-permission-denial-probe.sh
 ```
 
-The command does not need the real iPhone to be connected. It will not select or
-modify that iPhone.
+The command does not need the real iPhone to be connected. Read-only Flutter
+device discovery may enumerate a connected phone, but the script will not select
+or mutate it.
 
 ## Run from the complete Mac device lab
 
@@ -166,8 +168,8 @@ Evidence contains only bounded metadata and diagnostics, including:
 - content-free Flutter result and cleanup markers;
 - bounded success or failure process logs; and
 - explicit statements that no existing simulator or physical iPhone was
-  addressed, no audio artifact existed, and the disposable simulator was
-  deleted.
+  selected or mutated, no audio artifact existed, and the disposable simulator
+  was deleted.
 
 `scripts/device-lab/evidence-policy.py` sanitizes live output and stored text,
 waits for writers to close, rejects raw audio/key/provisioning artifacts and
