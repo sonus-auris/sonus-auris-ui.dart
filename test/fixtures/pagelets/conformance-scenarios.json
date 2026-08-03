@@ -1,0 +1,32 @@
+{
+  "scenarioVersion": "1.0.0",
+  "requiredHosts": ["flutter", "rust-desktop"],
+  "scenarios": [
+    {"id": "valid-device-summary", "category": "parse", "expected": "accept"},
+    {"id": "valid-confirmed-device-rename", "category": "action", "expected": "confirm-then-mutate"},
+    {"id": "device-rename-confirmation-denied", "category": "action", "expected": "no-mutation"},
+    {"id": "unauthorized-device-rename", "category": "authorization", "expected": "reject"},
+    {"id": "unknown-schema-version", "category": "compatibility", "expected": "reject"},
+    {"id": "unknown-protocol-version", "category": "compatibility", "expected": "reject"},
+    {"id": "unknown-component", "category": "parse", "expected": "reject"},
+    {"id": "unknown-action", "category": "parse", "expected": "reject"},
+    {"id": "known-action-wrong-surface", "category": "policy", "expected": "reject"},
+    {"id": "mutation-without-confirmation", "category": "policy", "expected": "reject"},
+    {"id": "duplicate-component-id", "category": "parse", "expected": "reject"},
+    {"id": "duplicate-action-id", "category": "parse", "expected": "reject"},
+    {"id": "nested-action-param", "category": "parse", "expected": "reject"},
+    {"id": "excessive-component-depth", "category": "limits", "expected": "reject"},
+    {"id": "excessive-component-count", "category": "limits", "expected": "reject"},
+    {"id": "oversized-envelope", "category": "limits", "expected": "reject"},
+    {"id": "invalid-request-id", "category": "transport", "expected": "reject"},
+    {"id": "invalid-session-nonce", "category": "transport", "expected": "reject"},
+    {"id": "replayed-request-id", "category": "replay", "expected": "reject"},
+    {"id": "replayed-session-nonce", "category": "replay", "expected": "reject"},
+    {"id": "expired-envelope", "category": "freshness", "expected": "reject"},
+    {"id": "issued-in-future", "category": "freshness", "expected": "reject"},
+    {"id": "offline-fallback", "category": "availability", "expected": "bundled-fallback"},
+    {"id": "malformed-json", "category": "parse", "expected": "reject"},
+    {"id": "script-field-injection", "category": "policy", "expected": "reject"},
+    {"id": "read-only-html-has-no-script", "category": "html", "expected": "script-free"}
+  ]
+}
