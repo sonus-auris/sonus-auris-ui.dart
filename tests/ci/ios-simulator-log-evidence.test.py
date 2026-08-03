@@ -30,11 +30,19 @@ def function_body(source: str, name: str) -> str:
     return match.group("body")
 
 
+def compile_python_heredocs(source: str) -> None:
+    blocks = re.findall(r"(?ms)<<'PY'[^\n]*\n(?P<body>.*?)^PY$", source)
+    assert blocks, "no Python heredocs were found"
+    for index, block in enumerate(blocks, start=1):
+        compile(block, f"ios-simulator-smoke.sh:python-heredoc-{index}", "exec")
+
+
 def validate_contract(source: str) -> None:
     assert "| tail -n 500" not in source
     assert 'LOG_EVIDENCE="$ROOT/scripts/device-lab/log-evidence.py"' in source
     assert 'LOG_MAX_BYTES="${SONUS_SIMULATOR_LOG_MAX_BYTES:-524288}"' in source
     assert '[[ ! "$LOG_MAX_BYTES" =~ ^[0-9]+$ ]]' in source
+    compile_python_heredocs(source)
 
     sanitizer = function_body(source, "sanitize_stream")
     assert "for line in sys.stdin:" in sanitizer
@@ -149,18 +157,19 @@ def main() -> None:
         source.replace("  } \\\n    | sanitize_stream", "  } \\\n    | tail -n 500 \\\n    | sanitize_stream", 1),
         source.replace('--status-file "$status_file"', "", 1),
         source.replace("full_log_fatal_scan=true", "full_log_fatal_scan=false", 1),
+        source.replace("from pathlib import Path", "from pathlib import import Path", 1),
     )
     for mutated in mutations:
         try:
             validate_contract(mutated)
-        except AssertionError:
+        except (AssertionError, SyntaxError):
             pass
         else:
             raise AssertionError("contract mutation unexpectedly passed")
 
     print(
         "iOS Simulator log evidence contract passed: full-stream fatal scan + "
-        "bounded startup/tail retention + sidecars + 3 mutation refusals"
+        "bounded startup/tail retention + sidecars + Python heredocs + 4 mutation refusals"
     )
 
 
