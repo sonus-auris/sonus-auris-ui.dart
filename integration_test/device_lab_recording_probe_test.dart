@@ -43,9 +43,7 @@ Future<List<File>> _filesEndingWith(Directory directory, String suffix) async {
       .toList();
 }
 
-Future<bool> _validateFinalizedSegments(
-  List<RecordingSegment> segments,
-) async {
+Future<bool> _validateFinalizedSegments(List<RecordingSegment> segments) async {
   expect(
     segments.length,
     greaterThanOrEqualTo(3),
