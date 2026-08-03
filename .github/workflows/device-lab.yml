@@ -1,0 +1,97 @@
+name: Device-lab script and iOS Simulator smoke
+
+on:
+  pull_request:
+    paths:
+      - 'lib/**'
+      - 'ios/**'
+      - 'macos/**'
+      - 'packages/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'scripts/device-lab/**'
+      - 'docs/end-device-testing.md'
+      - 'docs/mobile-ci.md'
+      - '.github/workflows/device-lab.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'lib/**'
+      - 'ios/**'
+      - 'macos/**'
+      - 'packages/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'scripts/device-lab/**'
+      - 'docs/end-device-testing.md'
+      - 'docs/mobile-ci.md'
+      - '.github/workflows/device-lab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: device-lab-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  script-contract:
+    name: Device-lab shell contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate Bash syntax
+        run: bash -n scripts/device-lab/*.sh
+      - name: Enforce non-destructive physical-device defaults
+        run: |
+          set -euo pipefail
+          if grep -En 'adb(_)? .*uninstall|pm clear|simctl erase|simctl uninstall' \
+            scripts/device-lab/android-attached-smoke.sh \
+            scripts/device-lab/ios-attached-smoke.sh \
+            scripts/device-lab/ios-simulator-smoke.sh; then
+            echo 'Physical/simulator device-lab scripts may not clear application or device data.' >&2
+            exit 1
+          fi
+          grep -Fq 'permissions_mutated=false' scripts/device-lab/android-attached-smoke.sh
+          grep -Fq 'app_data_cleared=false' scripts/device-lab/ios-attached-smoke.sh
+
+  ios-simulator:
+    name: iOS Simulator runtime smoke
+    needs: script-contract
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+
+      - name: Toolchain evidence
+        run: |
+          flutter --version
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      - name: Run non-destructive iOS Simulator smoke
+        env:
+          SONUS_DEVICE_LAB_DIR: ${{ runner.temp }}/sonus-ios-simulator-evidence
+          SONUS_CAPTURE_SCREENSHOT: '1'
+        run: scripts/device-lab/ios-simulator-smoke.sh
+
+      - name: Upload sanitized simulator evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonus-ios-simulator-evidence
+          path: ${{ runner.temp }}/sonus-ios-simulator-evidence
+          if-no-files-found: warn
+          retention-days: 7
