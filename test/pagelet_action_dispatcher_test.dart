@@ -34,7 +34,9 @@ void main() {
         expect(action.params['deviceId'], 'device-demo-01');
         return true;
       },
-      executeRead: (_) async => reads += 1,
+      executeRead: (_) async {
+        reads += 1;
+      },
       executeMutation: (action) async {
         mutations += 1;
         expect(action.params['proposedName'], 'Studio Recorder');
@@ -56,7 +58,9 @@ void main() {
       authorization: PageletAuthorizationState.aal2,
       confirm: (_) async => false,
       executeRead: (_) async {},
-      executeMutation: (_) async => mutations += 1,
+      executeMutation: (_) async {
+        mutations += 1;
+      },
     );
 
     final outcome = await dispatcher.dispatch(_renameAction());
@@ -116,7 +120,9 @@ void main() {
       authorization: PageletAuthorizationState.aal2,
       confirm: (_) async => true,
       executeRead: (_) async {},
-      executeMutation: (_) async => mutations += 1,
+      executeMutation: (_) async {
+        mutations += 1;
+      },
     );
 
     await tester.pumpWidget(
