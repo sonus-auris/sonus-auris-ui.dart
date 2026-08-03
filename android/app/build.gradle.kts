@@ -18,15 +18,33 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
-// A physical-device recording probe must never share the Play Store package,
-// deep-link handlers, or app-private storage. The opt-in shell harness exports
-// this variable only while building/running the isolated debug candidate.
+// Device probes must never share the Play Store package, deep-link handlers, or
+// app-private storage. Each opt-in harness has a separate identity so permission
+// denial state cannot contaminate either production or the recording lab.
 val productionApplicationId = "com.ores.sonus_auris"
 val deviceLabAndroidBuild = System.getenv("SONUS_DEVICE_LAB_ANDROID") == "1"
-val resolvedApplicationId =
-    if (deviceLabAndroidBuild) "$productionApplicationId.device_lab" else productionApplicationId
-val resolvedAppLabel = if (deviceLabAndroidBuild) "Sonus Auris Device Lab" else "Sonus Auris"
-val resolvedUriScheme = if (deviceLabAndroidBuild) "sonusauris-device-lab" else "sonusauris"
+val permissionLabAndroidBuild = System.getenv("SONUS_PERMISSION_LAB_ANDROID") == "1"
+if (deviceLabAndroidBuild && permissionLabAndroidBuild) {
+    throw GradleException(
+        "SONUS_DEVICE_LAB_ANDROID and SONUS_PERMISSION_LAB_ANDROID are mutually exclusive."
+    )
+}
+val isolatedLabAndroidBuild = deviceLabAndroidBuild || permissionLabAndroidBuild
+val resolvedApplicationId = when {
+    deviceLabAndroidBuild -> "$productionApplicationId.device_lab"
+    permissionLabAndroidBuild -> "$productionApplicationId.permission_lab"
+    else -> productionApplicationId
+}
+val resolvedAppLabel = when {
+    deviceLabAndroidBuild -> "Sonus Auris Device Lab"
+    permissionLabAndroidBuild -> "Sonus Auris Permission Lab"
+    else -> "Sonus Auris"
+}
+val resolvedUriScheme = when {
+    deviceLabAndroidBuild -> "sonusauris-device-lab"
+    permissionLabAndroidBuild -> "sonusauris-permission-lab"
+    else -> "sonusauris"
+}
 
 android {
     namespace = "com.ores.sonus_auris"
@@ -44,8 +62,8 @@ android {
     }
 
     defaultConfig {
-        // Permanent Play Store identity unless the explicit device-lab build
-        // switch selects the isolated debug-only package above.
+        // Permanent Play Store identity unless one explicit debug-only lab
+        // switch selects an isolated package above.
         applicationId = resolvedApplicationId
         manifestPlaceholders["sonusAppLabel"] = resolvedAppLabel
         manifestPlaceholders["sonusUriScheme"] = resolvedUriScheme
@@ -130,12 +148,12 @@ gradle.taskGraph.whenReady {
                 name.startsWith("sign"))
     }
 
-    // The device-lab identity is intentionally debug-only. Refuse any release
-    // graph even when a local developer also opts into debug-signed releases.
-    if (deviceLabAndroidBuild && releaseTask != null) {
+    // All lab identities are intentionally debug-only. Refuse any release graph
+    // even when a local developer also opts into debug-signed releases.
+    if (isolatedLabAndroidBuild && releaseTask != null) {
         throw GradleException(
-            "Refusing to build device-lab application ID '$resolvedApplicationId' " +
-                "with release task '${releaseTask.path}'. Device-lab recording probes are debug-only."
+            "Refusing to build isolated lab application ID '$resolvedApplicationId' " +
+                "with release task '${releaseTask.path}'. Device-lab probes are debug-only."
         )
     }
 
