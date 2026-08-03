@@ -13,29 +13,41 @@ Map<String, Object?> _fixture() {
   return (jsonDecode(raw) as Map).cast<String, Object?>();
 }
 
-Map<Object?, Object?> _fixtureAction(Map<String, Object?> json) {
+Map<Object?, Object?> _fixtureAction(
+  Map<String, Object?> json,
+  String actionId,
+) {
   final components = json['components']! as List;
   final section = components.single as Map;
   final children = section['children']! as List;
-  final button = children.last as Map;
+  final button = children.cast<Map>().singleWhere((component) {
+    final action = component['action'];
+    return action is Map && action['id'] == actionId;
+  });
   return button['action']! as Map;
 }
 
 void main() {
-  test('parses the canonical device-summary fixture', () {
+  test('parses the complete canonical device-summary fixture', () {
     final pagelet = PageletDocument.fromJson(_fixture());
+    final children = pagelet.components.single.children;
 
     expect(pagelet.surface, PageletSurface.deviceSummary);
-    expect(pagelet.components.single.children.length, 4);
+    expect(children.length, 6);
     expect(
-      pagelet.components.single.children.last.action?.kind,
+      children.singleWhere((component) => component.id == 'open-devices').action?.kind,
       PageletActionKind.navigate,
+    );
+    expect(
+      children.singleWhere((component) => component.id == 'refresh-summary').action?.kind,
+      PageletActionKind.refresh,
     );
   });
 
   test('rejects a remotely invented native operation', () {
     final json = _fixture();
-    _fixtureAction(json)['kind'] = 'native.execute-shell';
+    _fixtureAction(json, 'open-devices-screen')['kind'] =
+        'native.execute-shell';
 
     expect(
       () => PageletDocument.fromJson(json),
@@ -52,7 +64,7 @@ void main() {
     );
   });
 
-  testWidgets('renders bundled native widgets and dispatches typed actions', (
+  testWidgets('renders every canonical status and dispatches both typed actions', (
     tester,
   ) async {
     final pagelet = PageletDocument.fromJson(_fixture());
@@ -73,17 +85,23 @@ void main() {
     expect(find.text("Alex's MacBook"), findsOneWidget);
     expect(find.text('Recording protection is active'), findsOneWidget);
     expect(find.text('100 hours'), findsOneWidget);
+    expect(find.text('Cloud backup connected'), findsOneWidget);
 
     await tester.tap(find.text('Manage devices'));
     expect(dispatched?.kind, PageletActionKind.navigate);
     expect(dispatched?.params['route'], 'devices');
+
+    await tester.tap(find.text('Refresh status'));
+    expect(dispatched?.kind, PageletActionKind.refresh);
+    expect(dispatched?.params, isEmpty);
   });
 
   testWidgets('blocks a compiled action that is not allowed on the surface', (
     tester,
   ) async {
     final json = _fixture();
-    _fixtureAction(json)['kind'] = 'native.open-allowlisted-url';
+    _fixtureAction(json, 'open-devices-screen')['kind'] =
+        'native.open-allowlisted-url';
     final pagelet = PageletDocument.fromJson(json);
     PageletAction? dispatched;
 
@@ -100,6 +118,7 @@ void main() {
 
     expect(find.text('Shared content unavailable.'), findsOneWidget);
     expect(find.text('Manage devices'), findsNothing);
+    expect(find.text('Refresh status'), findsNothing);
     expect(dispatched, isNull);
   });
 
