@@ -1,0 +1,52 @@
+name: pagelet conformance report
+
+on:
+  pull_request:
+    paths:
+      - "lib/src/pagelets/**"
+      - "test/pagelet_*"
+      - "test/fixtures/pagelets/**"
+      - "scripts/pagelet_conformance_report.py"
+      - ".github/workflows/pagelet-conformance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pagelet-conformance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flutter-pagelet-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: "3.44.2"
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Run focused native pagelet tests
+        run: >-
+          flutter test
+          test/pagelet_renderer_test.dart
+          test/pagelet_protocol_test.dart
+          test/pagelet_action_dispatcher_test.dart
+      - name: Generate honest coverage report
+        run: |
+          python3 scripts/pagelet_conformance_report.py \
+            --host flutter \
+            --scenarios test/fixtures/pagelets/conformance-scenarios.json \
+            --coverage test/fixtures/pagelets/conformance-coverage.json \
+            --output build/pagelet-conformance/flutter-report.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: flutter-pagelet-conformance
+          path: build/pagelet-conformance/flutter-report.json
+          if-no-files-found: error
+          retention-days: 14
