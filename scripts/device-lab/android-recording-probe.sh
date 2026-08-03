@@ -330,7 +330,8 @@ ISOLATION
   if recent_logcat | grep -Eq 'FATAL EXCEPTION|am_crash|Process .*device_lab.* has died'; then
     recent_logcat |
       grep -E "$LAB_PKG|FATAL EXCEPTION|AndroidRuntime|am_crash" |
-      tail -n 160 > "$EVIDENCE_DIR/crash-focused-logcat.txt" || true
+      python3 "$ROOT/scripts/device-lab/bounded-log.py" --max-bytes 524288 \
+      > "$EVIDENCE_DIR/crash-focused-logcat.txt" || true
     echo "Fatal Android evidence was observed during the isolated probe." >&2
     exit 7
   fi

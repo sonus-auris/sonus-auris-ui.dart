@@ -7,8 +7,9 @@ MANIFEST="$ROOT/android/app/src/main/AndroidManifest.xml"
 TARGET="$ROOT/integration_test/device_lab_recording_probe_test.dart"
 PROBE="$ROOT/scripts/device-lab/android-recording-probe.sh"
 ORCHESTRATOR="$ROOT/scripts/device-lab/macos-end-device-smoke.sh"
+BOUNDED_LOG="$ROOT/scripts/device-lab/bounded-log.py"
 
-for file in "$GRADLE" "$MANIFEST" "$TARGET" "$PROBE" "$ORCHESTRATOR"; do
+for file in "$GRADLE" "$MANIFEST" "$TARGET" "$PROBE" "$ORCHESTRATOR" "$BOUNDED_LOG"; do
   [[ -s "$file" ]] || {
     echo "required isolated recording-probe file is missing: $file" >&2
     exit 1
@@ -16,6 +17,8 @@ for file in "$GRADLE" "$MANIFEST" "$TARGET" "$PROBE" "$ORCHESTRATOR"; do
 done
 
 bash -n "$PROBE"
+python3 -m py_compile "$BOUNDED_LOG"
+python3 "$BOUNDED_LOG" --self-test
 
 # 1. Gradle must switch to a non-production app sandbox only under the explicit
 # environment gate, and that identity must remain release-ineligible.
@@ -70,6 +73,12 @@ fi
 grep -Fq 'shared_logcat_cleared=false' "$PROBE"
 grep -Fq 'raw_audio_exported=false' "$PROBE"
 grep -Fq 'production_package_addressed=false' "$PROBE"
+grep -Fq 'bounded-log.py" --max-bytes 524288' "$PROBE"
+if grep -Fq 'tail -n 160' "$PROBE"; then
+  echo 'recording crash evidence must preserve startup and terminal context' >&2
+  exit 1
+fi
+# bounded-memory crash evidence
 
 # 7. Real background behavior is host-driven rather than simulated inside Dart.
 grep -Fq 'SONUS_DEVICE_LAB_BACKGROUND_READY' "$PROBE"
