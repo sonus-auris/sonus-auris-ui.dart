@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -34,6 +33,7 @@ class InterfaceLockTests(unittest.TestCase):
         self.assertEqual(module.load_lock(self.lock_path), self.valid)
 
         output = self.root / "github-output.txt"
+        output.touch()
         module.append_github_outputs(output, self.valid)
         self.assertEqual(
             output.read_text(encoding="utf-8"),
@@ -42,19 +42,14 @@ class InterfaceLockTests(unittest.TestCase):
         )
 
     def test_lock_requires_exact_keys(self) -> None:
-        for mutation in (
-            {"extra": True},
-            {"commitSha": None},
-        ):
-            value = dict(self.valid)
-            if mutation["commitSha"] if "commitSha" in mutation else False:
-                pass
-            value.update(mutation)
-            if mutation.get("commitSha") is None and "commitSha" in mutation:
-                value.pop("commitSha")
-            self.write_lock(value)
-            with self.assertRaises(SystemExit):
-                module.load_lock(self.lock_path)
+        extra = {**self.valid, "extra": True}
+        missing = dict(self.valid)
+        missing.pop("commitSha")
+        for value in (extra, missing):
+            with self.subTest(value=value):
+                self.write_lock(value)
+                with self.assertRaises(SystemExit):
+                    module.load_lock(self.lock_path)
 
     def test_lock_rejects_mutable_or_ambiguous_identity(self) -> None:
         cases = [
@@ -92,6 +87,17 @@ class InterfaceLockTests(unittest.TestCase):
             self.skipTest(f"directory symlinks unavailable: {error}")
         with self.assertRaises(SystemExit):
             module.load_lock(linked_directory / "lock.json")
+
+    def test_github_output_must_not_be_a_symlink(self) -> None:
+        target = self.root / "target-output.txt"
+        target.touch()
+        output_link = self.root / "github-output-link.txt"
+        try:
+            output_link.symlink_to(target)
+        except OSError as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        with self.assertRaises(SystemExit):
+            module.append_github_outputs(output_link, self.valid)
 
 
 if __name__ == "__main__":
