@@ -65,10 +65,10 @@ class PageletSurfaceView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
-      return const Semantics(
+      return Semantics(
         liveRegion: true,
         label: 'Loading shared content',
-        child: Center(child: CircularProgressIndicator()),
+        child: const Center(child: CircularProgressIndicator()),
       );
     }
     final current = document;
