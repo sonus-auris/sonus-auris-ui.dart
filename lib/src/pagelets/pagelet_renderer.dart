@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'pagelet_model.dart';
+import 'pagelet_policy.dart';
 
 /// Renders a validated pagelet using widgets compiled into the app binary.
 ///
@@ -18,6 +19,11 @@ class PageletRenderer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final policyViolation = PageletPolicy.violation(document);
+    if (policyViolation != null) {
+      return _InvalidPageletView(reason: policyViolation);
+    }
+
     return Semantics(
       container: true,
       label: document.title ?? document.pageletId,
@@ -79,7 +85,49 @@ class PageletSurfaceView extends StatelessWidget {
         child: fallback,
       );
     }
+    if (PageletPolicy.violation(current) != null) {
+      return Semantics(
+        container: true,
+        label: 'Shared content rejected; showing bundled fallback',
+        child: fallback,
+      );
+    }
     return PageletRenderer(document: current, onAction: onAction);
+  }
+}
+
+class _InvalidPageletView extends StatelessWidget {
+  const _InvalidPageletView({required this.reason});
+
+  final String reason;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: 'Shared content rejected',
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Icon(
+                Icons.shield_outlined,
+                color: Theme.of(context).colorScheme.error,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Shared content unavailable.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
