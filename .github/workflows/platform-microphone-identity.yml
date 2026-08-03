@@ -1,0 +1,47 @@
+name: Platform microphone identity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ios/Runner/Info.plist
+      - macos/Runner/Info.plist
+      - macos/Runner/Configs/AppInfo.xcconfig
+      - macos/Runner/DebugProfile.entitlements
+      - macos/Runner/Release.entitlements
+      - android/app/src/main/AndroidManifest.xml
+      - tests/ci/platform-microphone-identity.test.py
+      - .github/workflows/platform-microphone-identity.yml
+  pull_request:
+    paths:
+      - ios/Runner/Info.plist
+      - macos/Runner/Info.plist
+      - macos/Runner/Configs/AppInfo.xcconfig
+      - macos/Runner/DebugProfile.entitlements
+      - macos/Runner/Release.entitlements
+      - android/app/src/main/AndroidManifest.xml
+      - tests/ci/platform-microphone-identity.test.py
+      - .github/workflows/platform-microphone-identity.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-microphone-identity-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: Cross-platform microphone identity contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate names, privacy strings, and microphone capabilities
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tests/ci/platform-microphone-identity.test.py
+          python3 tests/ci/platform-microphone-identity.test.py
