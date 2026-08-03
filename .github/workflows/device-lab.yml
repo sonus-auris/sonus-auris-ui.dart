@@ -85,7 +85,7 @@ jobs:
         env:
           SONUS_DEVICE_LAB_DIR: ${{ runner.temp }}/sonus-ios-simulator-evidence
           SONUS_CAPTURE_SCREENSHOT: '1'
-        run: scripts/device-lab/ios-simulator-smoke.sh
+        run: bash scripts/device-lab/ios-simulator-smoke.sh
 
       - name: Upload sanitized simulator evidence
         if: always()
