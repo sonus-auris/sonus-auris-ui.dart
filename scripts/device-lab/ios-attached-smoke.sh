@@ -10,36 +10,22 @@ EVIDENCE_DIR="${SONUS_DEVICE_LAB_DIR:-$ROOT/build/device-lab/ios-device-$STAMP}"
 READY_HOLD_SECONDS="${SONUS_IOS_READY_HOLD_SECONDS:-12}"
 RUN_TIMEOUT_SECONDS="${SONUS_IOS_RUN_TIMEOUT_SECONDS:-240}"
 LAUNCH_CYCLES="${SONUS_IOS_LAUNCH_CYCLES:-2}"
+EVIDENCE_POLICY="$ROOT/scripts/device-lab/evidence-policy.py"
+CYCLE_MONITOR="$ROOT/scripts/device-lab/flutter-run-cycle.py"
 mkdir -p "$EVIDENCE_DIR"
 
-# The sanitizer is part of the evidence boundary, so verify it before opening
-# the process-substitution stream rather than failing later with an unsanitized
-# shell diagnostic.
 if ! command -v python3 >/dev/null 2>&1; then
   echo "Required command is missing: python3" >&2
   exit 2
 fi
+if [[ ! -f "$EVIDENCE_POLICY" || ! -f "$CYCLE_MONITOR" ]]; then
+  echo "Physical-iPhone device-lab helpers are missing." >&2
+  exit 2
+fi
 
-# Sanitize the complete run, including Flutter pub/build/signing failures that
-# can contain a local username, account email, callback URL, or VM-service token.
-exec > >(python3 -u -c '
-import re
-import sys
-patterns = [
-    (re.compile(r"/Users/[^/\s]+"), "/Users/<redacted>"),
-    (re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer <redacted>"),
-    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), "<redacted-jwt>"),
-    (re.compile(r"(?i)(access_token|refresh_token|id_token|token|code|code_verifier|authorization_code|otp)=([^&\s]+)"), r"\1=<redacted>"),
-    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "<redacted-email>"),
-    (re.compile(r"http://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+"), "http://127.0.0.1:<port>/<redacted>"),
-    (re.compile(r"ws://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+"), "ws://127.0.0.1:<port>/<redacted>"),
-]
-for line in sys.stdin:
-    for pattern, replacement in patterns:
-        line = pattern.sub(replacement, line)
-    sys.stdout.write(line)
-    sys.stdout.flush()
-' | tee "$EVIDENCE_DIR/run.log") 2>&1
+# Use the shared policy for the complete shell transcript rather than carrying a
+# second, drifting set of token and account-path expressions in this harness.
+exec > >(python3 "$EVIDENCE_POLICY" --stream | tee "$EVIDENCE_DIR/run.log") 2>&1
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -50,6 +36,7 @@ need() {
 
 need flutter
 need python3
+need tee
 
 if [[ ! "$READY_HOLD_SECONDS" =~ ^[0-9]+$ ]] || (( READY_HOLD_SECONDS < 1 || READY_HOLD_SECONDS > 120 )); then
   echo "SONUS_IOS_READY_HOLD_SECONDS must be an integer from 1 through 120." >&2
@@ -148,21 +135,33 @@ device_reset=false
 permissions_mutated=false
 recording_automated=false
 launch_cycles_requested=$LAUNCH_CYCLES
+terminal_output_drain_required=true
+fatal_runtime_markers_checked=true
 SCOPE
 
 run_launch_cycle() {
   local cycle="$1"
   local label
+  local report
+  local log
+  local statuses
   if [[ "$cycle" == "1" ]]; then
     label="first-launch"
   else
     label="cold-relaunch-$cycle"
   fi
+  report="$EVIDENCE_DIR/$label-cycle.json"
+  log="$EVIDENCE_DIR/$label-flutter-run.txt"
 
   echo "== physical iPhone $label =="
+  set +e
   (
     cd "$ROOT"
-    python3 - "$EVIDENCE_DIR/$label-flutter-run.txt" "$RUN_TIMEOUT_SECONDS" "$READY_HOLD_SECONDS" \
+    python3 "$CYCLE_MONITOR" \
+      --report "$report" \
+      --timeout-seconds "$RUN_TIMEOUT_SECONDS" \
+      --ready-hold-seconds "$READY_HOLD_SECONDS" \
+      -- \
       flutter run \
       -d "$DEVICE_ID" \
       --debug \
@@ -170,113 +169,32 @@ run_launch_cycle() {
       -t lib/main.dart \
       --dart-define=SONUS_BACKEND_BASE_URL=https://ci.invalid \
       --dart-define=SONUS_SUPABASE_URL=https://ci.supabase.co \
-      --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_physical_device_lab <<'PY'
-import os
-import re
-import selectors
-import subprocess
+      --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_physical_device_lab \
+      2>&1
+  ) | python3 "$EVIDENCE_POLICY" --stream | tee "$log"
+  statuses=("${PIPESTATUS[@]}")
+  set -e
+
+  if (( statuses[0] != 0 || statuses[1] != 0 || statuses[2] != 0 )); then
+    echo "$label failed: monitor=${statuses[0]} sanitizer=${statuses[1]} evidence=${statuses[2]}" >&2
+    return 1
+  fi
+
+  python3 - "$report" <<'PY'
+import json
 import sys
-import time
-
-log_path = sys.argv[1]
-timeout_seconds = int(sys.argv[2])
-hold_seconds = int(sys.argv[3])
-command = sys.argv[4:]
-
-patterns = [
-    (re.compile(r"/Users/[^/\s]+"), "/Users/<redacted>"),
-    (re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer <redacted>"),
-    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), "<redacted-jwt>"),
-    (re.compile(r"(?i)(access_token|refresh_token|id_token|code_verifier|authorization_code|otp)=([^&\s]+)"), r"\1=<redacted>"),
-    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "<redacted-email>"),
-    (re.compile(r"http://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+"), "http://127.0.0.1:<port>/<redacted>"),
-    (re.compile(r"ws://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+"), "ws://127.0.0.1:<port>/<redacted>"),
-    (re.compile(r"(?i)(on|for) [^\n]+ iPhone"), r"\1 <physical-iPhone>"),
-]
-
-
-def sanitize(line: str) -> str:
-    for pattern, replacement in patterns:
-        line = pattern.sub(replacement, line)
-    return line
-
-
-process = subprocess.Popen(
-    command,
-    cwd=os.getcwd(),
-    stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    text=True,
-    bufsize=1,
-)
-assert process.stdout is not None
-assert process.stdin is not None
-selector = selectors.DefaultSelector()
-selector.register(process.stdout, selectors.EVENT_READ)
-started = time.monotonic()
-ready_at = None
-ready_markers = (
-    "Flutter run key commands",
-    "A Dart VM Service on",
-    "The Flutter DevTools debugger and profiler",
-)
-failure_markers = (
-    "Could not build the precompiled application for the device",
-    "Failed to build iOS app",
-    "No valid code signing certificates were found",
-    "Error launching application on",
-    "Lost connection to device",
-)
-failed = False
-
-with open(log_path, "w", encoding="utf-8") as log:
-    while True:
-        if process.poll() is not None:
-            break
-        now = time.monotonic()
-        if now - started > timeout_seconds:
-            log.write("device_lab_timeout=true\n")
-            failed = True
-            process.terminate()
-            break
-        if ready_at is not None and now - ready_at >= hold_seconds:
-            process.stdin.write("q\n")
-            process.stdin.flush()
-            break
-        events = selector.select(timeout=0.5)
-        for key, _ in events:
-            line = key.fileobj.readline()
-            if not line:
-                continue
-            if any(marker in line for marker in ready_markers) and ready_at is None:
-                ready_at = time.monotonic()
-            if any(marker in line for marker in failure_markers):
-                failed = True
-            clean = sanitize(line)
-            sys.stdout.write(clean)
-            sys.stdout.flush()
-            log.write(clean)
-            log.flush()
-
-try:
-    return_code = process.wait(timeout=30)
-except subprocess.TimeoutExpired:
-    process.terminate()
-    try:
-        return_code = process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        return_code = process.wait(timeout=10)
-
-if ready_at is None:
-    failed = True
-if return_code not in (0, -15):
-    failed = True
-if failed:
-    raise SystemExit(1)
+from pathlib import Path
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert report["schema"] == "sonus-auris-flutter-run-cycle/v1"
+assert report["status"] == "passed"
+assert report["ready_observed"] is True
+assert report["ready_hold_completed"] is True
+assert report["quit_sent"] is True
+assert report["terminal_output_drained"] is True
+assert report["fatal_markers"] == []
+assert report["monitor_errors"] == []
+assert report["return_code"] == 0
 PY
-  )
 }
 
 completed=0
@@ -295,6 +213,9 @@ app_data_cleared=false
 permissions_mutated=false
 recording_automated=false
 launch_cycles_completed=$completed
+terminal_output_drained=true
+fatal_runtime_markers_checked=true
+shared_evidence_policy_stream=true
 RESULT
 
 echo "PHYSICAL IOS LAUNCH/RELAUNCH SMOKE PASSED"
