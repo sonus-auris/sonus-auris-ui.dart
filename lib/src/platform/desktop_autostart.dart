@@ -29,9 +29,7 @@ class DesktopAutostart {
       'desktop.autostart.macos.smappservice.migrated.v1';
   static const _macLegacyEnabledKey =
       'desktop.autostart.macos.legacy-enabled.v1';
-  static const _macChannel = MethodChannel(
-    'sonus_auris/desktop_autostart',
-  );
+  static const _macChannel = MethodChannel('sonus_auris/desktop_autostart');
 
   static Future<void>? _macMigration;
 
@@ -116,8 +114,7 @@ class DesktopAutostart {
 
     var legacyWasEnabled = prefs.getBool(_macLegacyEnabledKey) ?? false;
     try {
-      legacyWasEnabled =
-          legacyWasEnabled || await launchAtStartup.isEnabled();
+      legacyWasEnabled = legacyWasEnabled || await launchAtStartup.isEnabled();
     } catch (_) {
       // Continue with any state captured by an earlier debug launch.
     }
@@ -135,10 +132,9 @@ class DesktopAutostart {
     if (!kReleaseMode) return;
 
     if (legacyWasEnabled) {
-      await _macChannel.invokeMethod<void>(
-        'setEnabled',
-        const <String, Object>{'enabled': true},
-      );
+      await _macChannel.invokeMethod<void>('setEnabled', const <String, Object>{
+        'enabled': true,
+      });
     }
     await prefs.remove(_macLegacyEnabledKey);
     await prefs.setBool(_macMigrationKey, true);
@@ -147,10 +143,9 @@ class DesktopAutostart {
   static Future<void> _setEnabled(bool enabled) async {
     if (kSonusDeviceLabNoSideEffects) return;
     if (Platform.isMacOS) {
-      await _macChannel.invokeMethod<void>(
-        'setEnabled',
-        <String, Object>{'enabled': enabled},
-      );
+      await _macChannel.invokeMethod<void>('setEnabled', <String, Object>{
+        'enabled': enabled,
+      });
       return;
     }
     if (enabled) {
