@@ -17,8 +17,14 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
+import 'support/pcm16_signal.dart';
+
 const bool _compiledForDeviceLabRecording = bool.fromEnvironment(
   'SONUS_DEVICE_LAB_RECORDING_PROBE',
+);
+const bool _requireNonzeroAudio = bool.fromEnvironment(
+  'SONUS_DEVICE_LAB_REQUIRE_NONZERO_AUDIO',
+  defaultValue: true,
 );
 
 Future<void> _delay(WidgetTester tester, Duration duration) async {
@@ -37,7 +43,9 @@ Future<List<File>> _filesEndingWith(Directory directory, String suffix) async {
       .toList();
 }
 
-Future<void> _validateFinalizedSegments(List<RecordingSegment> segments) async {
+Future<bool> _validateFinalizedSegments(
+  List<RecordingSegment> segments,
+) async {
   expect(
     segments.length,
     greaterThanOrEqualTo(3),
@@ -46,6 +54,7 @@ Future<void> _validateFinalizedSegments(List<RecordingSegment> segments) async {
 
   final sessionId = segments.first.captureSessionId;
   expect(sessionId, isNotEmpty);
+  var storedSignalObserved = false;
 
   for (var index = 0; index < segments.length; index += 1) {
     final segment = segments[index];
@@ -91,7 +100,12 @@ Future<void> _validateFinalizedSegments(List<RecordingSegment> segments) async {
     );
     expect(String.fromCharCodes(bytes.sublist(0, 4)), 'RIFF');
     expect(String.fromCharCodes(bytes.sublist(8, 12)), 'WAVE');
+    storedSignalObserved =
+        storedSignalObserved ||
+        summarizePcm16Signal(bytes, payloadOffset: 44).observed();
   }
+
+  return storedSignalObserved;
 }
 
 void main() {
@@ -144,7 +158,8 @@ void main() {
         expect(recorder.isRecording, isTrue);
 
         // The host harness watches for this exact marker, presses Home, verifies
-        // the isolated process/service/notification, then returns the activity.
+        // the isolated process/service/notification/app-op, then returns the
+        // activity to the foreground.
         // ignore: avoid_print
         print('SONUS_DEVICE_LAB_BACKGROUND_READY');
         await _delay(tester, const Duration(seconds: 10));
@@ -160,7 +175,26 @@ void main() {
         await _delay(tester, const Duration(milliseconds: 500));
         expect(await FlutterForegroundTask.isRunningService, isFalse);
 
-        await _validateFinalizedSegments(closed);
+        final storedSignalObserved = await _validateFinalizedSegments(closed);
+        final liveSignalObserved = summarizePcm16Signal(
+          recent.bytes,
+        ).observed();
+        final signalObserved = liveSignalObserved && storedSignalObserved;
+        if (_requireNonzeroAudio) {
+          expect(
+            liveSignalObserved,
+            isTrue,
+            reason:
+                'the physical microphone stream contained no sustained PCM16 signal',
+          );
+          expect(
+            storedSignalObserved,
+            isTrue,
+            reason:
+                'finalized physical-device WAV segments contained no sustained signal',
+          );
+        }
+
         final partials = await _filesEndingWith(directory, '.part');
         expect(
           partials,
@@ -174,6 +208,8 @@ void main() {
           'SONUS_DEVICE_LAB_RECORDING_RESULT '
           'segments=${closed.length} '
           'pcmBytes=${recent.bytes.length} '
+          'signalRequired=$_requireNonzeroAudio '
+          'signalObserved=$signalObserved '
           'serviceStopped=true',
         );
       } finally {

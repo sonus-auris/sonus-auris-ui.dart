@@ -5,11 +5,21 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 GRADLE="$ROOT/android/app/build.gradle.kts"
 MANIFEST="$ROOT/android/app/src/main/AndroidManifest.xml"
 TARGET="$ROOT/integration_test/device_lab_recording_probe_test.dart"
+SIGNAL_SUPPORT="$ROOT/integration_test/support/pcm16_signal.dart"
+SIGNAL_TEST="$ROOT/test/device_lab_pcm16_signal_test.dart"
 PROBE="$ROOT/scripts/device-lab/android-recording-probe.sh"
 ORCHESTRATOR="$ROOT/scripts/device-lab/macos-end-device-smoke.sh"
 BOUNDED_LOG="$ROOT/scripts/device-lab/bounded-log.py"
 
-for file in "$GRADLE" "$MANIFEST" "$TARGET" "$PROBE" "$ORCHESTRATOR" "$BOUNDED_LOG"; do
+for file in \
+  "$GRADLE" \
+  "$MANIFEST" \
+  "$TARGET" \
+  "$SIGNAL_SUPPORT" \
+  "$SIGNAL_TEST" \
+  "$PROBE" \
+  "$ORCHESTRATOR" \
+  "$BOUNDED_LOG"; do
   [[ -s "$file" ]] || {
     echo "required isolated recording-probe file is missing: $file" >&2
     exit 1
@@ -33,13 +43,18 @@ grep -Fq 'android:label="${sonusAppLabel}"' "$MANIFEST"
 [[ "$(grep -Fc 'android:scheme="${sonusUriScheme}"' "$MANIFEST")" == "3" ]]
 grep -Fq 'sonusauris-device-lab' "$GRADLE"
 
-# 3. Dart capture is compile-time gated and emits only bounded metrics plus an
-# explicit proof that its isolated WAV/partial files were removed.
-grep -Fq "bool.fromEnvironment(" "$TARGET"
+# 3. Dart capture is compile-time gated, validates both live and persisted PCM,
+# and emits only bounded metrics plus proof its WAV/partial files were removed.
 grep -Fq "'SONUS_DEVICE_LAB_RECORDING_PROBE'" "$TARGET"
-grep -Fq 'SONUS_DEVICE_LAB_RECORDING_RESULT' "$TARGET"
+grep -Fq "'SONUS_DEVICE_LAB_REQUIRE_NONZERO_AUDIO'" "$TARGET"
+grep -Fq 'summarizePcm16Signal(bytes, payloadOffset: 44).observed()' "$TARGET"
+grep -Fq 'summarizePcm16Signal(' "$TARGET"
+grep -Fq 'signalRequired=$_requireNonzeroAudio' "$TARGET"
+grep -Fq 'signalObserved=$signalObserved' "$TARGET"
 grep -Fq 'SONUS_DEVICE_LAB_AUDIO_CLEANUP_PASSED' "$TARGET"
 grep -Fq 'await index.clearAll();' "$TARGET"
+grep -Fq 'minimumNonTrivialSamples = 64' "$SIGNAL_SUPPORT"
+grep -Fq 'one spike cannot satisfy the sustained-input contract' "$SIGNAL_TEST"
 if grep -Eq 'print\([^)]*(localPath|file\.path|readAsBytes)' "$TARGET"; then
   echo 'recording probe must not print raw paths or audio bytes' >&2
   exit 1
@@ -64,12 +79,17 @@ if grep -En 'adb_[[:space:]].*\$PRODUCTION_PKG|adb[[:space:]].*\$PRODUCTION_PKG'
   exit 1
 fi
 
-# 6. Operator hardware defaults remain non-destructive. The isolated package is
-# force-stopped, but neither app is uninstalled/cleared and shared logcat remains.
-if grep -En 'adb_?[[:space:]].*(uninstall|pm clear)|logcat[[:space:]]+-c' "$PROBE"; then
-  echo 'isolated recording probe may not uninstall, clear app data, or clear logcat' >&2
+# 6. The production package and shared device state remain untouched. Clearing
+# is allowed only for the dedicated test package so failed audio cannot persist.
+if grep -En 'adb_?[[:space:]].*uninstall|logcat[[:space:]]+-c' "$PROBE"; then
+  echo 'isolated recording probe may not uninstall packages or clear logcat' >&2
   exit 1
 fi
+[[ "$(grep -Ec 'pm clear' "$PROBE")" == "1" ]]
+grep -Fq 'pm clear "$LAB_PKG"' "$PROBE"
+grep -Fq 'isolated_package_data_cleared_before_probe=' "$PROBE"
+grep -Fq 'isolated_package_data_cleared_after_probe=' "$PROBE"
+grep -Fq 'raw_audio_retained_on_device=false' "$PROBE"
 grep -Fq 'shared_logcat_cleared=false' "$PROBE"
 grep -Fq 'raw_audio_exported=false' "$PROBE"
 grep -Fq 'production_package_addressed=false' "$PROBE"
@@ -78,16 +98,34 @@ if grep -Fq 'tail -n 160' "$PROBE"; then
   echo 'recording crash evidence must preserve startup and terminal context' >&2
   exit 1
 fi
-# bounded-memory crash evidence
 
-# 7. Real background behavior is host-driven rather than simulated inside Dart.
+# 7. Real background behavior is host-driven and the app-op must be actively
+# running while the isolated recorder is behind Home.
 grep -Fq 'SONUS_DEVICE_LAB_BACKGROUND_READY' "$PROBE"
 grep -Fq 'input keyevent KEYCODE_HOME' "$PROBE"
 grep -Fq 'flutter_foreground_task.service.ForegroundService' "$PROBE"
+grep -Fq 'cmd appops get "$LAB_PKG" RECORD_AUDIO' "$PROBE"
+grep -Fq "RECORD_AUDIO: (allow|foreground).*\\(running\\)" "$PROBE"
+grep -Fq 'record_audio_appop_running_while_backgrounded=true' "$PROBE"
 grep -Fq 'Sonus Auris is recording' "$PROBE"
 
-# 8. The Mac orchestrator exposes the probe only as a separate opt-in target.
+# 8. Physical targets require sustained non-zero PCM in both live and persisted
+# buffers; hosted emulators exercise lifecycle/cleanup without making that claim.
+grep -Fq 'local require_signal=true' "$PROBE"
+grep -Fq 'if [[ "$qemu" == "1" ]]' "$PROBE"
+[[ "$(grep -Fc 'SONUS_DEVICE_LAB_REQUIRE_NONZERO_AUDIO=$require_signal' "$PROBE")" == "2" ]]
+grep -Fq 'signalRequired=true signalObserved=true' "$PROBE"
+grep -Fq 'nonzero_pcm_required=$require_signal' "$PROBE"
+grep -Fq 'nonzero_pcm_observed=$signal_observed' "$PROBE"
+
+# 9. The Mac orchestrator exposes the probe only as a separate opt-in target.
 grep -Fq 'SONUS_RUN_ANDROID_RECORDING_PROBE' "$ORCHESTRATOR"
 grep -Fq 'android-recording-probe.sh' "$ORCHESTRATOR"
 
-echo 'isolated Android device-lab recording contract passed: 8 groups'
+# 10. The committed PCM helper has a standalone Flutter unit-test surface.
+grep -Fq 'silent PCM remains below the physical signal threshold' "$SIGNAL_TEST"
+grep -Fq 'sustained non-trivial PCM is recognized' "$SIGNAL_TEST"
+grep -Fq 'WAV headers are excluded' "$SIGNAL_TEST"
+grep -Fq 'misaligned or invalid thresholds fail closed' "$SIGNAL_TEST"
+
+echo 'isolated Android device-lab recording contract passed: 10 groups'
