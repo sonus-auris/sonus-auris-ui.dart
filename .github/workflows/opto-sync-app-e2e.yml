@@ -56,7 +56,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: sonus-auris/sonus-auris-sync
-          ref: f1333febbd014391684b3555e5ad2b489d9799ea
+          ref: 38b2e19b7c72ffcac2b27491b2f75d3d3d10b7c5
           path: .sync-wrapper
           token: ${{ secrets.SYNC_FLEET_TOKEN }}
           persist-credentials: false
@@ -65,3 +65,4 @@ jobs:
           test -f .sync-wrapper/opto-sync-adapter.json
           grep -F 'opto-sync/opto-sync-clients' .sync-wrapper/.zpkg.toml
           grep -F 'raw audio' .sync-wrapper/opto-sync-adapter.json
+          grep -F 'downstream-wrapper-reusable.yml@dcf5ee5d15e4ed6aeb24952b296947b4ffb39e88' .sync-wrapper/.github/workflows/opto-sync-wrapper-resilience.yml
