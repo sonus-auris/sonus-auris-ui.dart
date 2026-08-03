@@ -4,7 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../integration_test/support/pcm16_signal.dart';
 
-Uint8List _pcm16(List<int> samples, {int prefixBytes = 0, bool oddTail = false}) {
+Uint8List _pcm16(
+  List<int> samples, {
+  int prefixBytes = 0,
+  bool oddTail = false,
+}) {
   final bytes = Uint8List(prefixBytes + samples.length * 2 + (oddTail ? 1 : 0));
   final view = ByteData.sublistView(bytes);
   for (var index = 0; index < samples.length; index += 1) {
@@ -24,10 +28,7 @@ void main() {
   });
 
   test('sustained non-trivial PCM is recognized without retaining content', () {
-    final samples = List<int>.generate(
-      128,
-      (index) => index.isEven ? 64 : -64,
-    );
+    final samples = List<int>.generate(128, (index) => index.isEven ? 64 : -64);
     final summary = summarizePcm16Signal(_pcm16(samples));
 
     expect(summary.sampleCount, 128);
