@@ -355,7 +355,13 @@ def main() -> None:
             1,
         ),
         source.replace('resolver_args+=(--serial "$ANDROID_SERIAL")', ":", 1),
-        source.replace('"$selection_status" == "78"', '"$selection_status" != "0"', 1),
+        source.replace(
+    'elif [[ "$selection_status" == "78" ]]; then\n'
+    '      echo "No authorized physical Android target detected; skipping Android smoke."',
+    'elif [[ "$selection_status" != "0" ]]; then\n'
+    '      echo "No authorized physical Android target detected; skipping Android smoke."',
+    1,
+),
         source.replace("SONUS_TARGET_REQUIRED=1 run_target android-device", "run_target android-device", 1),
         source.replace('"$ROOT/build/app/outputs/flutter-apk/app-debug.apk" "$android_serial"', '"$ROOT/build/app/outputs/flutter-apk/app-debug.apk"', 1),
         source.replace("android_emulator_probe=ro.kernel.qemu", "android_emulator_probe=none", 1),
