@@ -44,10 +44,10 @@ permissions:
   contents: read
 
 # Emulator and simulator jobs are expensive and produce diagnostic evidence.
-# Let an in-flight run finish when an unrelated commit lands; the new head run
-# remains queued behind it instead of discarding several minutes of device work.
+# Give every exact commit its own group: concurrent writers neither cancel an
+# in-flight run nor leave the newest device evidence behind stale queued heads.
 concurrency:
-  group: device-lab-${{ github.workflow }}-${{ github.ref }}
+  group: device-lab-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
