@@ -19,9 +19,8 @@ class PageletRenderer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final policyViolation = PageletPolicy.violation(document);
-    if (policyViolation != null) {
-      return _InvalidPageletView(reason: policyViolation);
+    if (PageletPolicy.violation(document) != null) {
+      return const _InvalidPageletView();
     }
 
     return Semantics(
@@ -97,9 +96,7 @@ class PageletSurfaceView extends StatelessWidget {
 }
 
 class _InvalidPageletView extends StatelessWidget {
-  const _InvalidPageletView({required this.reason});
-
-  final String reason;
+  const _InvalidPageletView();
 
   @override
   Widget build(BuildContext context) {
