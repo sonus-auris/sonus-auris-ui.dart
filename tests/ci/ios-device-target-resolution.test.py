@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +51,86 @@ def run_resolver(payload: object, explicit: str | None = None) -> subprocess.Com
         stderr=subprocess.PIPE,
         check=False,
     )
+
+
+def write_executable(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def run_orchestrator_case(
+    payload: object,
+    *,
+    mode: str,
+    child_status: int = 0,
+    explicit: str | None = None,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        scripts = root / "scripts" / "device-lab"
+        scripts.mkdir(parents=True)
+        shutil.copy2(ORCHESTRATOR, scripts / ORCHESTRATOR.name)
+        shutil.copy2(RESOLVER, scripts / RESOLVER.name)
+        (scripts / "evidence-policy.py").write_text(
+            "#!/usr/bin/env python3\nraise SystemExit(0)\n",
+            encoding="utf-8",
+        )
+        write_executable(
+            scripts / "ios-attached-smoke.sh",
+            "#!/usr/bin/env bash\nexit \"${FAKE_CHILD_STATUS:-0}\"\n",
+        )
+
+        fake_bin = root / "fake-bin"
+        fake_bin.mkdir()
+        write_executable(fake_bin / "uname", "#!/usr/bin/env bash\necho Darwin\n")
+        write_executable(
+            fake_bin / "flutter",
+            """#!/usr/bin/env bash
+if [[ "$1" == "devices" && "$2" == "--machine" ]]; then
+  printf '%s' "$FAKE_FLUTTER_DEVICES_JSON"
+  exit 0
+fi
+exit 2
+""",
+        )
+
+        evidence = root / "evidence"
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": str(fake_bin) + os.pathsep + env["PATH"],
+                "FAKE_FLUTTER_DEVICES_JSON": json.dumps(payload),
+                "FAKE_CHILD_STATUS": str(child_status),
+                "SONUS_DEVICE_LAB_DIR": str(evidence),
+                "SONUS_RUN_IOS_SIMULATOR": "0",
+                "SONUS_RUN_IOS_DEVICE": mode,
+                "SONUS_RUN_ANDROID_DEVICE": "0",
+                "SONUS_RUN_FLUTTER_MACOS": "0",
+            }
+        )
+        if explicit is not None:
+            env["IOS_DEVICE_ID"] = explicit
+        else:
+            env.pop("IOS_DEVICE_ID", None)
+
+        completed = subprocess.run(
+            ["bash", str(scripts / ORCHESTRATOR.name)],
+            cwd=root,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=20,
+        )
+        results: dict[str, str] = {}
+        results_path = evidence / "results.txt"
+        if results_path.is_file():
+            for line in results_path.read_text(encoding="utf-8").splitlines():
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    results[key] = value
+        return completed, results
 
 
 def function_body(source: str, name: str) -> str:
@@ -157,6 +240,37 @@ def main() -> None:
     assert malformed.stdout == ""
     assert "malformed" in malformed.stderr.lower()
 
+    # Execute the complete shell orchestrator with fake discovery and child
+    # commands. These cases prove exit-78 semantics rather than only matching
+    # source text.
+    completed, results = run_orchestrator_case([iphone], mode="1", child_status=0)
+    assert completed.returncode == 0, completed.stderr
+    assert results["ios-device"] == "passed"
+
+    completed, results = run_orchestrator_case([iphone], mode="1", child_status=78)
+    assert completed.returncode == 1
+    assert results["ios-device"] == "failed"
+    assert "required" in (completed.stdout + completed.stderr).lower()
+
+    completed, results = run_orchestrator_case([], mode="auto")
+    assert completed.returncode == 0
+    assert results["ios-device"] == "skipped"
+
+    completed, results = run_orchestrator_case([iphone, iphone_two], mode="auto")
+    assert completed.returncode == 1
+    assert results["ios-device"] == "failed"
+
+    completed, results = run_orchestrator_case([simulator], mode="1", explicit="sim-1")
+    assert completed.returncode == 1
+    assert results["ios-device"] == "failed"
+
+    for completed in (
+        run_orchestrator_case([iphone], mode="1", child_status=0)[0],
+        run_orchestrator_case([iphone], mode="1", child_status=78)[0],
+        run_orchestrator_case([iphone, iphone_two], mode="auto")[0],
+    ):
+        assert_no_identifier_leak(completed, known_ids)
+
     source = ORCHESTRATOR.read_text(encoding="utf-8")
     validate_orchestrator(source)
 
@@ -176,7 +290,7 @@ def main() -> None:
 
     print(
         "physical iOS target-resolution contract passed: 12 resolver cases + "
-        "malformed JSON + required/auto orchestration + 4 mutation refusals"
+        "malformed JSON + 5 executable orchestration cases + 4 mutation refusals"
     )
 
 
