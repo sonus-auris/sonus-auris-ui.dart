@@ -74,8 +74,11 @@ distribution signing used by the protected release workflow.
 From `sonus-auris-ui.dart`:
 
 ```bash
-scripts/device-lab/macos-end-device-smoke.sh
+bash scripts/device-lab/macos-end-device-smoke.sh
 ```
+
+The scripts are invoked through Bash deliberately, so the runbook remains valid
+whether a checkout preserves executable mode bits or not.
 
 The orchestrator automatically runs the iOS Simulator and packaged Flutter
 macOS checks. It runs the physical iPhone and USB Android checks when those
@@ -94,17 +97,17 @@ evidence. The command exits nonzero when any attempted target fails.
 # Require both physical devices; fail instead of skipping when Android is absent.
 SONUS_RUN_IOS_DEVICE=1 \
 SONUS_RUN_ANDROID_DEVICE=1 \
-  scripts/device-lab/macos-end-device-smoke.sh
+  bash scripts/device-lab/macos-end-device-smoke.sh
 
 # Simulator + desktop only.
 SONUS_RUN_IOS_DEVICE=0 \
 SONUS_RUN_ANDROID_DEVICE=0 \
-  scripts/device-lab/macos-end-device-smoke.sh
+  bash scripts/device-lab/macos-end-device-smoke.sh
 
 # Capture screenshots only after confirming the visible screens contain no
 # private account data, OTPs, tokens, or recording content.
 SONUS_CAPTURE_SCREENSHOT=1 \
-  scripts/device-lab/macos-end-device-smoke.sh
+  bash scripts/device-lab/macos-end-device-smoke.sh
 ```
 
 ## Run one target
@@ -112,10 +115,10 @@ SONUS_CAPTURE_SCREENSHOT=1 \
 ### iOS Simulator
 
 ```bash
-scripts/device-lab/ios-simulator-smoke.sh
+bash scripts/device-lab/ios-simulator-smoke.sh
 
 # Or select a specific simulator UDID shown by `xcrun simctl list`.
-scripts/device-lab/ios-simulator-smoke.sh <simulator-udid>
+bash scripts/device-lab/ios-simulator-smoke.sh <simulator-udid>
 ```
 
 The script preserves installed app data. It builds a debug simulator app with
@@ -130,11 +133,11 @@ iPhone release compile.
 ### Physical iPhone
 
 ```bash
-scripts/device-lab/ios-attached-smoke.sh
+bash scripts/device-lab/ios-attached-smoke.sh
 
 # Or name the Flutter device ID explicitly.
 IOS_DEVICE_ID=<flutter-device-id> \
-  scripts/device-lab/ios-attached-smoke.sh
+  bash scripts/device-lab/ios-attached-smoke.sh
 ```
 
 The script uses normal Flutter/Xcode development signing. It installs/updates
@@ -161,10 +164,10 @@ explicitly verify:
 ### Physical Android over USB
 
 ```bash
-scripts/device-lab/android-attached-smoke.sh
+bash scripts/device-lab/android-attached-smoke.sh
 
 # Explicit APK and adb target when several devices/emulators are connected.
-scripts/device-lab/android-attached-smoke.sh \
+bash scripts/device-lab/android-attached-smoke.sh \
   /path/to/app-release-or-debug.apk \
   <adb-serial>
 ```
@@ -183,7 +186,7 @@ playback checks from DEN-836 manually on the handset.
 ### Packaged Flutter macOS app
 
 ```bash
-scripts/device-lab/flutter-macos-smoke.sh
+bash scripts/device-lab/flutter-macos-smoke.sh
 ```
 
 This builds `lib/main_desktop.dart` as a release `.app`, verifies the bundle ID
@@ -203,7 +206,7 @@ The Rust desktop repository contains its paired runbook and probe:
 
 ```bash
 cd ../desktop.app.rs
-scripts/device-lab/macos-runtime-smoke.sh
+bash scripts/device-lab/macos-runtime-smoke.sh
 ```
 
 By default it enumerates CoreAudio inputs and exercises the packaged Rust app's
