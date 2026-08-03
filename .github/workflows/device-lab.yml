@@ -37,21 +37,26 @@ concurrency:
 
 jobs:
   script-contract:
-    name: Device-lab shell contract
+    name: Device-lab shell and evidence contract
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Validate Bash syntax
-        run: bash -n scripts/device-lab/*.sh
+      - name: Validate script syntax and evidence-policy regressions
+        run: |
+          set -euo pipefail
+          bash -n scripts/device-lab/*.sh
+          python3 -m py_compile scripts/device-lab/evidence-policy.py
+          python3 scripts/device-lab/evidence-policy.py --self-test
       - name: Enforce non-destructive physical-device defaults
         run: |
           set -euo pipefail
           android=scripts/device-lab/android-attached-smoke.sh
           ios_device=scripts/device-lab/ios-attached-smoke.sh
           ios_simulator=scripts/device-lab/ios-simulator-smoke.sh
+          orchestrator=scripts/device-lab/macos-end-device-smoke.sh
           if grep -En 'adb(_)? .*uninstall|pm clear|simctl erase|simctl uninstall|^[[:space:]]*adb(_)?[[:space:]].*logcat[[:space:]]+-c' \
             "$android" "$ios_device" "$ios_simulator"; then
             echo 'Attached-device/simulator scripts may not clear app, device, permission, or shared log data.' >&2
@@ -59,8 +64,16 @@ jobs:
           fi
           grep -Fq 'permissions_mutated=false' "$android"
           grep -Fq 'log_buffer_cleared=false' "$android"
+          grep -Fq 'package_state_preserved=' "$android"
+          grep -Fq '$(basename "$APK")' "$android"
           grep -Fq 'app_data_cleared=false' "$ios_device"
+          grep -Fq 'launch_cycles_completed=' "$ios_device"
           grep -Fq 'process_scoped_logs=true' "$ios_simulator"
+          grep -Fq 'evidence-policy.py' "$orchestrator"
+          if grep -Fq 'shasum -a 256 "$APK" >' "$android"; then
+            echo 'APK checksum evidence may not embed the operator checkout path.' >&2
+            exit 1
+          fi
 
       - name: Enforce isolated Flutter desktop runtime
         run: |
@@ -81,10 +94,13 @@ jobs:
           fi
 
   ios-simulator:
-    name: iOS Simulator runtime smoke
+    name: iOS Simulator install/update/relaunch smoke
     needs: script-contract
     runs-on: macos-15
     timeout-minutes: 45
+    env:
+      SONUS_DEVICE_LAB_DIR: ${{ runner.temp }}/sonus-ios-simulator-evidence
+      SONUS_CAPTURE_SCREENSHOT: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -102,6 +118,36 @@ jobs:
           xcodebuild -version
           xcrun simctl list runtimes
 
+      - name: Select one deterministic iPhone Simulator
+        run: |
+          set -euo pipefail
+          udid="$(xcrun simctl list devices available --json | python3 -c '
+          import json
+          import sys
+          payload = json.load(sys.stdin)
+          booted = []
+          available = []
+          for runtime, devices in payload.get("devices", {}).items():
+              if "iOS" not in runtime:
+                  continue
+              for device in devices:
+                  if not device.get("isAvailable", True) or "iPhone" not in device.get("name", ""):
+                      continue
+                  target = device.get("udid", "")
+                  if device.get("state") == "Booted":
+                      booted.append(target)
+                  else:
+                      available.append(target)
+          choices = booted or available
+          if choices:
+              print(choices[0])
+          ')"
+          if [[ -z "$udid" ]]; then
+            echo 'No available iPhone Simulator runtime was found.' >&2
+            exit 1
+          fi
+          echo "IOS_SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
+
       - name: Validate device-lab Dart formatting
         run: |
           set -euo pipefail
@@ -113,10 +159,41 @@ jobs:
           fi
 
       - name: Run non-destructive iOS Simulator smoke
-        env:
-          SONUS_DEVICE_LAB_DIR: ${{ runner.temp }}/sonus-ios-simulator-evidence
-          SONUS_CAPTURE_SCREENSHOT: '1'
-        run: bash scripts/device-lab/ios-simulator-smoke.sh
+        run: bash scripts/device-lab/ios-simulator-smoke.sh "$IOS_SIMULATOR_UDID"
+
+      - name: Prove in-place reinstall preserves the simulator data container
+        run: |
+          set -euo pipefail
+          bundle_id=com.ores.audioDashcam
+          app="$(find build/ios -type d -path '*iphonesimulator*/Runner.app' -print -quit)"
+          if [[ -z "$app" || ! -d "$app" ]]; then
+            echo 'Built Runner.app was not found for the preservation check.' >&2
+            exit 1
+          fi
+          before="$(xcrun simctl get_app_container "$IOS_SIMULATOR_UDID" "$bundle_id" data)"
+          before_fingerprint="$(printf '%s' "$before" | shasum -a 256 | awk '{print substr($1, 1, 12)}')"
+          xcrun simctl install "$IOS_SIMULATOR_UDID" "$app"
+          after="$(xcrun simctl get_app_container "$IOS_SIMULATOR_UDID" "$bundle_id" data)"
+          after_fingerprint="$(printf '%s' "$after" | shasum -a 256 | awk '{print substr($1, 1, 12)}')"
+          if [[ "$before_fingerprint" != "$after_fingerprint" ]]; then
+            echo 'Simulator in-place reinstall replaced the app data container.' >&2
+            exit 1
+          fi
+          launch="$(xcrun simctl launch --terminate-running-process "$IOS_SIMULATOR_UDID" "$bundle_id")"
+          printf '%s\n' "$launch" > "$SONUS_DEVICE_LAB_DIR/post-update-launch.txt"
+          sleep 4
+          xcrun simctl terminate "$IOS_SIMULATOR_UDID" "$bundle_id"
+          cat > "$SONUS_DEVICE_LAB_DIR/data-container-preservation.txt" <<EOF
+status=passed
+before_fingerprint=$before_fingerprint
+after_fingerprint=$after_fingerprint
+in_place_reinstall=true
+app_data_cleared=false
+post_update_relaunch=true
+EOF
+
+      - name: Redact and verify evidence policy
+        run: python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
 
       - name: Upload sanitized simulator evidence
         if: always()
