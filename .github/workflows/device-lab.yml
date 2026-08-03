@@ -11,6 +11,7 @@ on:
       - 'pubspec.lock'
       - 'scripts/device-lab/**'
       - 'tests/ci/ios-simulator-log-evidence.test.py'
+      - 'tests/ci/ios-physical-device-contract.test.py'
       - 'docs/end-device-testing.md'
       - 'docs/mobile-ci.md'
       - '.github/workflows/device-lab.yml'
@@ -25,6 +26,7 @@ on:
       - 'pubspec.lock'
       - 'scripts/device-lab/**'
       - 'tests/ci/ios-simulator-log-evidence.test.py'
+      - 'tests/ci/ios-physical-device-contract.test.py'
       - 'docs/end-device-testing.md'
       - 'docs/mobile-ci.md'
       - '.github/workflows/device-lab.yml'
@@ -54,10 +56,14 @@ jobs:
           python3 -m py_compile \
             scripts/device-lab/evidence-policy.py \
             scripts/device-lab/bounded-log-scan.py \
-            tests/ci/ios-simulator-log-evidence.test.py
+            scripts/device-lab/flutter-run-cycle.py \
+            tests/ci/ios-simulator-log-evidence.test.py \
+            tests/ci/ios-physical-device-contract.test.py
           python3 scripts/device-lab/evidence-policy.py --self-test
           python3 scripts/device-lab/bounded-log-scan.py --self-test
+          python3 scripts/device-lab/flutter-run-cycle.py --self-test
           python3 tests/ci/ios-simulator-log-evidence.test.py
+          python3 tests/ci/ios-physical-device-contract.test.py
           grep -Fq '"uuid"' scripts/device-lab/evidence-policy.py
           if grep -Fq 'SKIP_LIVE_LOGS' scripts/device-lab/evidence-policy.py; then
             echo 'All uploaded text logs, including run.log, must pass evidence policy.' >&2
@@ -83,6 +89,10 @@ jobs:
           grep -Fq '$(basename "$APK")' "$android"
           grep -Fq 'app_data_cleared=false' "$ios_device"
           grep -Fq 'launch_cycles_completed=' "$ios_device"
+          grep -Fq 'terminal_output_drained=true' "$ios_device"
+          grep -Fq 'fatal_runtime_markers_checked=true' "$ios_device"
+          grep -Fq 'python3 "$CYCLE_MONITOR"' "$ios_device"
+          grep -Fq 'python3 "$EVIDENCE_POLICY" --stream' "$ios_device"
           grep -Fq 'selected.get("emulator")' "$ios_device"
           grep -Fq 'The requested Flutter target is an emulator, not a physical iPhone' "$ios_device"
           grep -Fq 'data_container_preserved=true' "$ios_simulator"
