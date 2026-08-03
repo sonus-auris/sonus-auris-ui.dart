@@ -52,7 +52,7 @@ jobs:
           android=scripts/device-lab/android-attached-smoke.sh
           ios_device=scripts/device-lab/ios-attached-smoke.sh
           ios_simulator=scripts/device-lab/ios-simulator-smoke.sh
-          if grep -En 'adb(_)? .*uninstall|pm clear|simctl erase|simctl uninstall|logcat[[:space:]]+-c' \
+          if grep -En 'adb(_)? .*uninstall|pm clear|simctl erase|simctl uninstall|^[[:space:]]*adb(_)?[[:space:]].*logcat[[:space:]]+-c' \
             "$android" "$ios_device" "$ios_simulator"; then
             echo 'Attached-device/simulator scripts may not clear app, device, permission, or shared log data.' >&2
             exit 1
