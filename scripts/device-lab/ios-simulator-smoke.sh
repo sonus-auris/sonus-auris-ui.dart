@@ -175,8 +175,9 @@ capture_logs() {
     --style compact \
     --predicate "$predicate" \
     2>/dev/null \
-    | tail -n 500 \
-    | sanitize_stream > "$EVIDENCE_DIR/$label-simulator.log" || true
+    | sanitize_stream \
+    | python3 "$ROOT/scripts/device-lab/bounded-log.py" --max-bytes 524288 \
+    > "$EVIDENCE_DIR/$label-simulator.log" || true
 }
 
 assert_no_fatal_logs() {
