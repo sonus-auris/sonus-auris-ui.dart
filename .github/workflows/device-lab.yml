@@ -78,6 +78,10 @@ jobs:
           grep -Fq 'selected.get("emulator")' "$ios_device"
           grep -Fq 'The requested Flutter target is an emulator, not a physical iPhone' "$ios_device"
           grep -Fq 'data_container_preserved=true' "$ios_simulator"
+          grep -Fq 'preservation_proof=test-owned-sentinel' "$ios_simulator"
+          grep -Fq 'test_owned_sentinel_preserved=true' "$ios_simulator"
+          grep -Fq 'test_owned_sentinel_removed=true' "$ios_simulator"
+          grep -Fq 'existing_app_files_enumerated=false' "$ios_simulator"
           grep -Fq 'process_scoped_logs=true' "$ios_simulator"
           grep -Fq 'evidence-policy.py' "$orchestrator"
           if grep -Fq 'shasum -a 256 "$APK" >' "$android"; then
