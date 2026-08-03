@@ -8,6 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="${SONUS_DEVICE_LAB_DIR:-$ROOT/build/device-lab/run-$STAMP}"
 RUN_IOS_SIMULATOR="${SONUS_RUN_IOS_SIMULATOR:-1}"
+RUN_IOS_PERMISSION_DENIAL_PROBE="${SONUS_RUN_IOS_PERMISSION_DENIAL_PROBE:-0}"
 RUN_IOS_DEVICE="${SONUS_RUN_IOS_DEVICE:-auto}"
 RUN_ANDROID_DEVICE="${SONUS_RUN_ANDROID_DEVICE:-auto}"
 RUN_ANDROID_PERMISSION_DENIAL_PROBE="${SONUS_RUN_ANDROID_PERMISSION_DENIAL_PROBE:-0}"
@@ -150,6 +151,16 @@ else
   record_status ios-simulator skipped
 fi
 
+# The permission-denial target creates and deletes a disposable Simulator of its
+# own. It never reuses or changes the normal iOS Simulator selected above.
+case "$RUN_IOS_PERMISSION_DENIAL_PROBE" in
+  1|true|yes)
+    run_target ios-permission-denial-probe \
+      "$ROOT/scripts/device-lab/ios-permission-denial-probe.sh"
+    ;;
+  *) record_status ios-permission-denial-probe skipped ;;
+esac
+
 case "$RUN_IOS_DEVICE" in
   1|true|yes)
     run_target ios-device "$ROOT/scripts/device-lab/ios-attached-smoke.sh"
@@ -243,6 +254,7 @@ skips=$skips
 failures=$failures
 evidence_policy=required
 physical_device_claims_require_this_run=true
+ios_permission_denial_probe_opt_in=$RUN_IOS_PERMISSION_DENIAL_PROBE
 android_permission_denial_probe_opt_in=$RUN_ANDROID_PERMISSION_DENIAL_PROBE
 android_recording_probe_opt_in=$RUN_ANDROID_RECORDING_PROBE
 SUMMARY

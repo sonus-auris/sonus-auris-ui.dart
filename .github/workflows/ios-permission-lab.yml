@@ -1,0 +1,124 @@
+name: iOS disposable microphone permission lab
+
+on:
+  pull_request:
+    paths:
+      - 'integration_test/device_lab_ios_permission_denied_test.dart'
+      - 'lib/src/services/segment_index.dart'
+      - 'lib/src/services/segment_recorder.dart'
+      - 'ios/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'scripts/device-lab/bounded-log.py'
+      - 'scripts/device-lab/evidence-policy.py'
+      - 'scripts/device-lab/ios-permission-denial-probe.sh'
+      - 'tests/ci/ios-permission-denial.test.sh'
+      - 'docs/ios-permission-denial-device-lab.md'
+      - '.github/workflows/ios-permission-lab.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'integration_test/device_lab_ios_permission_denied_test.dart'
+      - 'lib/src/services/segment_index.dart'
+      - 'lib/src/services/segment_recorder.dart'
+      - 'ios/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'scripts/device-lab/bounded-log.py'
+      - 'scripts/device-lab/evidence-policy.py'
+      - 'scripts/device-lab/ios-permission-denial-probe.sh'
+      - 'tests/ci/ios-permission-denial.test.sh'
+      - 'docs/ios-permission-denial-device-lab.md'
+      - '.github/workflows/ios-permission-lab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-permission-lab-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: Disposable iOS permission-lab contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate shell and safety contracts
+        run: |
+          set -euo pipefail
+          bash -n scripts/device-lab/ios-permission-denial-probe.sh
+          bash -n tests/ci/ios-permission-denial.test.sh
+          python3 -m py_compile \
+            scripts/device-lab/bounded-log.py \
+            scripts/device-lab/evidence-policy.py
+          python3 scripts/device-lab/bounded-log.py --self-test
+          python3 scripts/device-lab/evidence-policy.py --self-test
+          bash tests/ci/ios-permission-denial.test.sh
+
+  simulator:
+    name: User-denied microphone on a disposable iOS Simulator
+    needs: contract
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+
+      - name: Toolchain evidence
+        run: |
+          flutter --version
+          xcodebuild -version
+          xcrun simctl list runtimes available
+
+      - name: Validate Dart formatting
+        run: |
+          set -euo pipefail
+          dart format integration_test/device_lab_ios_permission_denied_test.dart
+          if ! git diff --exit-code -- \
+            integration_test/device_lab_ios_permission_denied_test.dart; then
+            echo 'iOS permission-lab Dart source is not formatted.' >&2
+            git diff -- integration_test/device_lab_ios_permission_denied_test.dart
+            exit 1
+          fi
+
+      - name: Run disposable Simulator permission-denial probe
+        env:
+          SONUS_DEVICE_LAB_DIR: ${{ runner.temp }}/sonus-ios-permission-evidence
+          # Flutter 3.44.2 on Xcode 16.4 failed to establish its debug/log
+          # connection to the hosted iOS 26.2 runtime. Select the newest
+          # installed iOS runtime at or below major 18 unless explicitly
+          # overridden by an operator on a newer validated toolchain.
+          SONUS_IOS_PERMISSION_LAB_MAX_RUNTIME_MAJOR: '18'
+          SONUS_IOS_PERMISSION_DRIVE_TIMEOUT_SECONDS: '480'
+        run: bash scripts/device-lab/ios-permission-denial-probe.sh
+
+      - name: Redact and verify evidence
+        id: evidence_policy
+        if: always()
+        env:
+          SONUS_DEVICE_LAB_DIR: ${{ runner.temp }}/sonus-ios-permission-evidence
+        run: |
+          mkdir -p "$SONUS_DEVICE_LAB_DIR"
+          python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
+
+      - name: Upload sanitized evidence
+        if: ${{ always() && steps.evidence_policy.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonus-ios-simulator-permission-denial-evidence
+          path: ${{ runner.temp }}/sonus-ios-permission-evidence
+          if-no-files-found: error
+          retention-days: 7
