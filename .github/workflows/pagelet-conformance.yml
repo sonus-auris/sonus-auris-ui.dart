@@ -31,7 +31,9 @@ jobs:
           persist-credentials: false
 
       - name: Run dependency-free lock and report-policy tests
-        run: python3 -m unittest discover -s test/scripts -p '*_test.py' -v
+        run: |
+          python3 -m compileall -q scripts test/scripts
+          python3 -m unittest discover -s test/scripts -p '*_test.py' -v
 
       - name: Resolve the immutable interface dependency
         id: interface-lock
@@ -165,4 +167,5 @@ jobs:
             .interface-contract/artifacts/interface-bundle/stage/INTERFACE-PAYLOAD.sha256
             .interface-contract/artifacts/interface-bundle/evidence/bundle-evidence.json
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 30
