@@ -10,6 +10,7 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'scripts/device-lab/**'
+      - 'tests/ci/android-physical-device-contract.test.py'
       - 'tests/ci/ios-simulator-log-evidence.test.py'
       - 'tests/ci/ios-physical-device-contract.test.py'
       - 'tests/ci/run-with-timeout.test.py'
@@ -26,6 +27,7 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'scripts/device-lab/**'
+      - 'tests/ci/android-physical-device-contract.test.py'
       - 'tests/ci/ios-simulator-log-evidence.test.py'
       - 'tests/ci/ios-physical-device-contract.test.py'
       - 'tests/ci/run-with-timeout.test.py'
@@ -60,6 +62,7 @@ jobs:
             scripts/device-lab/bounded-log-scan.py \
             scripts/device-lab/flutter-run-cycle.py \
             scripts/device-lab/run-with-timeout.py \
+            tests/ci/android-physical-device-contract.test.py \
             tests/ci/ios-simulator-log-evidence.test.py \
             tests/ci/ios-physical-device-contract.test.py \
             tests/ci/run-with-timeout.test.py
@@ -67,6 +70,7 @@ jobs:
           python3 scripts/device-lab/bounded-log-scan.py --self-test
           python3 scripts/device-lab/flutter-run-cycle.py --self-test
           python3 scripts/device-lab/run-with-timeout.py --self-test
+          python3 tests/ci/android-physical-device-contract.test.py
           python3 tests/ci/ios-simulator-log-evidence.test.py
           python3 tests/ci/ios-physical-device-contract.test.py
           python3 tests/ci/run-with-timeout.test.py
