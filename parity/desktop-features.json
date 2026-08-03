@@ -1,0 +1,27 @@
+{
+  "manifestVersion": "1.0.0",
+  "implementation": "flutter",
+  "reviewedAt": "2026-08-02",
+  "features": [
+    {"id": "recording.start-stop", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]},
+    {"id": "recording.state-indicator", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]},
+    {"id": "microphone.selection", "status": "platform-specific", "platforms": ["macos", "windows", "linux"], "note": "Desktop exposes explicit input selection; mobile follows OS routing."},
+    {"id": "microphone.permission", "status": "platform-specific", "platforms": ["android", "ios", "macos", "windows", "linux"], "note": "Permission UX and system ownership differ by platform."},
+    {"id": "microphone.hotplug", "status": "platform-specific", "platforms": ["android", "ios", "macos", "windows", "linux"], "note": "Recovery semantics are shared; device-change notification sources are native."},
+    {"id": "playback.local-window", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]},
+    {"id": "playback.range", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]},
+    {"id": "retention.plaintext-100h-ceiling", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]},
+    {"id": "background.launch-at-login", "status": "platform-specific", "platforms": ["macos", "windows", "linux"], "note": "Desktop only; mobile uses reviewed OS background mechanisms."},
+    {"id": "background.tray-menu", "status": "platform-specific", "platforms": ["macos", "windows", "linux"], "note": "Desktop only."},
+    {"id": "lifecycle.explicit-quit", "status": "supported", "platforms": ["macos", "windows", "linux"]},
+    {"id": "auth.passwordless", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]},
+    {"id": "auth.mandatory-mfa", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]},
+    {"id": "devices.management", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]},
+    {"id": "cloud.connections", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]},
+    {"id": "consent.reviewable-native-flow", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]},
+    {"id": "diagnostics.sanitized", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]},
+    {"id": "pagelets.native-schema-v1", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]},
+    {"id": "pagelets.content-html", "status": "intentionally-deferred", "platforms": ["android", "ios", "macos", "windows", "linux"], "linearIssue": "DEN-1401", "reviewCondition": "Ship only after the store-compliance ADR, review inventory, and CI gates are approved."},
+    {"id": "pagelets.offline-fallback", "status": "supported", "platforms": ["android", "ios", "macos", "windows", "linux"]}
+  ]
+}
