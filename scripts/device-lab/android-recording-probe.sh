@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Explicitly consented real-microphone/background probe for an attached Android
 # handset. The candidate uses com.ores.sonus_auris.device_lab, never the Play
-# Store package, and the Dart test removes all probe WAV/partial files before it
-# returns. Shared device logcat is read from a timestamp and is never cleared.
+# Store package, and only the isolated package data is scrubbed before and after
+# capture. Shared device logcat is read from a timestamp and is never cleared.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -21,6 +21,8 @@ EVIDENCE_POLICY="$ROOT/scripts/device-lab/evidence-policy.py"
 LOGCAT_SINCE_EPOCH="0"
 PROBE_PID=""
 DRIVE_PID=""
+ISOLATED_STATE_CLEARED_BEFORE=false
+ISOLATED_STATE_CLEARED_AFTER=false
 mkdir -p "$EVIDENCE_DIR"
 
 need() {
@@ -118,6 +120,21 @@ capture_lab_notification() {
     ' > "$EVIDENCE_DIR/notification.txt" || true
 }
 
+clear_isolated_capture_state() {
+  if ! adb_ shell pm path "$LAB_PKG" 2>/dev/null |
+    tr -d '\r' |
+    grep -q '^package:'; then
+    return 0
+  fi
+
+  local output
+  output="$(adb_ shell pm clear "$LAB_PKG" 2>&1 | tr -d '\r')"
+  if [[ "$output" != *Success* ]]; then
+    echo "Could not clear the isolated device-lab package state: $output" >&2
+    return 1
+  fi
+}
+
 run_background_probe() (
   set -euo pipefail
   echo "background-probe: waiting for isolated Dart readiness marker"
@@ -136,7 +153,7 @@ run_background_probe() (
 
   adb_ shell dumpsys activity services "$LAB_PKG" \
     > "$EVIDENCE_DIR/services.txt" 2>&1 || true
-  adb_ shell appops get "$LAB_PKG" RECORD_AUDIO \
+  adb_ shell cmd appops get "$LAB_PKG" RECORD_AUDIO \
     > "$EVIDENCE_DIR/appops-record-audio.txt" 2>&1 || true
   capture_lab_notification
 
@@ -155,6 +172,14 @@ run_background_probe() (
     echo "  ✓ microphone foreground service remained registered"
   else
     echo "  ✗ microphone foreground service was missing" >&2
+    failed=1
+  fi
+
+  if grep -Eq 'RECORD_AUDIO: (allow|foreground).*\(running\)' \
+    "$EVIDENCE_DIR/appops-record-audio.txt"; then
+    echo "  ✓ RECORD_AUDIO app-op was active while backgrounded"
+  else
+    echo "  ✗ RECORD_AUDIO app-op was not active while backgrounded" >&2
     failed=1
   fi
 
@@ -188,6 +213,7 @@ cleanup() {
   fi
   if [[ -n "$SERIAL" ]]; then
     adb_ shell am force-stop "$LAB_PKG" >/dev/null 2>&1 || true
+    clear_isolated_capture_state >/dev/null 2>&1 || true
   fi
   return "$status"
 }
@@ -209,8 +235,8 @@ main() {
 Refusing to open a real microphone without explicit operator consent.
 Set exactly:
   SONUS_ANDROID_RECORDING_PROBE_CONSENT=$CONSENT_PHRASE
-The isolated probe records for about 15 seconds, exports no audio, clears its
-own WAV/partial files, and never addresses package $PRODUCTION_PKG.
+The isolated probe records for about 15 seconds, exports no audio, clears only
+its dedicated test-package state, and never addresses package $PRODUCTION_PKG.
 CONSENT
     exit 64
   fi
@@ -228,6 +254,10 @@ CONSENT
     echo "This operator probe requires a physical Android by default." >&2
     exit 3
   fi
+  local require_signal=true
+  if [[ "$qemu" == "1" ]]; then
+    require_signal=false
+  fi
 
   local serial_fingerprint
   serial_fingerprint="$(printf '%s' "$SERIAL" | {
@@ -237,6 +267,7 @@ CONSENT
     echo "target_fingerprint=$serial_fingerprint"
     echo "transport=authorized-adb"
     echo "emulator=$([[ "$qemu" == "1" ]] && echo true || echo false)"
+    echo "nonzero_pcm_required=$require_signal"
     echo "sdk=$(adb_ shell getprop ro.build.version.sdk | tr -d '\r')"
     echo "security_patch=$(adb_ shell getprop ro.build.version.security_patch | tr -d '\r')"
   } > "$EVIDENCE_DIR/device.txt"
@@ -247,7 +278,8 @@ CONSENT
     flutter pub get
     SONUS_DEVICE_LAB_ANDROID=1 flutter build apk --debug \
       --target="$TARGET" \
-      --dart-define=SONUS_DEVICE_LAB_RECORDING_PROBE=true
+      --dart-define=SONUS_DEVICE_LAB_RECORDING_PROBE=true \
+      "--dart-define=SONUS_DEVICE_LAB_REQUIRE_NONZERO_AUDIO=$require_signal"
   )
   if [[ ! -s "$APK" ]]; then
     echo "Isolated APK build did not produce $APK" >&2
@@ -274,8 +306,13 @@ production_package_addressed=false
 isolated_deep_link_scheme=sonusauris-device-lab
 ISOLATION
 
+  trap cleanup EXIT HUP INT TERM
   echo "== install and authorize isolated package =="
   adb_ install -r "$APK"
+  if ! clear_isolated_capture_state; then
+    exit 5
+  fi
+  ISOLATED_STATE_CLEARED_BEFORE=true
   adb_ shell pm grant "$LAB_PKG" android.permission.RECORD_AUDIO
   adb_ shell pm grant "$LAB_PKG" android.permission.POST_NOTIFICATIONS || true
   if ! adb_ shell dumpsys package "$LAB_PKG" 2>/dev/null |
@@ -286,7 +323,6 @@ ISOLATION
   fi
 
   mark_logcat_start
-  trap cleanup EXIT HUP INT TERM
   run_background_probe &
   PROBE_PID=$!
 
@@ -299,6 +335,7 @@ ISOLATION
       --target="$TARGET" \
       --use-application-binary="$APK" \
       --dart-define=SONUS_DEVICE_LAB_RECORDING_PROBE=true \
+      "--dart-define=SONUS_DEVICE_LAB_REQUIRE_NONZERO_AUDIO=$require_signal" \
       -d "$SERIAL"
   ) > >(python3 "$EVIDENCE_POLICY" --stream | tee "$drive_log") 2>&1 &
   DRIVE_PID=$!
@@ -327,6 +364,15 @@ ISOLATION
 
   grep -Fq 'SONUS_DEVICE_LAB_RECORDING_RESULT' "$drive_log"
   grep -Fq 'SONUS_DEVICE_LAB_AUDIO_CLEANUP_PASSED' "$drive_log"
+  local signal_observed=false
+  if grep -Fq 'signalObserved=true' "$drive_log"; then
+    signal_observed=true
+  fi
+  if [[ "$require_signal" == "true" ]] &&
+    ! grep -Fq 'signalRequired=true signalObserved=true' "$drive_log"; then
+    echo "Physical-device capture did not prove sustained non-zero PCM input." >&2
+    exit 7
+  fi
   if recent_logcat | grep -Eq 'FATAL EXCEPTION|am_crash|Process .*device_lab.* has died'; then
     recent_logcat |
       grep -E "$LAB_PKG|FATAL EXCEPTION|AndroidRuntime|am_crash" |
@@ -336,6 +382,12 @@ ISOLATION
     exit 7
   fi
 
+  if ! clear_isolated_capture_state; then
+    echo "The isolated package could not be scrubbed after microphone capture." >&2
+    exit 8
+  fi
+  ISOLATED_STATE_CLEARED_AFTER=true
+
   cat > "$EVIDENCE_DIR/result.txt" <<RESULT
 status=passed
 scope=isolated-real-microphone-home-background-foreground-cleanup
@@ -343,9 +395,15 @@ explicit_recording_consent=true
 package=$LAB_PKG
 production_package_addressed=false
 record_audio_granted_to_isolated_package=true
+record_audio_appop_running_while_backgrounded=true
+nonzero_pcm_required=$require_signal
+nonzero_pcm_observed=$signal_observed
 shared_logcat_cleared=false
 raw_audio_exported=false
+raw_audio_retained_on_device=false
 probe_audio_cleanup_passed=true
+isolated_package_data_cleared_before_probe=$ISOLATED_STATE_CLEARED_BEFORE
+isolated_package_data_cleared_after_probe=$ISOLATED_STATE_CLEARED_AFTER
 device_lab_package_uninstalled=false
 RESULT
   echo "ANDROID ISOLATED RECORDING PROBE PASSED"
