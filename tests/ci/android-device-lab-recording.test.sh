@@ -78,13 +78,29 @@ if grep -Fq 'tail -n 160' "$PROBE"; then
   echo 'recording crash evidence must preserve startup and terminal context' >&2
   exit 1
 fi
-# bounded-memory crash evidence
 
-# 7. Real background behavior is host-driven rather than simulated inside Dart.
+# 7. Real background behavior is host-driven and every asynchronous/pipeline
+# failure is propagated. This guards the false-green case where a missing
+# notification was logged but set +e allowed result.txt to claim success.
 grep -Fq 'SONUS_DEVICE_LAB_BACKGROUND_READY' "$PROBE"
 grep -Fq 'input keyevent KEYCODE_HOME' "$PROBE"
 grep -Fq 'flutter_foreground_task.service.ForegroundService' "$PROBE"
 grep -Fq 'Sonus Auris is recording' "$PROBE"
+grep -Fq 'persistent_notification_verified=true' "$PROBE"
+grep -Fq 'wait "$PROBE_PID" || background_status=$?' "$PROBE"
+grep -Fq 'if [[ "$background_status" != "0" ]]' "$PROBE"
+grep -Fq 'pipeline_status=("${PIPESTATUS[@]}")' "$PROBE"
+grep -Fq 'stream_status="${pipeline_status[1]}"' "$PROBE"
+grep -Fq 'tee_status="${pipeline_status[2]}"' "$PROBE"
+main_line="$(grep -n '^main() {' "$PROBE" | cut -d: -f1)"
+[[ -n "$main_line" ]]
+sed -n "$((main_line + 1)),$((main_line + 8))p" "$PROBE" |
+  grep -Fq 'set -euo pipefail'
+grep -Fq '/NotificationRecord\(/ {' "$PROBE"
+if grep -Fq '/^  NotificationRecord\(/' "$PROBE"; then
+  echo 'notification extraction must not depend on Android indentation' >&2
+  exit 1
+fi
 
 # 8. The Mac orchestrator exposes the probe only as a separate opt-in target.
 grep -Fq 'SONUS_RUN_ANDROID_RECORDING_PROBE' "$ORCHESTRATOR"
