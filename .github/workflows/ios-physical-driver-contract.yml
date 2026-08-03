@@ -1,0 +1,44 @@
+name: Physical iPhone run-driver contract
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/device-lab/ios-attached-smoke.sh'
+      - 'scripts/device-lab/flutter-run-driver.py'
+      - 'tests/ci/ios_physical_driver.test.py'
+      - '.github/workflows/ios-physical-driver-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/device-lab/ios-attached-smoke.sh'
+      - 'scripts/device-lab/flutter-run-driver.py'
+      - 'tests/ci/ios_physical_driver.test.py'
+      - '.github/workflows/ios-physical-driver-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-physical-driver-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Run physical-iPhone process and safety contracts
+        run: |
+          set -euo pipefail
+          bash -n scripts/device-lab/ios-attached-smoke.sh
+          python3 -m py_compile \
+            scripts/device-lab/flutter-run-driver.py \
+            tests/ci/ios_physical_driver.test.py
+          python3 tests/ci/ios_physical_driver.test.py
