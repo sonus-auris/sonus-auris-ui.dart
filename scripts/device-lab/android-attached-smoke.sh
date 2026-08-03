@@ -4,7 +4,7 @@
 # Unlike scripts/emulator/permission-smoke.sh, this physical-device harness
 # never uninstalls the package, clears app data, changes runtime permissions, or
 # clears the device-wide logcat buffer. It may update/install the supplied APK,
-# force-stop the Sonus Auris process, and relaunch it.
+# background/foreground the app, force-stop the Sonus Auris process, and relaunch.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -17,6 +17,7 @@ EVIDENCE_DIR="${SONUS_DEVICE_LAB_DIR:-$ROOT/build/device-lab/android-$STAMP}"
 CAPTURE_SCREENSHOT="${SONUS_CAPTURE_SCREENSHOT:-0}"
 REQUIRE_UI="${SONUS_REQUIRE_ANDROID_UI:-0}"
 ALLOW_EMULATOR="${SONUS_ALLOW_ANDROID_EMULATOR:-0}"
+REQUIRE_PACKAGE_STATE_PRESERVATION="${SONUS_REQUIRE_PACKAGE_STATE_PRESERVATION:-1}"
 LOGCAT_SINCE_EPOCH="0"
 mkdir -p "$EVIDENCE_DIR"
 
@@ -68,6 +69,16 @@ if [[ -z "$SERIAL" ]]; then
   SERIAL="$device_list"
 fi
 
+serial_state="$(adb devices | awk -v serial="$SERIAL" '$1 == serial { print $2; exit }')"
+if [[ -z "$serial_state" ]]; then
+  echo "The requested Android serial is not visible to adb." >&2
+  exit 3
+fi
+if [[ "$serial_state" != "device" ]]; then
+  echo "Android target $SERIAL is $serial_state. Unlock it and approve USB debugging before rerunning." >&2
+  exit 3
+fi
+
 if [[ "$SERIAL" == emulator-* && "$ALLOW_EMULATOR" != "1" ]]; then
   echo "This harness preserves physical-device state and refuses emulator serials by default. Use scripts/emulator/permission-smoke.sh for the destructive emulator matrix." >&2
   exit 3
@@ -76,6 +87,11 @@ fi
 adb_() {
   adb -s "$SERIAL" "$@"
 }
+
+if [[ "$(adb_ shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')" == "1" && "$ALLOW_EMULATOR" != "1" ]]; then
+  echo "The selected adb target reports an emulator runtime. Use the emulator-only permission harness instead." >&2
+  exit 3
+fi
 
 sanitize_stream() {
   python3 -c '
@@ -113,6 +129,30 @@ recent_logcat() {
     | awk -v since="$LOGCAT_SINCE_EPOCH" '$1 ~ /^[0-9]+([.][0-9]+)?$/ && ($1 + 0) >= (since + 0)'
 }
 
+capture_package_state() {
+  adb_ shell dumpsys package "$PKG" 2>/dev/null | tr -d '\r' | python3 -c '
+import json
+import re
+import sys
+first_install_time = None
+permissions = {}
+for line in sys.stdin:
+    stripped = line.strip()
+    if stripped.startswith("firstInstallTime="):
+        first_install_time = stripped.split("=", 1)[1]
+    match = re.match(r"(android\.permission\.[A-Z0-9_]+): granted=(true|false)", stripped)
+    if match:
+        permissions[match.group(1)] = match.group(2) == "true"
+json.dump(
+    {"first_install_time": first_install_time, "permissions": permissions},
+    sys.stdout,
+    sort_keys=True,
+    indent=2,
+)
+print()
+'
+}
+
 serial_fingerprint="$(printf '%s' "$SERIAL" | shasum -a 256 | awk '{print substr($1, 1, 12)}')"
 printf 'target_fingerprint=%s\n' "$serial_fingerprint" > "$EVIDENCE_DIR/target.txt"
 {
@@ -142,11 +182,14 @@ if [[ ! -s "$APK" ]]; then
   exit 4
 fi
 
-shasum -a 256 "$APK" > "$EVIDENCE_DIR/apk.sha256"
+apk_digest="$(shasum -a 256 "$APK" | awk '{print $1}')"
+printf '%s  %s\n' "$apk_digest" "$(basename "$APK")" > "$EVIDENCE_DIR/apk.sha256"
 
 existing_package=false
+package_state_preserved=not-applicable
 if adb_ shell pm path "$PKG" >/dev/null 2>&1; then
   existing_package=true
+  capture_package_state > "$EVIDENCE_DIR/package-state-before.json"
 fi
 
 echo "== non-destructive install/update =="
@@ -162,6 +205,58 @@ certificate, or back up/export intentionally retained data before performing an
 explicit uninstall outside this harness.
 NOTICE
   exit 5
+fi
+
+capture_package_state > "$EVIDENCE_DIR/package-state-after.json"
+if [[ "$existing_package" == "true" ]]; then
+  if python3 - \
+    "$EVIDENCE_DIR/package-state-before.json" \
+    "$EVIDENCE_DIR/package-state-after.json" \
+    "$EVIDENCE_DIR/package-preservation.txt" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+before = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+after = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+problems = []
+first_before = before.get("first_install_time")
+first_after = after.get("first_install_time")
+if first_before and first_after and first_before != first_after:
+    problems.append("first_install_time_changed")
+permission_changes = []
+for permission, granted_before in before.get("permissions", {}).items():
+    if permission in after.get("permissions", {}) and after["permissions"][permission] != granted_before:
+        permission_changes.append(permission)
+if permission_changes:
+    problems.append("existing_permission_grant_changed")
+Path(sys.argv[3]).write_text(
+    "status=" + ("failed" if problems else "passed") + "\n"
+    "existing_package=true\n"
+    "first_install_time_preserved=" + str("first_install_time_changed" not in problems).lower() + "\n"
+    "existing_permission_grants_preserved=" + str(not permission_changes).lower() + "\n"
+    "problems=" + (",".join(problems) if problems else "none") + "\n",
+    encoding="utf-8",
+)
+raise SystemExit(1 if problems else 0)
+PY
+  then
+    package_state_preserved=true
+  else
+    package_state_preserved=false
+    if [[ "$REQUIRE_PACKAGE_STATE_PRESERVATION" == "1" ]]; then
+      echo "The in-place Android update changed pre-existing package state; inspect package-preservation.txt." >&2
+      exit 12
+    fi
+  fi
+else
+  cat > "$EVIDENCE_DIR/package-preservation.txt" <<STATE
+status=passed
+existing_package=false
+first_install_time_preserved=not-applicable
+existing_permission_grants_preserved=not-applicable
+problems=none
+STATE
 fi
 
 echo "== launch =="
@@ -255,12 +350,35 @@ if grep -Eq "FATAL EXCEPTION|am_crash|Process $PKG .* has died" "$EVIDENCE_DIR/c
   exit 8
 fi
 
+echo "== Home/background + foreground resume =="
+adb_ shell input keyevent KEYCODE_HOME
+sleep 3
+if [[ -n "$(adb_ shell pidof "$PKG" 2>/dev/null | tr -d '\r')" ]]; then
+  process_survived_home=true
+else
+  process_survived_home=false
+fi
+mark_logcat_start
+resume_output="$(adb_ shell am start -W -n "$ACTIVITY" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER 2>&1 || true)"
+printf '%s\n' "$resume_output" | sanitize_stream | tee "$EVIDENCE_DIR/home-resume.txt"
+if ! wait_for_process 40; then
+  echo "App process did not recover after Home/background resume." >&2
+  capture_crash_evidence
+  exit 9
+fi
+sleep 4
+capture_crash_evidence
+if grep -Eq "FATAL EXCEPTION|am_crash|Process $PKG .* has died" "$EVIDENCE_DIR/crash-focused-logcat.txt"; then
+  echo "Fatal Android crash evidence was found after foreground resume." >&2
+  exit 10
+fi
+
 echo "== safe force-stop + cold relaunch =="
 adb_ shell am force-stop "$PKG"
 sleep 1
 if [[ -n "$(adb_ shell pidof "$PKG" 2>/dev/null | tr -d '\r')" ]]; then
   echo "force-stop did not terminate the process" >&2
-  exit 9
+  exit 11
 fi
 mark_logcat_start
 relaunch_output="$(adb_ shell am start -W -n "$ACTIVITY" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER 2>&1 || true)"
@@ -268,22 +386,26 @@ printf '%s\n' "$relaunch_output" | sanitize_stream | tee "$EVIDENCE_DIR/cold-rel
 if ! wait_for_process 40; then
   echo "App process did not recover after cold relaunch." >&2
   capture_crash_evidence
-  exit 10
+  exit 13
 fi
 sleep 4
 capture_crash_evidence
 if grep -Eq "FATAL EXCEPTION|am_crash|Process $PKG .* has died" "$EVIDENCE_DIR/crash-focused-logcat.txt"; then
   echo "Fatal Android crash evidence was found after cold relaunch." >&2
-  exit 11
+  exit 14
 fi
 
 cat > "$EVIDENCE_DIR/result.txt" <<RESULT
 status=passed
-scope=non-destructive-install-launch-cold-relaunch
+scope=non-destructive-install-launch-home-resume-cold-relaunch
 package=$PKG
+existing_package=$existing_package
+package_state_preserved=$package_state_preserved
 app_data_cleared=false
 permissions_mutated=false
 log_buffer_cleared=false
+home_resume_completed=true
+process_survived_home=$process_survived_home
 screenshot_captured=$CAPTURE_SCREENSHOT
 RESULT
 
