@@ -215,13 +215,51 @@ launch_app() {
   printf 'pid=%s\n' "$pid" >> "$EVIDENCE_DIR/$label-process.txt"
 }
 
-data_container_fingerprint() {
-  local container
-  container="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data 2>/dev/null || true)"
-  if [[ -z "$container" ]]; then
-    return 1
-  fi
-  printf '%s' "$container" | shasum -a 256 | awk '{print substr($1, 1, 12)}'
+data_container_path() {
+  xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data 2>/dev/null
+}
+
+container_fingerprint() {
+  printf '%s' "$1" | shasum -a 256 | awk '{print substr($1, 1, 12)}'
+}
+
+write_update_sentinel() {
+  local container="$1"
+  local sentinel_name="$2"
+  DATA_CONTAINER="$container" SENTINEL_NAME="$sentinel_name" python3 - <<'PY'
+import os
+from pathlib import Path
+
+container = Path(os.environ["DATA_CONTAINER"]).resolve()
+marker_dir = container / "Library" / "Application Support" / "SonusAurisDeviceLab"
+marker_dir.mkdir(parents=True, exist_ok=True)
+marker = marker_dir / os.environ["SENTINEL_NAME"]
+marker.write_text("sonus-auris-device-lab-update-sentinel-v1\n", encoding="utf-8")
+PY
+}
+
+verify_and_remove_update_sentinel() {
+  local container="$1"
+  local sentinel_name="$2"
+  DATA_CONTAINER="$container" SENTINEL_NAME="$sentinel_name" python3 - <<'PY'
+import os
+from pathlib import Path
+
+container = Path(os.environ["DATA_CONTAINER"]).resolve()
+marker_dir = container / "Library" / "Application Support" / "SonusAurisDeviceLab"
+marker = marker_dir / os.environ["SENTINEL_NAME"]
+expected = "sonus-auris-device-lab-update-sentinel-v1\n"
+if not marker.is_file():
+    raise SystemExit("test-owned update sentinel was not preserved")
+if marker.read_text(encoding="utf-8") != expected:
+    raise SystemExit("test-owned update sentinel content changed")
+marker.unlink()
+try:
+    marker_dir.rmdir()
+except OSError:
+    # Preserve the namespaced directory when another run or file uses it.
+    pass
+PY
 }
 
 echo "== install without erasing simulator app data =="
@@ -246,21 +284,32 @@ fi
 capture_logs cold-relaunch
 assert_no_fatal_logs "$EVIDENCE_DIR/cold-relaunch-simulator.log"
 
-# Reinstall the same candidate in place and prove CoreSimulator kept the same
-# app data container. This catches accidental uninstall/erase behavior while
-# avoiding reads of app-private user data.
+# CoreSimulator is allowed to relocate an app's data container during an
+# in-place install. Prove semantic persistence with one namespaced, test-owned
+# marker instead of treating the opaque container path as identity. No existing
+# app-private file is enumerated or read.
 echo "== in-place update + post-update relaunch =="
-before_fingerprint="$(data_container_fingerprint)" || {
-  echo "Could not fingerprint the installed simulator data container." >&2
+xcrun simctl terminate "$UDID" "$BUNDLE_ID"
+before_container="$(data_container_path)" || {
+  echo "Could not locate the installed simulator data container." >&2
   exit 5
 }
+before_fingerprint="$(container_fingerprint "$before_container")"
+sentinel_name="update-sentinel-$(printf '%s' "$STAMP-$before_fingerprint" | shasum -a 256 | awk '{print substr($1, 1, 16)}').txt"
+write_update_sentinel "$before_container" "$sentinel_name"
 xcrun simctl install "$UDID" "$APP"
-after_fingerprint="$(data_container_fingerprint)" || {
-  echo "Could not fingerprint the simulator data container after update." >&2
+after_container="$(data_container_path)" || {
+  echo "Could not locate the simulator data container after update." >&2
   exit 5
 }
-if [[ "$before_fingerprint" != "$after_fingerprint" ]]; then
-  echo "In-place simulator update replaced the app data container." >&2
+after_fingerprint="$(container_fingerprint "$after_container")"
+if [[ "$before_fingerprint" == "$after_fingerprint" ]]; then
+  container_relocated=false
+else
+  container_relocated=true
+fi
+if ! verify_and_remove_update_sentinel "$after_container" "$sentinel_name"; then
+  echo "In-place simulator update did not preserve the test-owned app-data sentinel." >&2
   exit 5
 fi
 launch_app post-update-relaunch
@@ -274,7 +323,11 @@ cat > "$EVIDENCE_DIR/data-container-preservation.txt" <<PRESERVATION
 status=passed
 before_fingerprint=$before_fingerprint
 after_fingerprint=$after_fingerprint
+container_relocated=$container_relocated
 in_place_reinstall=true
+test_owned_sentinel_preserved=true
+test_owned_sentinel_removed=true
+existing_app_files_enumerated=false
 app_data_cleared=false
 post_update_relaunch=true
 PRESERVATION
@@ -287,6 +340,7 @@ simulator_erased=false
 app_data_cleared=false
 in_place_update_completed=true
 data_container_preserved=true
+preservation_proof=test-owned-sentinel
 process_scoped_logs=true
 screenshot_captured=$CAPTURE_SCREENSHOT
 RESULT
