@@ -32,7 +32,6 @@ SENSITIVE_SUFFIXES = {
     ".pcm",
     ".wav",
 }
-SKIP_LIVE_LOGS = {"run.log", "orchestrator.log"}
 
 
 @dataclass(frozen=True)
@@ -47,6 +46,14 @@ REDACTIONS = (
         "mac-user-path",
         re.compile(r"/Users/(?!<redacted>)[^/\s]+"),
         "/Users/<redacted>",
+    ),
+    Redaction(
+        "uuid",
+        re.compile(
+            r"\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-5][0-9A-Fa-f]{3}-"
+            r"[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\b"
+        ),
+        "<redacted-uuid>",
     ),
     Redaction(
         "bearer-token",
@@ -102,7 +109,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--redact",
         action="store_true",
-        help="atomically redact recognized secrets and local account paths",
+        help="atomically redact recognized secrets, identifiers, and local paths",
     )
     parser.add_argument(
         "--self-test",
@@ -170,7 +177,7 @@ def inspect_evidence(root: Path, redact: bool) -> tuple[int, int]:
         if path.suffix.lower() in SENSITIVE_SUFFIXES:
             failures.append(f"sensitive/raw artifact is forbidden: {relative}")
             continue
-        if path.name in SKIP_LIVE_LOGS or not is_probably_text(path):
+        if not is_probably_text(path):
             continue
         try:
             original = path.read_text(encoding="utf-8")
@@ -198,6 +205,7 @@ def inspect_evidence(root: Path, redact: bool) -> tuple[int, int]:
         f"text_files_redacted={redacted_files}\n"
         "raw_audio_present=false\n"
         "secret_patterns_present=false\n"
+        "raw_identifiers_present=false\n"
         "symlinks_present=false\n",
         encoding="utf-8",
     )
@@ -207,11 +215,12 @@ def inspect_evidence(root: Path, redact: bool) -> tuple[int, int]:
 def run_self_test() -> None:
     with tempfile.TemporaryDirectory(prefix="sonus-evidence-policy-") as temp:
         root = Path(temp)
-        fixture = root / "fixture.txt"
+        fixture = root / "run.log"
         fixture.write_text(
             "/Users/alex/work account@example.com "
             "Bearer abc.def.ghi access_token=secret "
-            "http://127.0.0.1:12345/abc=/ ws://127.0.0.1:12345/abc=/\n",
+            "http://127.0.0.1:12345/abc=/ ws://127.0.0.1:12345/abc=/ "
+            "9E2C2CF0-7DD4-4B9D-B6CE-63C9E42B95A7\n",
             encoding="utf-8",
         )
         inspect_evidence(root, redact=True)
@@ -220,6 +229,8 @@ def run_self_test() -> None:
         assert "account@example.com" not in clean
         assert "access_token=secret" not in clean
         assert "127.0.0.1:12345/abc" not in clean
+        assert "9E2C2CF0-7DD4-4B9D-B6CE-63C9E42B95A7" not in clean
+        assert "<redacted-uuid>" in clean
 
     with tempfile.TemporaryDirectory(prefix="sonus-evidence-policy-audio-") as temp:
         root = Path(temp)
