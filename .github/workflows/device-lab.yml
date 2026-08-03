@@ -39,9 +39,12 @@ on:
 permissions:
   contents: read
 
+# Emulator and simulator jobs are expensive and produce diagnostic evidence.
+# Let an in-flight run finish when an unrelated commit lands; the new head run
+# remains queued behind it instead of discarding several minutes of device work.
 concurrency:
   group: device-lab-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   script-contract:
@@ -172,7 +175,9 @@ jobs:
         if: always()
         env:
           SONUS_DEVICE_LAB_DIR: ${{ runner.temp }}/sonus-ios-simulator-evidence
-        run: python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
+        run: |
+          mkdir -p "$SONUS_DEVICE_LAB_DIR"
+          python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
 
       - name: Upload sanitized simulator evidence
         if: ${{ always() && steps.evidence_policy.outcome == 'success' }}
@@ -233,7 +238,9 @@ jobs:
         if: always()
         env:
           SONUS_DEVICE_LAB_DIR: ${{ github.workspace }}/isolated-android-recording-evidence
-        run: python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
+        run: |
+          mkdir -p "$SONUS_DEVICE_LAB_DIR"
+          python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
 
       - name: Upload sanitized isolated Android evidence
         if: ${{ always() && steps.android_evidence_policy.outcome == 'success' }}
