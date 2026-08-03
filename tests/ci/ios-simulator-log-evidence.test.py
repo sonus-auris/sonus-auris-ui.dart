@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 WRAPPER = ROOT / "scripts/device-lab/ios-simulator-full-log-smoke.sh"
 REDUCER = ROOT / "scripts/device-lab/bounded-log-scan.py"
+TIMEOUT = ROOT / "scripts/device-lab/run-with-timeout.py"
 WORKFLOW = ROOT / ".github/workflows/device-lab.yml"
 
 
@@ -21,8 +22,12 @@ def main() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     subprocess.run(["bash", "-n", str(WRAPPER)], check=True)
-    subprocess.run([sys.executable, "-m", "py_compile", str(REDUCER)], check=True)
+    subprocess.run(
+        [sys.executable, "-m", "py_compile", str(REDUCER), str(TIMEOUT)],
+        check=True,
+    )
     subprocess.run([sys.executable, str(REDUCER), "--self-test"], check=True)
+    subprocess.run([sys.executable, str(TIMEOUT), "--self-test"], check=True)
 
     assert 'bash "$ROOT/scripts/device-lab/ios-simulator-smoke.sh" "$UDID"' in source
     assert '--start "$LOG_START"' in source
@@ -34,6 +39,26 @@ def main() -> None:
     assert "startup_log_context_preserved=true" in source
     assert "terminal_log_context_preserved=true" in source
     assert "retained_log_max_bytes=$MAX_LOG_BYTES" in source
+
+    # Collection itself must be bounded inside the larger job deadline, and a
+    # timeout/nonzero status from any pipeline stage must propagate.
+    assert 'COMMAND_TIMEOUT="$ROOT/scripts/device-lab/run-with-timeout.py"' in source
+    assert 'LOG_TIMEOUT_SECONDS="${SONUS_DEVICE_LAB_LOG_TIMEOUT_SECONDS:-120}"' in source
+    assert 'python3 "$COMMAND_TIMEOUT"' in source
+    assert '--timeout-seconds "$LOG_TIMEOUT_SECONDS"' in source
+    assert "--grace-seconds 5" in source
+    assert "--stderr discard" in source
+    assert 'pipeline_statuses=("${PIPESTATUS[@]}")' in source
+    assert "pipeline_statuses[0] != 0" in source
+    assert "pipeline_statuses[1] != 0" in source
+    assert "pipeline_statuses[2] != 0" in source
+    assert "log_collection_timeout_seconds=$LOG_TIMEOUT_SECONDS" in source
+    assert "log_collection_process_group_bounded=true" in source
+    timeout_call = source.index('python3 "$COMMAND_TIMEOUT"')
+    log_command = source.index('xcrun simctl spawn "$UDID" log show')
+    sanitizer = source.index('evidence-policy.py" --stream')
+    reducer = source.index('bounded-log-scan.py"')
+    assert timeout_call < log_command < sanitizer < reducer
 
     required_scan_names = {
         "uncaught",
@@ -52,9 +77,8 @@ def main() -> None:
     # The wrapper deliberately captures/audits after the child returns, even on
     # failure, so the most useful crash evidence is not skipped.
     child_call = source.index('bash "$ROOT/scripts/device-lab/ios-simulator-smoke.sh"')
-    log_capture = source.index('xcrun simctl spawn "$UDID" log show')
     child_status_check = source.index('if [[ "$child_status" != "0" ]]')
-    assert child_call < log_capture < child_status_check
+    assert child_call < log_command < child_status_check
 
     # Guard the operator-owned simulator from destructive reset paths. Match
     # executable command positions, not explanatory prose.
@@ -68,7 +92,9 @@ def main() -> None:
 
     assert "ios-simulator-full-log-smoke.sh" in workflow
     assert "bounded-log-scan.py --self-test" in workflow
+    assert "run-with-timeout.py --self-test" in workflow
     assert "ios-simulator-log-evidence.test.py" in workflow
+    assert "run-with-timeout.test.py" in workflow
     assert "steps.evidence_policy.outcome == 'success'" in workflow
 
     # Execute one additional black-box case where the fatal marker cannot fit in
@@ -100,7 +126,7 @@ def main() -> None:
 
     print(
         "iOS Simulator log evidence contract passed: full-stream scan + "
-        "bounded UTF-8 head/tail + failure-path audit"
+        "bounded UTF-8 head/tail + failure-path audit + command deadline"
     )
 
 

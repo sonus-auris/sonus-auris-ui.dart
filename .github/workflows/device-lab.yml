@@ -12,6 +12,7 @@ on:
       - 'scripts/device-lab/**'
       - 'tests/ci/ios-simulator-log-evidence.test.py'
       - 'tests/ci/ios-physical-device-contract.test.py'
+      - 'tests/ci/run-with-timeout.test.py'
       - 'docs/end-device-testing.md'
       - 'docs/mobile-ci.md'
       - '.github/workflows/device-lab.yml'
@@ -27,6 +28,7 @@ on:
       - 'scripts/device-lab/**'
       - 'tests/ci/ios-simulator-log-evidence.test.py'
       - 'tests/ci/ios-physical-device-contract.test.py'
+      - 'tests/ci/run-with-timeout.test.py'
       - 'docs/end-device-testing.md'
       - 'docs/mobile-ci.md'
       - '.github/workflows/device-lab.yml'
@@ -57,13 +59,17 @@ jobs:
             scripts/device-lab/evidence-policy.py \
             scripts/device-lab/bounded-log-scan.py \
             scripts/device-lab/flutter-run-cycle.py \
+            scripts/device-lab/run-with-timeout.py \
             tests/ci/ios-simulator-log-evidence.test.py \
-            tests/ci/ios-physical-device-contract.test.py
+            tests/ci/ios-physical-device-contract.test.py \
+            tests/ci/run-with-timeout.test.py
           python3 scripts/device-lab/evidence-policy.py --self-test
           python3 scripts/device-lab/bounded-log-scan.py --self-test
           python3 scripts/device-lab/flutter-run-cycle.py --self-test
+          python3 scripts/device-lab/run-with-timeout.py --self-test
           python3 tests/ci/ios-simulator-log-evidence.test.py
           python3 tests/ci/ios-physical-device-contract.test.py
+          python3 tests/ci/run-with-timeout.test.py
           grep -Fq '"uuid"' scripts/device-lab/evidence-policy.py
           if grep -Fq 'SKIP_LIVE_LOGS' scripts/device-lab/evidence-policy.py; then
             echo 'All uploaded text logs, including run.log, must pass evidence policy.' >&2
@@ -104,6 +110,9 @@ jobs:
           grep -Fq 'full_log_stream_scanned=true' "$ios_full_log"
           grep -Fq 'startup_log_context_preserved=true' "$ios_full_log"
           grep -Fq 'terminal_log_context_preserved=true' "$ios_full_log"
+          grep -Fq 'log_collection_process_group_bounded=true' "$ios_full_log"
+          grep -Fq 'python3 "$COMMAND_TIMEOUT"' "$ios_full_log"
+          grep -Fq 'pipeline_statuses=("${PIPESTATUS[@]}")' "$ios_full_log"
           grep -Fq 'evidence-policy.py" --stream' "$ios_full_log"
           grep -Fq 'bounded-log-scan.py"' "$ios_full_log"
           if grep -Fq 'tail -n 500' "$ios_full_log"; then
@@ -171,6 +180,7 @@ jobs:
           SONUS_DEVICE_LAB_DIR: ${{ runner.temp }}/sonus-ios-simulator-evidence
           SONUS_CAPTURE_SCREENSHOT: '1'
           SONUS_DEVICE_LAB_MAX_LOG_BYTES: '524288'
+          SONUS_DEVICE_LAB_LOG_TIMEOUT_SECONDS: '120'
         run: bash scripts/device-lab/ios-simulator-full-log-smoke.sh
 
       - name: Redact and verify simulator evidence
