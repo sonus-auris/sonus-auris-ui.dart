@@ -57,8 +57,29 @@ and application shutdown remain native.
 `test/fixtures/pagelets/interface-contract.lock.json` names one full lowercase
 commit in `sonus-auris/sonus-auris-interfaces`. It is not a branch, tag, release
 alias, or abbreviated SHA. The conformance workflow validates the lock before
-network or Flutter work, checks out that exact public commit with persisted Git
+network or Flutter work, checks out that exact commit with persisted Git
 credentials disabled, and verifies the checkout HEAD did not move.
+
+The interfaces repository is private. The current repository's default
+`GITHUB_TOKEN` is intentionally not a cross-repository credential and cannot be
+used for this checkout. CI creates a short-lived GitHub App installation token
+with GitHub's SHA-pinned `actions/create-github-app-token` action. The token is
+scoped to repository `sonus-auris-interfaces` and `contents: read`, is passed only
+to the second checkout, is never persisted in Git configuration, and is revoked
+by the action's post step.
+
+Provisioning uses:
+
+- organization/repository variable `SONUS_CROSS_REPO_APP_ID`; and
+- Actions secret `SONUS_CROSS_REPO_APP_PRIVATE_KEY`.
+
+The App should be organization-owned and installed only where read access is
+needed. Do not substitute a personal access token, a pasted chat token, the
+workflow's default token, or a reusable user credential. Rotate the App private
+key through the organization secret without modifying the lock or report
+contract. Pull requests without access to protected secrets can run the
+repository's other jobs but cannot claim cross-repository conformance
+certification.
 
 The locked interface repository is then treated as executable contract source:
 
