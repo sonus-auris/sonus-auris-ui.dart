@@ -313,39 +313,46 @@ print("ui_labels=" + ", ".join(sorted(set(labels))) if labels else "ui_labels=<n
 }
 
 capture_crash_evidence() {
+  local phase="${1:?evidence phase is required}"
   recent_logcat \
     | grep -E "FATAL EXCEPTION|AndroidRuntime|Process $PKG|am_crash|flutter" \
     | tail -n 200 \
-    | sanitize_stream > "$EVIDENCE_DIR/crash-focused-logcat.txt" || true
+    | sanitize_stream > "$EVIDENCE_DIR/$phase-crash-focused-logcat.txt" || true
   adb_ shell dumpsys package "$PKG" 2>/dev/null \
     | awk '
       /versionCode=|versionName=|targetSdk=|android.permission.RECORD_AUDIO:|android.permission.POST_NOTIFICATIONS:|android.permission.ACCESS_FINE_LOCATION:|android.permission.BLUETOOTH_SCAN:|android.permission.NEARBY_WIFI_DEVICES:/ { print }
-    ' > "$EVIDENCE_DIR/package-summary.txt" || true
+    ' > "$EVIDENCE_DIR/$phase-package-summary.txt" || true
   adb_ shell dumpsys activity activities 2>/dev/null \
     | grep -E "mResumedActivity|topResumedActivity|$PKG" \
     | head -n 80 \
-    | sanitize_stream > "$EVIDENCE_DIR/activity-summary.txt" || true
+    | sanitize_stream > "$EVIDENCE_DIR/$phase-activity-summary.txt" || true
   if [[ "$CAPTURE_SCREENSHOT" == "1" ]]; then
-    adb_ exec-out screencap -p > "$EVIDENCE_DIR/screenshot.png" 2>/dev/null || true
+    adb_ exec-out screencap -p > "$EVIDENCE_DIR/$phase-screenshot.png" 2>/dev/null || true
   fi
+}
+
+fatal_crash_in_phase() {
+  local phase="${1:?evidence phase is required}"
+  grep -Eq "FATAL EXCEPTION|am_crash|Process $PKG .* has died" \
+    "$EVIDENCE_DIR/$phase-crash-focused-logcat.txt"
 }
 
 if ! wait_for_process 40; then
   echo "App process did not remain alive after launch." >&2
   collect_ui_summary | tee "$EVIDENCE_DIR/ui-summary.txt" || true
-  capture_crash_evidence
+  capture_crash_evidence first-launch-failure
   exit 6
 fi
 sleep 5
 collect_ui_summary | tee "$EVIDENCE_DIR/ui-summary.txt"
 if [[ "$REQUIRE_UI" == "1" ]] && grep -q '<none-observed>\|unavailable' "$EVIDENCE_DIR/ui-summary.txt"; then
   echo "No expected non-sensitive Sonus Auris label was exposed through Android accessibility semantics." >&2
-  capture_crash_evidence
+  capture_crash_evidence first-launch-ui-failure
   exit 7
 fi
 
-capture_crash_evidence
-if grep -Eq "FATAL EXCEPTION|am_crash|Process $PKG .* has died" "$EVIDENCE_DIR/crash-focused-logcat.txt"; then
+capture_crash_evidence first-launch
+if fatal_crash_in_phase first-launch; then
   echo "Fatal Android crash evidence was found after first launch." >&2
   exit 8
 fi
@@ -363,12 +370,12 @@ resume_output="$(adb_ shell am start -W -n "$ACTIVITY" -a android.intent.action.
 printf '%s\n' "$resume_output" | sanitize_stream | tee "$EVIDENCE_DIR/home-resume.txt"
 if ! wait_for_process 40; then
   echo "App process did not recover after Home/background resume." >&2
-  capture_crash_evidence
+  capture_crash_evidence home-resume-failure
   exit 9
 fi
 sleep 4
-capture_crash_evidence
-if grep -Eq "FATAL EXCEPTION|am_crash|Process $PKG .* has died" "$EVIDENCE_DIR/crash-focused-logcat.txt"; then
+capture_crash_evidence home-resume
+if fatal_crash_in_phase home-resume; then
   echo "Fatal Android crash evidence was found after foreground resume." >&2
   exit 10
 fi
@@ -385,12 +392,12 @@ relaunch_output="$(adb_ shell am start -W -n "$ACTIVITY" -a android.intent.actio
 printf '%s\n' "$relaunch_output" | sanitize_stream | tee "$EVIDENCE_DIR/cold-relaunch.txt"
 if ! wait_for_process 40; then
   echo "App process did not recover after cold relaunch." >&2
-  capture_crash_evidence
+  capture_crash_evidence cold-relaunch-failure
   exit 13
 fi
 sleep 4
-capture_crash_evidence
-if grep -Eq "FATAL EXCEPTION|am_crash|Process $PKG .* has died" "$EVIDENCE_DIR/crash-focused-logcat.txt"; then
+capture_crash_evidence cold-relaunch
+if fatal_crash_in_phase cold-relaunch; then
   echo "Fatal Android crash evidence was found after cold relaunch." >&2
   exit 14
 fi
