@@ -9,6 +9,8 @@ UDID="${1:-${IOS_SIMULATOR_UDID:-}}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 EVIDENCE_DIR="${SONUS_DEVICE_LAB_DIR:-$ROOT/build/device-lab/ios-simulator-$STAMP}"
 CAPTURE_SCREENSHOT="${SONUS_CAPTURE_SCREENSHOT:-0}"
+LOG_EVIDENCE="$ROOT/scripts/device-lab/log-evidence.py"
+LOG_MAX_BYTES="${SONUS_SIMULATOR_LOG_MAX_BYTES:-524288}"
 CURRENT_PID=""
 
 need() {
@@ -22,6 +24,15 @@ need xcrun
 need flutter
 need python3
 need shasum
+
+if [[ ! -f "$LOG_EVIDENCE" ]]; then
+  echo "Required simulator log reducer is missing: $LOG_EVIDENCE" >&2
+  exit 2
+fi
+if [[ ! "$LOG_MAX_BYTES" =~ ^[0-9]+$ ]] || (( LOG_MAX_BYTES < 1024 )); then
+  echo "SONUS_SIMULATOR_LOG_MAX_BYTES must be an integer of at least 1024." >&2
+  exit 2
+fi
 
 mkdir -p "$EVIDENCE_DIR"
 # Sanitize the complete run log, including build-tool failures that may contain
@@ -146,43 +157,80 @@ for path in sorted(item for item in root.rglob("*") if item.is_file()):
 PY
 
 sanitize_stream() {
-  python3 -c '
+  python3 -u -c '
 import re
 import sys
-text = sys.stdin.read()
+sys.stdin.reconfigure(errors="replace")
+sys.stdout.reconfigure(errors="replace")
 patterns = [
-    (r"/Users/[^/\s]+", "/Users/<redacted>"),
-    (r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer <redacted>"),
-    (r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", "<redacted-jwt>"),
-    (r"(?i)(access_token|refresh_token|id_token|token|code|code_verifier|authorization_code|otp)=([^&\s]+)", r"\1=<redacted>"),
-    (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", "<redacted-email>"),
-    (r"http://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+", "http://127.0.0.1:<port>/<redacted>"),
+    (re.compile(r"/Users/[^/\s]+"), "/Users/<redacted>"),
+    (re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer <redacted>"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), "<redacted-jwt>"),
+    (re.compile(r"(?i)(access_token|refresh_token|id_token|token|code|code_verifier|authorization_code|otp)=([^&\s]+)"), r"\1=<redacted>"),
+    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "<redacted-email>"),
+    (re.compile(r"http://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+"), "http://127.0.0.1:<port>/<redacted>"),
 ]
-for pattern, replacement in patterns:
-    text = re.sub(pattern, replacement, text)
-sys.stdout.write(text)
+for line in sys.stdin:
+    for pattern, replacement in patterns:
+        line = pattern.sub(replacement, line)
+    sys.stdout.write(line)
+    sys.stdout.flush()
 '
 }
 
 capture_logs() {
   local label="$1"
   local predicate='process == "Runner" OR subsystem BEGINSWITH "app.sonusauris"'
+  local log_file="$EVIDENCE_DIR/$label-simulator.log"
+  local status_file="$EVIDENCE_DIR/$label-log-scan.json"
   if [[ "$CURRENT_PID" =~ ^[0-9]+$ ]]; then
     predicate="processIdentifier == $CURRENT_PID"
   fi
-  xcrun simctl spawn "$UDID" log show \
-    --last 3m \
-    --style compact \
-    --predicate "$predicate" \
-    2>/dev/null \
-    | tail -n 500 \
-    | sanitize_stream > "$EVIDENCE_DIR/$label-simulator.log" || true
+  {
+    xcrun simctl spawn "$UDID" log show \
+      --last 3m \
+      --style compact \
+      --predicate "$predicate" \
+      2>/dev/null || true
+  } \
+    | sanitize_stream \
+    | python3 "$LOG_EVIDENCE" \
+        --max-bytes "$LOG_MAX_BYTES" \
+        --status-file "$status_file" \
+        > "$log_file"
 }
 
 assert_no_fatal_logs() {
-  local file="$1"
-  if grep -Eq 'Terminating app due to uncaught exception|Fatal error|EXC_CRASH|SIGABRT|Lost connection to device|Library not loaded|dyld.*Reason' "$file"; then
-    echo "Fatal iOS Simulator evidence was found; inspect $file" >&2
+  local label="$1"
+  local log_file="$EVIDENCE_DIR/$label-simulator.log"
+  local status_file="$EVIDENCE_DIR/$label-log-scan.json"
+  if ! python3 - "$status_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit("simulator log scan status is missing")
+payload = json.loads(path.read_text(encoding="utf-8"))
+if payload.get("schema") != "sonus-auris-log-evidence/v1":
+    raise SystemExit("unexpected simulator log scan schema")
+if payload.get("full_stream_scanned") is not True:
+    raise SystemExit("simulator log scan did not cover the complete stream")
+if payload.get("raw_log_embedded_in_status") is not False:
+    raise SystemExit("simulator log scan status may not embed raw logs")
+if payload.get("fatal_observed") is True:
+    names = ",".join(payload.get("fatal_patterns", [])) or "unknown"
+    raise SystemExit("fatal simulator signatures observed: " + names)
+PY
+  then
+    echo "Fatal iOS Simulator evidence was found; inspect $log_file and $status_file" >&2
+    return 1
+  fi
+  # Defense in depth: a retained fatal line must also fail even if a future
+  # reducer regression produces an incorrect sidecar.
+  if grep -Eq 'Terminating app due to uncaught exception|Fatal error|EXC_CRASH|SIGABRT|Lost connection to device|Library not loaded|dyld.*Reason' "$log_file"; then
+    echo "Fatal iOS Simulator evidence was retained; inspect $log_file" >&2
     return 1
   fi
 }
@@ -243,7 +291,7 @@ verify_and_remove_update_sentinel() {
   local sentinel_name="$2"
   DATA_CONTAINER="$container" SENTINEL_NAME="$sentinel_name" python3 - <<'PY'
 import os
-from pathlib import Path
+from pathlib import import Path
 
 container = Path(os.environ["DATA_CONTAINER"]).resolve()
 marker_dir = container / "Library" / "Application Support" / "SonusAurisDeviceLab"
@@ -271,7 +319,7 @@ if [[ "$CAPTURE_SCREENSHOT" == "1" ]]; then
   xcrun simctl io "$UDID" screenshot "$EVIDENCE_DIR/first-launch.png" >/dev/null
 fi
 capture_logs first-launch
-assert_no_fatal_logs "$EVIDENCE_DIR/first-launch-simulator.log"
+assert_no_fatal_logs first-launch
 
 # A process termination/relaunch is intentionally exercised, but package data
 # remains intact. This mirrors the safe physical-device lifecycle boundary.
@@ -282,7 +330,7 @@ if [[ "$CAPTURE_SCREENSHOT" == "1" ]]; then
   xcrun simctl io "$UDID" screenshot "$EVIDENCE_DIR/cold-relaunch.png" >/dev/null
 fi
 capture_logs cold-relaunch
-assert_no_fatal_logs "$EVIDENCE_DIR/cold-relaunch-simulator.log"
+assert_no_fatal_logs cold-relaunch
 
 # CoreSimulator is allowed to relocate an app's data container during an
 # in-place install. Prove semantic persistence with one namespaced, test-owned
@@ -317,7 +365,7 @@ if [[ "$CAPTURE_SCREENSHOT" == "1" ]]; then
   xcrun simctl io "$UDID" screenshot "$EVIDENCE_DIR/post-update-relaunch.png" >/dev/null
 fi
 capture_logs post-update-relaunch
-assert_no_fatal_logs "$EVIDENCE_DIR/post-update-relaunch-simulator.log"
+assert_no_fatal_logs post-update-relaunch
 xcrun simctl terminate "$UDID" "$BUNDLE_ID"
 cat > "$EVIDENCE_DIR/data-container-preservation.txt" <<PRESERVATION
 status=passed
@@ -342,6 +390,10 @@ in_place_update_completed=true
 data_container_preserved=true
 preservation_proof=test-owned-sentinel
 process_scoped_logs=true
+startup_log_context_preserved=true
+full_log_fatal_scan=true
+log_status_sidecars=true
+simulator_log_max_bytes=$LOG_MAX_BYTES
 screenshot_captured=$CAPTURE_SCREENSHOT
 RESULT
 
