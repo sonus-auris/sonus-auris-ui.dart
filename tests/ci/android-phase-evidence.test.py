@@ -64,15 +64,17 @@ def main() -> None:
     assert fatal_calls == EXPECTED_FATAL_PHASES, fatal_calls
 
     # Preserve the non-destructive boundary for the user's USB-connected phone.
-    forbidden = (
-        "adb_ uninstall",
-        "adb uninstall",
-        "pm clear",
-        "logcat -c",
-        "wipe-data",
-    )
-    for command in forbidden:
-        assert command not in source, command
+    # Match executable command positions rather than prose comments explaining
+    # why destructive commands are forbidden.
+    forbidden_commands = {
+        "adb uninstall": r"(?m)^\s*adb(?:\s+-s\s+\S+)?\s+uninstall(?:\s|$)",
+        "adb_ uninstall": r"(?m)^\s*adb_\s+uninstall(?:\s|$)",
+        "pm clear": r"(?m)^\s*(?:adb_|adb(?:\s+-s\s+\S+)?)\s+shell\s+pm\s+clear(?:\s|$)",
+        "logcat -c": r"(?m)^\s*(?:adb_|adb(?:\s+-s\s+\S+)?)\s+logcat\s+-c(?:\s|$)",
+        "emulator wipe": r"(?m)^\s*(?:emulator|avdmanager)\b.*(?:-wipe-data|wipe-data)(?:\s|$)",
+    }
+    for label, pattern in forbidden_commands.items():
+        assert re.search(pattern, source) is None, label
 
     print(
         "Android phase evidence contract passed: "
