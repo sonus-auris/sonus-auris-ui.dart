@@ -147,6 +147,9 @@ app_data_cleared=false
 device_reset=false
 permissions_mutated=false
 recording_automated=false
+driver_hold_required=true
+premature_exit_rejected=true
+retained_log_max_bytes=524288
 launch_cycles_requested=$LAUNCH_CYCLES
 SCOPE
 
@@ -162,7 +165,12 @@ run_launch_cycle() {
   echo "== physical iPhone $label =="
   (
     cd "$ROOT"
-    python3 - "$EVIDENCE_DIR/$label-flutter-run.txt" "$RUN_TIMEOUT_SECONDS" "$READY_HOLD_SECONDS" \
+    python3 "$ROOT/scripts/device-lab/flutter-run-driver.py" \
+      --log "$EVIDENCE_DIR/$label-flutter-run.txt" \
+      --timeout-seconds "$RUN_TIMEOUT_SECONDS" \
+      --hold-seconds "$READY_HOLD_SECONDS" \
+      --max-log-bytes 524288 \
+      -- \
       flutter run \
       -d "$DEVICE_ID" \
       --debug \
@@ -170,112 +178,7 @@ run_launch_cycle() {
       -t lib/main.dart \
       --dart-define=SONUS_BACKEND_BASE_URL=https://ci.invalid \
       --dart-define=SONUS_SUPABASE_URL=https://ci.supabase.co \
-      --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_physical_device_lab <<'PY'
-import os
-import re
-import selectors
-import subprocess
-import sys
-import time
-
-log_path = sys.argv[1]
-timeout_seconds = int(sys.argv[2])
-hold_seconds = int(sys.argv[3])
-command = sys.argv[4:]
-
-patterns = [
-    (re.compile(r"/Users/[^/\s]+"), "/Users/<redacted>"),
-    (re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer <redacted>"),
-    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), "<redacted-jwt>"),
-    (re.compile(r"(?i)(access_token|refresh_token|id_token|code_verifier|authorization_code|otp)=([^&\s]+)"), r"\1=<redacted>"),
-    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "<redacted-email>"),
-    (re.compile(r"http://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+"), "http://127.0.0.1:<port>/<redacted>"),
-    (re.compile(r"ws://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+"), "ws://127.0.0.1:<port>/<redacted>"),
-    (re.compile(r"(?i)(on|for) [^\n]+ iPhone"), r"\1 <physical-iPhone>"),
-]
-
-
-def sanitize(line: str) -> str:
-    for pattern, replacement in patterns:
-        line = pattern.sub(replacement, line)
-    return line
-
-
-process = subprocess.Popen(
-    command,
-    cwd=os.getcwd(),
-    stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    text=True,
-    bufsize=1,
-)
-assert process.stdout is not None
-assert process.stdin is not None
-selector = selectors.DefaultSelector()
-selector.register(process.stdout, selectors.EVENT_READ)
-started = time.monotonic()
-ready_at = None
-ready_markers = (
-    "Flutter run key commands",
-    "A Dart VM Service on",
-    "The Flutter DevTools debugger and profiler",
-)
-failure_markers = (
-    "Could not build the precompiled application for the device",
-    "Failed to build iOS app",
-    "No valid code signing certificates were found",
-    "Error launching application on",
-    "Lost connection to device",
-)
-failed = False
-
-with open(log_path, "w", encoding="utf-8") as log:
-    while True:
-        if process.poll() is not None:
-            break
-        now = time.monotonic()
-        if now - started > timeout_seconds:
-            log.write("device_lab_timeout=true\n")
-            failed = True
-            process.terminate()
-            break
-        if ready_at is not None and now - ready_at >= hold_seconds:
-            process.stdin.write("q\n")
-            process.stdin.flush()
-            break
-        events = selector.select(timeout=0.5)
-        for key, _ in events:
-            line = key.fileobj.readline()
-            if not line:
-                continue
-            if any(marker in line for marker in ready_markers) and ready_at is None:
-                ready_at = time.monotonic()
-            if any(marker in line for marker in failure_markers):
-                failed = True
-            clean = sanitize(line)
-            sys.stdout.write(clean)
-            sys.stdout.flush()
-            log.write(clean)
-            log.flush()
-
-try:
-    return_code = process.wait(timeout=30)
-except subprocess.TimeoutExpired:
-    process.terminate()
-    try:
-        return_code = process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        return_code = process.wait(timeout=10)
-
-if ready_at is None:
-    failed = True
-if return_code not in (0, -15):
-    failed = True
-if failed:
-    raise SystemExit(1)
-PY
+      --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_physical_device_lab
   )
 }
 
@@ -294,6 +197,9 @@ scope=physical-iphone-development-signed-install-and-bounded-relaunch
 app_data_cleared=false
 permissions_mutated=false
 recording_automated=false
+driver_hold_required=true
+premature_exit_rejected=true
+retained_log_max_bytes=524288
 launch_cycles_completed=$completed
 RESULT
 
