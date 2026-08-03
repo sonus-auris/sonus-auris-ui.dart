@@ -34,7 +34,11 @@ abstract final class PageletPolicy {
 
   static Set<PageletActionKind> _allowedActions(PageletSurface surface) {
     return switch (surface) {
-      PageletSurface.deviceSummary ||
+      PageletSurface.deviceSummary => const {
+          PageletActionKind.navigate,
+          PageletActionKind.refresh,
+          PageletActionKind.confirmDeviceRename,
+        },
       PageletSurface.accountSummary ||
       PageletSurface.connectionStatus => const {
           PageletActionKind.navigate,
