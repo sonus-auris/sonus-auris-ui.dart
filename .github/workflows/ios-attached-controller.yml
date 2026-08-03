@@ -1,0 +1,42 @@
+name: Physical iPhone run controller
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/device-lab/ios-attached-smoke.sh
+      - scripts/device-lab/flutter-run-controller.py
+      - scripts/device-lab/evidence-policy.py
+      - tests/ci/flutter-run-controller.test.py
+      - .github/workflows/ios-attached-controller.yml
+  pull_request:
+    paths:
+      - scripts/device-lab/ios-attached-smoke.sh
+      - scripts/device-lab/flutter-run-controller.py
+      - scripts/device-lab/evidence-policy.py
+      - tests/ci/flutter-run-controller.test.py
+      - .github/workflows/ios-attached-controller.yml
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Chunked readiness and failure controller contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate physical-iPhone controller contracts
+        run: |
+          set -euo pipefail
+          bash -n scripts/device-lab/ios-attached-smoke.sh
+          python3 -m py_compile \
+            scripts/device-lab/evidence-policy.py \
+            scripts/device-lab/flutter-run-controller.py \
+            tests/ci/flutter-run-controller.test.py
+          python3 scripts/device-lab/evidence-policy.py --self-test
+          python3 tests/ci/flutter-run-controller.test.py
