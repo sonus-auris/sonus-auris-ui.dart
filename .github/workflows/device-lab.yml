@@ -5,6 +5,7 @@ on:
     paths:
       - 'android/**'
       - 'integration_test/device_lab_recording_probe_test.dart'
+      - 'integration_test/support/**'
       - 'lib/**'
       - 'ios/**'
       - 'macos/**'
@@ -12,6 +13,7 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'scripts/device-lab/**'
+      - 'test/device_lab_pcm16_signal_test.dart'
       - 'tests/ci/android-device-lab-recording.test.sh'
       - 'docs/android-recording-device-lab.md'
       - 'docs/end-device-testing.md'
@@ -22,6 +24,7 @@ on:
     paths:
       - 'android/**'
       - 'integration_test/device_lab_recording_probe_test.dart'
+      - 'integration_test/support/**'
       - 'lib/**'
       - 'ios/**'
       - 'macos/**'
@@ -29,6 +32,7 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'scripts/device-lab/**'
+      - 'test/device_lab_pcm16_signal_test.dart'
       - 'tests/ci/android-device-lab-recording.test.sh'
       - 'docs/android-recording-device-lab.md'
       - 'docs/end-device-testing.md'
@@ -78,9 +82,19 @@ jobs:
           ios_device=scripts/device-lab/ios-attached-smoke.sh
           ios_simulator=scripts/device-lab/ios-simulator-smoke.sh
           orchestrator=scripts/device-lab/macos-end-device-smoke.sh
-          if grep -En 'adb(_)? .*uninstall|pm clear|simctl erase|simctl uninstall|^[[:space:]]*adb(_)?[[:space:]].*logcat[[:space:]]+-c' \
+          if grep -En 'adb(_)? .*uninstall|simctl erase|simctl uninstall|^[[:space:]]*adb(_)?[[:space:]].*logcat[[:space:]]+-c' \
             "$android" "$android_recording" "$ios_device" "$ios_simulator"; then
-            echo 'Attached-device/simulator scripts may not clear app, device, permission, or shared log data.' >&2
+            echo 'Attached-device/simulator scripts may not uninstall apps or clear shared device/log state.' >&2
+            exit 1
+          fi
+          if grep -En 'pm clear' "$android" "$ios_device" "$ios_simulator"; then
+            echo 'Only the dedicated Android device-lab package may be cleared.' >&2
+            exit 1
+          fi
+          clear_hits="$(grep -En 'pm clear' "$android_recording" || true)"
+          if [[ "$(printf '%s\n' "$clear_hits" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')" != '1' ]] ||
+            ! printf '%s\n' "$clear_hits" | grep -Fq 'pm clear "$LAB_PKG"'; then
+            echo 'The recording probe must clear exactly the isolated package and nothing else.' >&2
             exit 1
           fi
           grep -Fq 'permissions_mutated=false' "$android"
@@ -90,6 +104,9 @@ jobs:
           grep -Fq 'I_CONSENT_TO_A_15_SECOND_SONUS_DEVICE_LAB_RECORDING' "$android_recording"
           grep -Fq 'production_package_addressed=false' "$android_recording"
           grep -Fq 'raw_audio_exported=false' "$android_recording"
+          grep -Fq 'raw_audio_retained_on_device=false' "$android_recording"
+          grep -Fq 'isolated_package_data_cleared_before_probe=' "$android_recording"
+          grep -Fq 'isolated_package_data_cleared_after_probe=' "$android_recording"
           grep -Fq 'shared_logcat_cleared=false' "$android_recording"
           grep -Fq 'app_data_cleared=false' "$ios_device"
           grep -Fq 'launch_cycles_completed=' "$ios_device"
@@ -121,8 +138,18 @@ jobs:
           grep -Fq "tell application id \\\"\$RUNTIME_BUNDLE_ID\\\" to quit" "$script"
           grep -Fq "const bool kSonusDeviceLabNoSideEffects" "$source"
           grep -Fq "if (!isSupported || kSonusDeviceLabNoSideEffects) return;" "$source"
-          if grep -En 'rm -|rm$|find .* -delete|simctl erase|pm clear|adb(_)? .*uninstall' scripts/device-lab/*.sh; then
+          if grep -En 'rm -|rm$|find .* -delete|simctl erase|adb(_)? .*uninstall' scripts/device-lab/*.sh; then
             echo 'Device-lab scripts may not delete app, recording, permission, or device data.' >&2
+            exit 1
+          fi
+          unexpected_clears="$(
+            grep -En 'pm clear' scripts/device-lab/*.sh 2>/dev/null |
+              grep -Fv 'android-recording-probe.sh:' |
+              grep -Fv 'pm clear "$LAB_PKG"' || true
+          )"
+          if [[ -n "$unexpected_clears" ]]; then
+            printf '%s\n' "$unexpected_clears" >&2
+            echo 'Only the isolated Android recording package may be cleared.' >&2
             exit 1
           fi
 
@@ -148,21 +175,28 @@ jobs:
           xcodebuild -version
           xcrun simctl list runtimes
 
-      - name: Validate device-lab Dart formatting
+      - name: Validate device-lab Dart formatting and PCM unit contract
         run: |
           set -euo pipefail
           dart format \
             integration_test/device_lab_recording_probe_test.dart \
+            integration_test/support/pcm16_signal.dart \
+            test/device_lab_pcm16_signal_test.dart \
             lib/src/platform/desktop_autostart.dart
           if ! git diff --exit-code -- \
             integration_test/device_lab_recording_probe_test.dart \
+            integration_test/support/pcm16_signal.dart \
+            test/device_lab_pcm16_signal_test.dart \
             lib/src/platform/desktop_autostart.dart; then
             echo 'Device-lab Dart source is not formatted; exact formatter delta follows.' >&2
             git diff -- \
               integration_test/device_lab_recording_probe_test.dart \
+              integration_test/support/pcm16_signal.dart \
+              test/device_lab_pcm16_signal_test.dart \
               lib/src/platform/desktop_autostart.dart
             exit 1
           fi
+          flutter test test/device_lab_pcm16_signal_test.dart
 
       - name: Run non-destructive iOS Simulator smoke
         env:
