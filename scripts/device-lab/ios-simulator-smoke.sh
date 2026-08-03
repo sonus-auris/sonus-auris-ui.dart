@@ -291,7 +291,7 @@ verify_and_remove_update_sentinel() {
   local sentinel_name="$2"
   DATA_CONTAINER="$container" SENTINEL_NAME="$sentinel_name" python3 - <<'PY'
 import os
-from pathlib import import Path
+from pathlib import Path
 
 container = Path(os.environ["DATA_CONTAINER"]).resolve()
 marker_dir = container / "Library" / "Application Support" / "SonusAurisDeviceLab"
