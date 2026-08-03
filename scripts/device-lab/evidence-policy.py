@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Sanitize and verify Sonus Auris device-lab evidence.
 
-The policy is intentionally dependency-free so it can run on a developer Mac
-and in GitHub Actions. It never follows symlinks, never reads raw audio, and
-only rewrites small UTF-8 text files when --redact is explicitly selected.
+The policy is intentionally dependency-light so it can run on a developer Mac
+and in GitHub Actions. It never follows symlinks, never reads raw audio, waits
+for log writers to finish, and only rewrites small UTF-8 text files when
+--redact is explicitly selected.
 """
 
 from __future__ import annotations
@@ -11,12 +12,17 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 MAX_TEXT_BYTES = 5 * 1024 * 1024
+WRITER_WAIT_SECONDS = 15.0
+LIVE_LOG_NAMES = {"run.log", "orchestrator.log"}
 SENSITIVE_SUFFIXES = {
     ".aac",
     ".caf",
@@ -119,6 +125,51 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def wait_for_quiescent_file(path: Path) -> None:
+    """Wait until no observable writer owns path and its metadata is stable."""
+
+    deadline = time.monotonic() + WRITER_WAIT_SECONDS
+    lsof = shutil.which("lsof")
+    if lsof is not None:
+        while time.monotonic() < deadline:
+            result = subprocess.run(
+                [lsof, "-t", str(path)],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            if not result.stdout.strip():
+                break
+            time.sleep(0.1)
+        else:
+            raise ValueError(f"evidence log still has an open writer: {path.name}")
+
+    # Bash process substitutions can outlive the parent shell briefly. Requiring
+    # a stable size/mtime window prevents an atomic redaction from racing a late
+    # `tee` flush even where `lsof` is unavailable.
+    minimum_observation = 0.8 if path.name in LIVE_LOG_NAMES else 0.2
+    stable_since: float | None = None
+    previous: tuple[int, int] | None = None
+    while time.monotonic() < deadline:
+        try:
+            stat = path.stat()
+        except OSError as error:
+            raise ValueError(f"cannot stat evidence file {path}: {error}") from error
+        signature = (stat.st_size, stat.st_mtime_ns)
+        now = time.monotonic()
+        if signature == previous:
+            if stable_since is None:
+                stable_since = now
+            if now - stable_since >= minimum_observation:
+                return
+        else:
+            previous = signature
+            stable_since = now
+        time.sleep(0.1)
+    raise ValueError(f"evidence file did not become quiescent: {path.name}")
+
+
 def is_probably_text(path: Path) -> bool:
     try:
         size = path.stat().st_size
@@ -177,6 +228,7 @@ def inspect_evidence(root: Path, redact: bool) -> tuple[int, int]:
         if path.suffix.lower() in SENSITIVE_SUFFIXES:
             failures.append(f"sensitive/raw artifact is forbidden: {relative}")
             continue
+        wait_for_quiescent_file(path)
         if not is_probably_text(path):
             continue
         try:
@@ -203,6 +255,7 @@ def inspect_evidence(root: Path, redact: bool) -> tuple[int, int]:
         "status=passed\n"
         f"text_files_scanned={text_files}\n"
         f"text_files_redacted={redacted_files}\n"
+        "writers_quiescent=true\n"
         "raw_audio_present=false\n"
         "secret_patterns_present=false\n"
         "raw_identifiers_present=false\n"
@@ -216,14 +269,28 @@ def run_self_test() -> None:
     with tempfile.TemporaryDirectory(prefix="sonus-evidence-policy-") as temp:
         root = Path(temp)
         fixture = root / "run.log"
-        fixture.write_text(
-            "/Users/alex/work account@example.com "
-            "Bearer abc.def.ghi access_token=secret "
-            "http://127.0.0.1:12345/abc=/ ws://127.0.0.1:12345/abc=/ "
-            "9E2C2CF0-7DD4-4B9D-B6CE-63C9E42B95A7\n",
-            encoding="utf-8",
+        fixture.touch()
+        writer = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import pathlib,sys,time; "
+                    "p=pathlib.Path(sys.argv[1]); "
+                    "f=p.open('w', encoding='utf-8'); "
+                    "time.sleep(0.5); "
+                    "f.write('/Users/alex/work account@example.com Bearer abc.def.ghi '"
+                    "'access_token=secret http://127.0.0.1:12345/abc=/ '"
+                    "'ws://127.0.0.1:12345/abc=/ '"
+                    "'9E2C2CF0-7DD4-4B9D-B6CE-63C9E42B95A7\\n'); "
+                    "f.flush(); f.close()"
+                ),
+                str(fixture),
+            ]
         )
+        time.sleep(0.1)
         inspect_evidence(root, redact=True)
+        assert writer.wait(timeout=5) == 0
         clean = fixture.read_text(encoding="utf-8")
         assert "/Users/alex" not in clean
         assert "account@example.com" not in clean
