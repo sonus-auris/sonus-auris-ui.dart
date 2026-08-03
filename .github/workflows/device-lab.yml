@@ -239,6 +239,8 @@ jobs:
           QEMU_AUDIO_DRV: none
           SONUS_ALLOW_ANDROID_EMULATOR: '1'
           SONUS_ANDROID_RECORDING_PROBE_CONSENT: I_CONSENT_TO_A_15_SECOND_SONUS_DEVICE_LAB_RECORDING
+          SONUS_ANDROID_PERMISSION_EVIDENCE_DIR: ${{ github.workspace }}/isolated-android-permission-evidence
+          SONUS_ANDROID_RECORDING_EVIDENCE_DIR: ${{ github.workspace }}/isolated-android-recording-evidence
         with:
           api-level: 34
           target: google_apis
@@ -246,23 +248,7 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect -allow-host-audio
           disable-animations: true
-          script: |
-            set +e
-            SONUS_DEVICE_LAB_DIR="$GITHUB_WORKSPACE/isolated-android-permission-evidence" \
-              bash scripts/device-lab/android-permission-denial-probe.sh
-            permission_status=$?
-            adb emu avd hostmicon
-            SONUS_DEVICE_LAB_DIR="$GITHUB_WORKSPACE/isolated-android-recording-evidence" \
-              bash scripts/device-lab/android-recording-probe.sh
-            recording_status=$?
-            if [[ "$permission_status" != "0" ]]; then
-              echo "Permission-denial probe failed with status $permission_status" >&2
-              exit "$permission_status"
-            fi
-            if [[ "$recording_status" != "0" ]]; then
-              echo "Recording probe failed with status $recording_status" >&2
-              exit "$recording_status"
-            fi
+          script: bash scripts/device-lab/android-emulator-probes.sh
 
       - name: Redact and verify permission-denial evidence
         id: permission_evidence_policy
