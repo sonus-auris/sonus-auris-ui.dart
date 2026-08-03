@@ -1,0 +1,52 @@
+name: Device-lab artifact and lifecycle contracts
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/device-lab/**'
+      - 'tests/ci/device-lab-lifecycle-contract.test.py'
+      - 'tests/ci/evidence-upload-gate.test.py'
+      - '.github/workflows/device-lab.yml'
+      - '.github/workflows/device-lab-artifact-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/device-lab/**'
+      - 'tests/ci/device-lab-lifecycle-contract.test.py'
+      - 'tests/ci/evidence-upload-gate.test.py'
+      - '.github/workflows/device-lab.yml'
+      - '.github/workflows/device-lab-artifact-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: device-lab-artifact-contract-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate scripts and dependency-free tests
+        run: |
+          set -euo pipefail
+          bash -n scripts/device-lab/*.sh
+          python3 -m py_compile \
+            scripts/device-lab/evidence-policy.py \
+            scripts/device-lab/bounded-log.py \
+            scripts/device-lab/artifact-audit.py \
+            tests/ci/device-lab-lifecycle-contract.test.py \
+            tests/ci/evidence-upload-gate.test.py
+          python3 scripts/device-lab/evidence-policy.py --self-test
+          python3 scripts/device-lab/bounded-log.py --self-test
+          python3 scripts/device-lab/artifact-audit.py --self-test
+          python3 tests/ci/evidence-upload-gate.test.py --self-test
+          python3 tests/ci/evidence-upload-gate.test.py .github/workflows/device-lab.yml
+          python3 tests/ci/device-lab-lifecycle-contract.test.py
