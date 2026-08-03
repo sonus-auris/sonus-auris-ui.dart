@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Disposable iOS Simulator microphone-permission denial probe. This script
-# creates its own simulator, never addresses an existing simulator or physical
-# iPhone, and deletes only the simulator UUID returned by its own create call.
+# creates its own simulator, never selects or mutates an existing simulator or
+# physical iPhone, and deletes only the UUID returned by its own create call.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -139,8 +139,10 @@ write_cleanup_evidence() {
   cat > "$EVIDENCE_DIR/cleanup.txt" <<CLEANUP
 simulator_created_by_probe=true
 simulator_deleted=$SIMULATOR_DELETED
-existing_simulator_addressed=false
-physical_iphone_addressed=false
+existing_simulator_selected=false
+existing_simulator_mutated=false
+physical_iphone_selected=false
+physical_iphone_mutated=false
 CLEANUP
 }
 
@@ -284,8 +286,10 @@ runtime_selection_policy=$runtime_policy
 runtime_compatibility_cap=$MAX_RUNTIME_MAJOR
 device_type=$device_type_name
 created_by_probe=true
-existing_simulator_addressed=false
-physical_iphone_addressed=false
+existing_simulator_selected=false
+existing_simulator_mutated=false
+physical_iphone_selected=false
+physical_iphone_mutated=false
 DEVICE
 
   xcrun simctl boot "$CREATED_UDID"
@@ -352,8 +356,10 @@ PY
   cat > "$EVIDENCE_DIR/isolation.txt" <<ISOLATION
 bundle_id=$BUNDLE_ID
 disposable_simulator=true
-existing_simulator_addressed=false
-physical_iphone_addressed=false
+existing_simulator_selected=false
+existing_simulator_mutated=false
+physical_iphone_selected=false
+physical_iphone_mutated=false
 microphone_privacy_revoked=true
 ISOLATION
 
@@ -421,8 +427,10 @@ scope=disposable-ios-simulator-user-denied-microphone
 bundle_id=$BUNDLE_ID
 simulator_created_by_probe=true
 simulator_deleted=$SIMULATOR_DELETED
-existing_simulator_addressed=false
-physical_iphone_addressed=false
+existing_simulator_selected=false
+existing_simulator_mutated=false
+physical_iphone_selected=false
+physical_iphone_mutated=false
 runtime_major=$runtime_major
 runtime_compatibility_cap=$MAX_RUNTIME_MAJOR
 flutter_target_visible=true
