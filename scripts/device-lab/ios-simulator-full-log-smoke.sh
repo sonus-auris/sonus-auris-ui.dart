@@ -8,8 +8,10 @@ UDID="${1:-${IOS_SIMULATOR_UDID:-}}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 EVIDENCE_DIR="${SONUS_DEVICE_LAB_DIR:-$ROOT/build/device-lab/ios-simulator-full-log-$STAMP}"
 MAX_LOG_BYTES="${SONUS_DEVICE_LAB_MAX_LOG_BYTES:-524288}"
+LOG_TIMEOUT_SECONDS="${SONUS_DEVICE_LAB_LOG_TIMEOUT_SECONDS:-120}"
 LOG_REPORT="$EVIDENCE_DIR/full-session-log-scan.json"
 LOG_EVIDENCE="$EVIDENCE_DIR/full-session-simulator.log"
+COMMAND_TIMEOUT="$ROOT/scripts/device-lab/run-with-timeout.py"
 mkdir -p "$EVIDENCE_DIR"
 
 need() {
@@ -22,6 +24,18 @@ need() {
 for command in xcrun python3 bash; do
   need "$command"
 done
+if [[ ! -f "$COMMAND_TIMEOUT" ]]; then
+  echo "The bounded command helper is missing: $COMMAND_TIMEOUT" >&2
+  exit 2
+fi
+if [[ ! "$MAX_LOG_BYTES" =~ ^[0-9]+$ ]] || (( MAX_LOG_BYTES < 256 || MAX_LOG_BYTES > 16777216 )); then
+  echo "SONUS_DEVICE_LAB_MAX_LOG_BYTES must be an integer from 256 through 16777216." >&2
+  exit 2
+fi
+if [[ ! "$LOG_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || (( LOG_TIMEOUT_SECONDS < 10 || LOG_TIMEOUT_SECONDS > 600 )); then
+  echo "SONUS_DEVICE_LAB_LOG_TIMEOUT_SECONDS must be an integer from 10 through 600." >&2
+  exit 2
+fi
 
 simulator_json="$(xcrun simctl list devices available --json)"
 if [[ -z "$UDID" ]]; then
@@ -80,13 +94,16 @@ child_status=$?
 set -e
 
 predicate='process == "Runner" OR subsystem BEGINSWITH "app.sonusauris"'
-pipeline_status=0
 set +e
-xcrun simctl spawn "$UDID" log show \
-  --start "$LOG_START" \
-  --style compact \
-  --predicate "$predicate" \
-  2>/dev/null \
+python3 "$COMMAND_TIMEOUT" \
+  --timeout-seconds "$LOG_TIMEOUT_SECONDS" \
+  --grace-seconds 5 \
+  --stderr discard \
+  -- \
+  xcrun simctl spawn "$UDID" log show \
+    --start "$LOG_START" \
+    --style compact \
+    --predicate "$predicate" \
   | python3 "$ROOT/scripts/device-lab/evidence-policy.py" --stream \
   | python3 "$ROOT/scripts/device-lab/bounded-log-scan.py" \
       --max-bytes "$MAX_LOG_BYTES" \
@@ -99,11 +116,11 @@ xcrun simctl spawn "$UDID" log show \
       --scan 'lost-device=Lost connection to device' \
       --scan 'dyld=Library not loaded|dyld.*Reason' \
       > "$LOG_EVIDENCE"
-pipeline_status=$?
+pipeline_statuses=("${PIPESTATUS[@]}")
 set -e
 
-if [[ "$pipeline_status" != "0" ]]; then
-  echo "The full-session simulator log pipeline failed with status $pipeline_status." >&2
+if (( pipeline_statuses[0] != 0 || pipeline_statuses[1] != 0 || pipeline_statuses[2] != 0 )); then
+  echo "The full-session simulator log pipeline failed: collector=${pipeline_statuses[0]} sanitizer=${pipeline_statuses[1]} reducer=${pipeline_statuses[2]}." >&2
   exit 4
 fi
 
@@ -126,6 +143,8 @@ full_log_stream_scanned=true
 startup_log_context_preserved=true
 terminal_log_context_preserved=true
 retained_log_max_bytes=$MAX_LOG_BYTES
+log_collection_timeout_seconds=$LOG_TIMEOUT_SECONDS
+log_collection_process_group_bounded=true
 fatal_patterns_present=false
 raw_log_unbounded=false
 AUDIT
@@ -136,6 +155,8 @@ full_log_stream_scanned=true
 startup_log_context_preserved=true
 terminal_log_context_preserved=true
 retained_log_max_bytes=$MAX_LOG_BYTES
+log_collection_timeout_seconds=$LOG_TIMEOUT_SECONDS
+log_collection_process_group_bounded=true
 RESULT
 fi
 
