@@ -71,13 +71,19 @@ if grep -Eq 'pm grant .*RECORD_AUDIO' "$PROBE"; then
 fi
 echo 'permission-denial contract group 4 passed: user-fixed denial ordering'
 
-# 5. Operator defaults remain bounded and non-destructive. The test-owned
-# package is force-stopped, but no package data, shared logs, or app is removed.
+# 5. Operator defaults remain bounded and non-destructive. Flutter drive normally
+# uninstalls its target, so the denial lab must opt out, verify its installed APK
+# path after the test, and only force-stop the dedicated package during cleanup.
 if grep -En 'adb_?[[:space:]].*(uninstall|pm[[:space:]]+clear([[:space:]]|$))|logcat[[:space:]]+-c' "$PROBE"; then
   echo 'permission denial harness may not uninstall, clear app data, or clear logcat' >&2
   exit 1
 fi
 grep -Fq 'SECONDS + 480' "$PROBE"
+grep -Fq -- '--keep-app-running' "$PROBE"
+grep -Fq 'pm path "$PERMISSION_LAB_PKG"' "$PROBE"
+grep -Fq 'flutter_drive_keep_app_running=true' "$PROBE"
+grep -Fq 'permission_lab_package_uninstalled=false' "$PROBE"
+grep -Fq 'package_installation_verified_after_drive=true' "$PROBE"
 grep -Fq 'production_package_addressed=false' "$PROBE"
 grep -Fq 'recording_lab_package_addressed=false' "$PROBE"
 grep -Fq 'raw_audio_exported=false' "$PROBE"
@@ -87,13 +93,15 @@ echo 'permission-denial contract group 5 passed: bounded non-destructive default
 
 # 6. A failed Flutter process, stream sanitizer, tee, post-test service/app-op
 # assertion, virtual-microphone setup, or sibling probe must propagate instead of
-# producing a false-green combined emulator result.
+# producing a false-green combined emulator result. App-op evidence must resolve
+# the still-installed package rather than treating a missing UID as denial proof.
 grep -Fq 'set -euo pipefail' "$PROBE"
 grep -Fq 'wait "$DRIVE_PID" || drive_status=$?' "$PROBE"
 grep -Fq 'pipeline_status=("${PIPESTATUS[@]}")' "$PROBE"
 grep -Fq 'stream_status="${pipeline_status[1]}"' "$PROBE"
 grep -Fq 'tee_status="${pipeline_status[2]}"' "$PROBE"
 grep -Fq 'ForegroundService' "$PROBE"
+grep -Fq 'No UID for' "$PROBE"
 grep -Fq "RECORD_AUDIO: (allow|foreground)" "$PROBE"
 grep -Fq 'permission_status=$?' "$EMULATOR_SEQUENCE"
 grep -Fq 'microphone_status=$?' "$EMULATOR_SEQUENCE"
