@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build, install, launch, cold-relaunch, and inspect Sonus Auris on an iOS
-# Simulator without erasing the simulator or clearing the app's data.
+# Build, install, launch, cold-relaunch, update in place, and inspect Sonus
+# Auris on an iOS Simulator without erasing the simulator or clearing app data.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -21,6 +21,7 @@ need() {
 need xcrun
 need flutter
 need python3
+need shasum
 
 mkdir -p "$EVIDENCE_DIR"
 # Sanitize the complete run log, including build-tool failures that may contain
@@ -203,7 +204,7 @@ launch_app() {
   sleep 6
   # `simctl launch` returns the host PID of the Simulator app process. Signal 0
   # checks liveness without sending a signal; invoking `ps` inside the simulated
-  # runtime is not portable across the installed iOS runtime images.
+  # runtime is not portable across installed iOS runtime images.
   if ! kill -0 "$pid" >/dev/null 2>&1; then
     capture_logs "$label-launch-failure"
     echo "Simulator process $pid did not remain alive after launch" >&2
@@ -212,6 +213,15 @@ launch_app() {
   ps -p "$pid" -o pid=,command= 2>/dev/null \
     | sanitize_stream > "$EVIDENCE_DIR/$label-process.txt" || true
   printf 'pid=%s\n' "$pid" >> "$EVIDENCE_DIR/$label-process.txt"
+}
+
+data_container_fingerprint() {
+  local container
+  container="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data 2>/dev/null || true)"
+  if [[ -z "$container" ]]; then
+    return 1
+  fi
+  printf '%s' "$container" | shasum -a 256 | awk '{print substr($1, 1, 12)}'
 }
 
 echo "== install without erasing simulator app data =="
@@ -236,12 +246,47 @@ fi
 capture_logs cold-relaunch
 assert_no_fatal_logs "$EVIDENCE_DIR/cold-relaunch-simulator.log"
 
+# Reinstall the same candidate in place and prove CoreSimulator kept the same
+# app data container. This catches accidental uninstall/erase behavior while
+# avoiding reads of app-private user data.
+echo "== in-place update + post-update relaunch =="
+before_fingerprint="$(data_container_fingerprint)" || {
+  echo "Could not fingerprint the installed simulator data container." >&2
+  exit 5
+}
+xcrun simctl install "$UDID" "$APP"
+after_fingerprint="$(data_container_fingerprint)" || {
+  echo "Could not fingerprint the simulator data container after update." >&2
+  exit 5
+}
+if [[ "$before_fingerprint" != "$after_fingerprint" ]]; then
+  echo "In-place simulator update replaced the app data container." >&2
+  exit 5
+fi
+launch_app post-update-relaunch
+if [[ "$CAPTURE_SCREENSHOT" == "1" ]]; then
+  xcrun simctl io "$UDID" screenshot "$EVIDENCE_DIR/post-update-relaunch.png" >/dev/null
+fi
+capture_logs post-update-relaunch
+assert_no_fatal_logs "$EVIDENCE_DIR/post-update-relaunch-simulator.log"
+xcrun simctl terminate "$UDID" "$BUNDLE_ID"
+cat > "$EVIDENCE_DIR/data-container-preservation.txt" <<PRESERVATION
+status=passed
+before_fingerprint=$before_fingerprint
+after_fingerprint=$after_fingerprint
+in_place_reinstall=true
+app_data_cleared=false
+post_update_relaunch=true
+PRESERVATION
+
 cat > "$EVIDENCE_DIR/result.txt" <<RESULT
 status=passed
-scope=ios-simulator-install-launch-cold-relaunch
+scope=ios-simulator-install-launch-cold-relaunch-in-place-update
 bundle_id=$BUNDLE_ID
 simulator_erased=false
 app_data_cleared=false
+in_place_update_completed=true
+data_container_preserved=true
 process_scoped_logs=true
 screenshot_captured=$CAPTURE_SCREENSHOT
 RESULT
