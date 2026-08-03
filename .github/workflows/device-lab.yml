@@ -100,7 +100,14 @@ jobs:
           xcrun simctl list runtimes
 
       - name: Validate device-lab Dart formatting
-        run: dart format --output=none --set-exit-if-changed lib/src/platform/desktop_autostart.dart
+        run: |
+          set -euo pipefail
+          dart format lib/src/platform/desktop_autostart.dart
+          if ! git diff --exit-code -- lib/src/platform/desktop_autostart.dart; then
+            echo 'Device-lab Dart source is not formatted; exact formatter delta follows.' >&2
+            git diff -- lib/src/platform/desktop_autostart.dart
+            exit 1
+          fi
 
       - name: Run non-destructive iOS Simulator smoke
         env:
