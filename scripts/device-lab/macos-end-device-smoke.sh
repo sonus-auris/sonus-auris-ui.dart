@@ -13,6 +13,7 @@ RUN_ANDROID_DEVICE="${SONUS_RUN_ANDROID_DEVICE:-auto}"
 RUN_FLUTTER_MACOS="${SONUS_RUN_FLUTTER_MACOS:-1}"
 EVIDENCE_POLICY="$ROOT/scripts/device-lab/evidence-policy.py"
 IOS_RESOLVER="$ROOT/scripts/device-lab/resolve-physical-ios.py"
+ANDROID_RESOLVER="$ROOT/scripts/device-lab/resolve-physical-android.py"
 mkdir -p "$RUN_DIR"
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -49,6 +50,10 @@ if [[ ! -f "$EVIDENCE_POLICY" ]]; then
 fi
 if [[ ! -f "$IOS_RESOLVER" ]]; then
   echo "Physical iOS target resolver is missing: $IOS_RESOLVER" >&2
+  exit 2
+fi
+if [[ ! -f "$ANDROID_RESOLVER" ]]; then
+  echo "Physical Android target resolver is missing: $ANDROID_RESOLVER" >&2
   exit 2
 fi
 
@@ -101,31 +106,16 @@ run_target() {
   return 0
 }
 
-physical_android_targets() {
-  if ! command -v adb >/dev/null 2>&1; then
-    return 1
-  fi
-  adb devices | awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { print $1 }'
-}
-
 select_physical_android() {
+  if ! command -v adb >/dev/null 2>&1; then
+    echo "ADB is required to resolve an authorized physical Android target." >&2
+    return 79
+  fi
+  local resolver_args=()
   if [[ -n "${ANDROID_SERIAL:-}" ]]; then
-    printf '%s\n' "$ANDROID_SERIAL"
-    return 0
+    resolver_args+=(--serial "$ANDROID_SERIAL")
   fi
-  local targets
-  local count
-  targets="$(physical_android_targets || true)"
-  count="$(printf '%s\n' "$targets" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
-  if [[ "$count" == "1" ]]; then
-    printf '%s\n' "$targets"
-    return 0
-  fi
-  if [[ "$count" -gt 1 ]]; then
-    echo "Multiple authorized physical Android targets are attached. Set ANDROID_SERIAL explicitly." >&2
-    return 2
-  fi
-  return 1
+  python3 "$ANDROID_RESOLVER" "${resolver_args[@]}"
 }
 
 select_physical_ios() {
@@ -186,7 +176,7 @@ case "$RUN_ANDROID_DEVICE" in
     android_serial="$(select_physical_android)"
     selection_status=$?
     if [[ "$selection_status" != "0" || -z "$android_serial" ]]; then
-      echo "Physical Android was required but one unambiguous authorized USB target was not found." >&2
+      echo "Physical Android was required but one unambiguous authorized target was not found." >&2
       record_status android-device failed
     else
       SONUS_TARGET_REQUIRED=1 run_target android-device \
@@ -200,11 +190,12 @@ case "$RUN_ANDROID_DEVICE" in
     if [[ "$selection_status" == "0" && -n "$android_serial" ]]; then
       run_target android-device "$ROOT/scripts/device-lab/android-attached-smoke.sh" \
         "$ROOT/build/app/outputs/flutter-apk/app-debug.apk" "$android_serial"
-    elif [[ "$selection_status" == "2" ]]; then
-      record_status android-device failed
-    else
+    elif [[ "$selection_status" == "78" ]]; then
       echo "No authorized physical Android target detected; skipping Android smoke."
       record_status android-device skipped
+    else
+      echo "Physical Android target selection was ambiguous or unsafe." >&2
+      record_status android-device failed
     fi
     ;;
   *) record_status android-device skipped ;;
@@ -223,6 +214,8 @@ failures=$failures
 evidence_policy=required
 physical_device_claims_require_this_run=true
 physical_ios_preselected=true
+physical_android_preselected=true
+android_emulator_probe=ro.kernel.qemu
 required_target_exit_78_is_failure=true
 SUMMARY
 cat "$RUN_DIR/results.txt"

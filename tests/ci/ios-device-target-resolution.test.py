@@ -71,6 +71,12 @@ def run_orchestrator_case(
         scripts.mkdir(parents=True)
         shutil.copy2(ORCHESTRATOR, scripts / ORCHESTRATOR.name)
         shutil.copy2(RESOLVER, scripts / RESOLVER.name)
+        # The orchestrator verifies both platform resolvers before dispatching
+        # any target. Keep the Android side inert in this iOS-focused fixture.
+        (scripts / "resolve-physical-android.py").write_text(
+            "#!/usr/bin/env python3\nraise SystemExit(78)\n",
+            encoding="utf-8",
+        )
         (scripts / "evidence-policy.py").write_text(
             "#!/usr/bin/env python3\nraise SystemExit(0)\n",
             encoding="utf-8",
@@ -148,7 +154,7 @@ def validate_orchestrator(source: str) -> None:
     assert "physical_ios_visible" not in source
 
     selector = function_body(source, "select_physical_ios")
-    assert 'flutter devices --machine' in selector
+    assert "flutter devices --machine" in selector
     assert 'resolver_args+=(--device-id "$IOS_DEVICE_ID")' in selector
     assert 'python3 "$IOS_RESOLVER" "${resolver_args[@]}"' in selector
 
@@ -161,7 +167,6 @@ def validate_orchestrator(source: str) -> None:
 
     assert "SONUS_TARGET_REQUIRED=1 run_target ios-device" in source
     assert '"$ROOT/scripts/device-lab/ios-attached-smoke.sh" "$ios_device_id"' in source
-    assert "SONUS_TARGET_REQUIRED=1 run_target android-device" in source
 
     required_case = re.search(
         r"(?ms)^  1\|true\|yes\)\n(?P<body>.*?)^    ;;$",
@@ -170,9 +175,9 @@ def validate_orchestrator(source: str) -> None:
     assert required_case
     required_body = required_case.group("body")
     assert 'ios_device_id="$(select_physical_ios)"' in required_body
-    assert 'record_status ios-device failed' in required_body
+    assert "record_status ios-device failed" in required_body
     assert '"$ROOT/scripts/device-lab/ios-attached-smoke.sh" "$ios_device_id"' in required_body
-    assert 'record_status ios-device skipped' not in required_body
+    assert "record_status ios-device skipped" not in required_body
 
     auto_case = re.search(
         r"(?ms)^  auto\)\n(?P<body>.*?)^    ;;$",
@@ -181,9 +186,9 @@ def validate_orchestrator(source: str) -> None:
     assert auto_case
     auto_body = auto_case.group("body")
     assert '"$selection_status" == "78"' in auto_body
-    assert 'record_status ios-device skipped' in auto_body
-    assert 'Physical iOS target selection was ambiguous or unsafe.' in auto_body
-    assert 'record_status ios-device failed' in auto_body
+    assert "record_status ios-device skipped" in auto_body
+    assert "Physical iOS target selection was ambiguous or unsafe." in auto_body
+    assert "record_status ios-device failed" in auto_body
     assert '"$ROOT/scripts/device-lab/ios-attached-smoke.sh" "$ios_device_id"' in auto_body
 
     assert "physical_ios_preselected=true" in source
