@@ -13,9 +13,8 @@ void main() {
       r'</intent-filter>',
     ).firstMatch(manifest)?.group(1);
     final schemeResolver = RegExp(
-      r'val resolvedUriScheme = if \(deviceLabAndroidBuild\) '
-      r'"([^"]+)" else "([^"]+)"',
-    ).firstMatch(gradle);
+      r'val resolvedUriScheme = when \{([\s\S]*?)\n\}',
+    ).firstMatch(gradle)?.group(1);
 
     expect(filter, isNotNull);
     expect(filter, contains(r'android:scheme="${sonusUriScheme}"'));
@@ -29,13 +28,18 @@ void main() {
     );
     expect(schemeResolver, isNotNull);
     expect(
-      schemeResolver?.group(1),
-      'sonusauris-device-lab',
-      reason: 'device-lab callbacks must not enter the production app',
+      schemeResolver,
+      contains('deviceLabAndroidBuild -> "sonusauris-device-lab"'),
+      reason: 'recording-lab callbacks must not enter the production app',
     );
     expect(
-      schemeResolver?.group(2),
-      'sonusauris',
+      schemeResolver,
+      contains('permissionLabAndroidBuild -> "sonusauris-permission-lab"'),
+      reason: 'permission-lab callbacks must not enter either installed app',
+    );
+    expect(
+      schemeResolver,
+      contains('else -> "sonusauris"'),
       reason: 'the production passwordless callback scheme must remain stable',
     );
   });
