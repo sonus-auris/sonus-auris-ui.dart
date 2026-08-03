@@ -33,6 +33,8 @@ echo 'iOS permission contract group 1 passed: Dart fail-closed behavior'
 
 # 2. The host creates one simulator before mutating microphone privacy and uses
 # only the UUID returned by that create call for every device-specific command.
+# Read-only discovery may enumerate other Apple targets, so evidence must state
+# the narrower and verifiable claims: they were not selected or mutated.
 grep -Fq 'CREATED_UDID="$(xcrun simctl create' "$PROBE"
 grep -Fq 'xcrun simctl privacy "$CREATED_UDID" revoke microphone "$BUNDLE_ID"' "$PROBE"
 create_line="$(grep -n 'CREATED_UDID="$(xcrun simctl create' "$PROBE" | cut -d: -f1)"
@@ -40,12 +42,22 @@ privacy_line="$(grep -n 'simctl privacy "$CREATED_UDID" revoke microphone' "$PRO
 [[ -n "$create_line" && -n "$privacy_line" ]]
 (( create_line < privacy_line ))
 if grep -Eq 'IOS_SIMULATOR_UDID|simctl booted|[[:space:]]booted[[:space:]]' "$PROBE"; then
-  echo 'disposable permission lab may not select or address an existing booted simulator' >&2
+  echo 'disposable permission lab may not select an existing booted simulator' >&2
   exit 1
 fi
-grep -Fq 'existing_simulator_addressed=false' "$PROBE"
-grep -Fq 'physical_iphone_addressed=false' "$PROBE"
-echo 'iOS permission contract group 2 passed: disposable simulator targeting'
+for field in \
+  existing_simulator_selected=false \
+  existing_simulator_mutated=false \
+  physical_iphone_selected=false \
+  physical_iphone_mutated=false; do
+  grep -Fq "$field" "$PROBE"
+done
+if grep -Fq 'physical_iphone_addressed=false' "$PROBE" ||
+  grep -Fq 'existing_simulator_addressed=false' "$PROBE"; then
+  echo 'evidence must not overclaim that read-only device discovery never enumerated another target' >&2
+  exit 1
+fi
+echo 'iOS permission contract group 2 passed: disposable target and precise non-mutation claims'
 
 # 3. Runtime selection is compatibility-capped instead of blindly choosing the
 # newest installed runtime. Flutter 3.44.2 failed to attach on hosted iOS 26.2,
