@@ -41,7 +41,7 @@ run_target() {
   mkdir -p "$evidence"
   echo
   echo "===== $name ====="
-  SONUS_DEVICE_LAB_DIR="$evidence" "$@"
+  SONUS_DEVICE_LAB_DIR="$evidence" bash "$@"
   status=$?
   if [[ "$status" == "0" ]]; then
     record_status "$name" passed
