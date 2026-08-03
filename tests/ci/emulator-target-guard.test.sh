@@ -51,10 +51,16 @@ reset_fake() {
   : > "$FAKE_ADB_CALLS"
 }
 
+run_resolver() {
+  # Invoke repository scripts through Bash so this contract is portable across
+  # archives, connector-created files, and checkouts that do not retain +x.
+  bash "$RESOLVER" "$@"
+}
+
 expect_success() {
   local expected="$1"; shift
   local actual
-  actual="$("$RESOLVER" "$@")"
+  actual="$(run_resolver "$@")"
   [[ "$actual" == "$expected" ]] || {
     echo "expected '$expected', got '$actual'" >&2
     exit 1
@@ -64,7 +70,7 @@ expect_success() {
 expect_status() {
   local expected="$1"; shift
   set +e
-  "$RESOLVER" "$@" > "$TMP/stdout" 2> "$TMP/stderr"
+  run_resolver "$@" > "$TMP/stdout" 2> "$TMP/stderr"
   local status=$?
   set -e
   [[ "$status" == "$expected" ]] || {
