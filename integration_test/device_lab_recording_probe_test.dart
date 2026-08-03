@@ -37,9 +37,7 @@ Future<List<File>> _filesEndingWith(Directory directory, String suffix) async {
       .toList();
 }
 
-Future<void> _validateFinalizedSegments(
-  List<RecordingSegment> segments,
-) async {
+Future<void> _validateFinalizedSegments(List<RecordingSegment> segments) async {
   expect(
     segments.length,
     greaterThanOrEqualTo(3),
@@ -56,7 +54,10 @@ Future<void> _validateFinalizedSegments(
     expect(segment.sampleRate, 16000);
     expect(segment.channels, 1);
     expect(segment.sampleCount, greaterThan(0));
-    expect(segment.storedSampleCount, greaterThanOrEqualTo(segment.sampleCount));
+    expect(
+      segment.storedSampleCount,
+      greaterThanOrEqualTo(segment.sampleCount),
+    );
     expect(segment.endedAtUtc.isAfter(segment.startedAtUtc), isTrue);
 
     if (index == 0) {
