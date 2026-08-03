@@ -13,11 +13,11 @@ in **DEN-296**, and the current Samsung release-candidate acceptance remains in
 
 | Target | Transport | Automated evidence | Manual evidence still required |
 |---|---|---|---|
-| iOS Simulator | CoreSimulator on the MacBook | build, install/update, launch, screenshot when enabled, process health, crash-focused logs, cold relaunch | microphone/background restrictions that the simulator cannot represent faithfully |
+| iOS Simulator | CoreSimulator on the MacBook | build, install/update, launch, screenshot when enabled, process health, PID-scoped crash logs, cold relaunch | microphone/background restrictions that the simulator cannot represent faithfully |
 | Physical iPhone | USB for first pairing, then USB or paired Wi-Fi | development-signed install/update, bounded launch, sanitized Flutter/Xcode output | microphone prompt, recording indicator, lock/background capture, playback, Bluetooth changes, battery/thermal/storage observations |
-| Physical Android | authorized USB ADB | non-destructive install/update, launch, process/UI health, crash-focused logs, force-stop and cold relaunch, package/permission summary | disclosure-driven permission prompts, recording notification/indicator, lock/background capture, playback, Bluetooth changes, battery/thermal/storage observations |
-| Flutter macOS | packaged `.app` | bundle ID/signature verification, launch, crash-focused unified log, bounded app-event Quit | microphone grant and a short explicitly consented recording |
-| Rust macOS | packaged `.app` plus device probe in `desktop.app.rs` | CoreAudio enumeration, bundle launch/Quit, optional explicitly consented bounded WAV probe | microphone grant and comparison with the Flutter desktop result |
+| Physical Android | authorized USB ADB | non-destructive install/update, launch, process/UI health, time-bounded crash logs without clearing logcat, force-stop and cold relaunch, package/permission summary | disclosure-driven permission prompts, recording notification/indicator, lock/background capture, playback, Bluetooth changes, battery/thermal/storage observations |
+| Flutter macOS | isolated packaged `.app` | production bundle/signature verification, side-effect-suppressed isolated launch, crash-focused unified log, bounded app-event Quit | microphone grant and a short explicitly consented recording in the normal app |
+| Rust macOS | packaged `.app` plus device probe in `desktop.app.rs` | CoreAudio enumeration, isolated-data bundle launch/Quit, optional explicitly consented bounded WAV probe | microphone grant and comparison with the Flutter desktop result |
 
 ## Safety contract
 
@@ -26,6 +26,7 @@ default:
 
 - no `adb uninstall`, `pm clear`, simulator erase, simulator uninstall, or device
   reset;
+- no clearing of the physical Android device-wide logcat buffer;
 - no automatic grant or revocation of microphone, notification, location,
   Bluetooth, nearby-Wi-Fi, or other sensitive permissions;
 - no automated audio recording on mobile;
@@ -34,7 +35,10 @@ default:
   may contain personal information;
 - an APK signature mismatch fails closed rather than uninstalling the existing
   Android app and deleting app-private recordings, keys, settings, or account
-  state.
+  state; and
+- desktop runtime probes refuse to disturb an already running normal app and use
+  isolated settings/data domains so previous consent cannot silently resume
+  recording.
 
 `scripts/emulator/permission-smoke.sh` intentionally performs a clean install and
 mutates permissions. It remains **emulator-only** and must not be substituted for
@@ -123,8 +127,9 @@ bash scripts/device-lab/ios-simulator-smoke.sh <simulator-udid>
 
 The script preserves installed app data. It builds a debug simulator app with
 inert compile-only endpoints, installs/updates it, launches it, verifies that the
-process stays alive, captures sanitized crash-focused logs, terminates the
-process, and cold-relaunches it.
+process stays alive, captures sanitized logs scoped to the PID returned by
+`simctl launch`, terminates the process, and cold-relaunches it. First-launch and
+cold-relaunch logs remain separate so one phase cannot overwrite the other.
 
 The same script runs on `macos-15` in `.github/workflows/device-lab.yml`, giving
 pull requests a real simulator runtime gate in addition to the existing unsigned
@@ -166,7 +171,7 @@ explicitly verify:
 ```bash
 bash scripts/device-lab/android-attached-smoke.sh
 
-# Explicit APK and adb target when several devices/emulators are connected.
+# Explicit APK and adb target when several physical devices are connected.
 bash scripts/device-lab/android-attached-smoke.sh \
   /path/to/app-release-or-debug.apk \
   <adb-serial>
@@ -178,10 +183,13 @@ release acceptance, pass the checksum-verified APK from the protected workflow
 instead. The script never resolves a certificate mismatch by uninstalling the
 existing package.
 
-The automated scope is install/update, launch, process health, non-sensitive UI
-semantics when exposed, crash-focused logs, force-stop, and cold relaunch. It
-does not touch permission state. Complete the disclosure/recording/background/
-playback checks from DEN-836 manually on the handset.
+The attached-device harness excludes emulator serials by default; the existing
+emulator permission matrix owns emulator-only clean-install and permission
+mutation. The physical-device automated scope is install/update, launch, process
+health, non-sensitive UI semantics when exposed, crash-focused logs since each
+launch without clearing shared logcat, force-stop, and cold relaunch. It does not
+touch permission state. Complete the disclosure/recording/background/playback
+checks from DEN-836 manually on the handset.
 
 ### Packaged Flutter macOS app
 
@@ -189,11 +197,18 @@ playback checks from DEN-836 manually on the handset.
 bash scripts/device-lab/flutter-macos-smoke.sh
 ```
 
-This builds `lib/main_desktop.dart` as a release `.app`, verifies the bundle ID
-`app.sonusauris.audioDashcam`, launches the bundle rather than a terminal-owned
-Dart executable, inspects sanitized unified logs, sends a normal application
-Quit event, and fails when the process remains alive beyond the bounded shutdown
-window.
+This builds `lib/main_desktop.dart` as a release `.app` and first verifies the
+production identity `app.sonusauris.audioDashcam`. It then copies and re-signs a
+test-owned bundle as `app.sonusauris.audioDashcam.deviceLab`, compiles with
+`SONUS_DEVICE_LAB_NO_SIDE_EFFECTS=true`, and refuses to proceed while another
+Flutter Sonus Auris desktop process is running. The isolated identity prevents
+production SharedPreferences/TCC state from silently reusing stored recording
+consent, while the compile-time flag suppresses login-item setup and migration.
+
+The script launches that isolated bundle through LaunchServices rather than a
+Terminal-owned Dart executable, inspects sanitized PID-scoped unified logs,
+sends Quit only to the isolated bundle ID, and fails when its process remains
+alive beyond the bounded shutdown window.
 
 macOS may request Automation permission for the terminal to send the Quit event.
 Grant it for the test terminal. Setting `SONUS_REQUIRE_APPLE_EVENT_QUIT=0` is
