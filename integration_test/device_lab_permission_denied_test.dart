@@ -59,20 +59,22 @@ void main() {
         expect(await FlutterForegroundTask.isRunningService, isFalse);
 
         try {
-          await recorder.start(
-            const AppConfig(
-              deviceId: 'isolated-android-permission-lab',
-              segmentMinutes: 0,
-              overlapSeconds: 1,
-              autoGain: false,
-              noiseSuppress: false,
-            ),
-          ).timeout(
-            const Duration(seconds: 30),
-            onTimeout: () => fail(
-              'permission-denied recorder start did not return promptly',
-            ),
-          );
+          await recorder
+              .start(
+                const AppConfig(
+                  deviceId: 'isolated-android-permission-lab',
+                  segmentMinutes: 0,
+                  overlapSeconds: 1,
+                  autoGain: false,
+                  noiseSuppress: false,
+                ),
+              )
+              .timeout(
+                const Duration(seconds: 30),
+                onTimeout: () => fail(
+                  'permission-denied recorder start did not return promptly',
+                ),
+              );
         } catch (error) {
           startError = error;
         }
