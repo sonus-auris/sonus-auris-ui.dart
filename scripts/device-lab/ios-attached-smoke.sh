@@ -12,6 +12,14 @@ RUN_TIMEOUT_SECONDS="${SONUS_IOS_RUN_TIMEOUT_SECONDS:-240}"
 LAUNCH_CYCLES="${SONUS_IOS_LAUNCH_CYCLES:-2}"
 mkdir -p "$EVIDENCE_DIR"
 
+# The sanitizer is part of the evidence boundary, so verify it before opening
+# the process-substitution stream rather than failing later with an unsanitized
+# shell diagnostic.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "Required command is missing: python3" >&2
+  exit 2
+fi
+
 # Sanitize the complete run, including Flutter pub/build/signing failures that
 # can contain a local username, account email, callback URL, or VM-service token.
 exec > >(python3 -u -c '
@@ -95,7 +103,9 @@ NOTICE
   exit 78
 fi
 
-printf '%s' "$flutter_devices_json" | IOS_DEVICE_ID="$DEVICE_ID" python3 -c '
+# Validate explicit IDs too. A simulator, stale ID, Android device, or macOS
+# desktop target must never produce evidence labelled as a physical iPhone.
+if ! printf '%s' "$flutter_devices_json" | IOS_DEVICE_ID="$DEVICE_ID" python3 -c '
 import hashlib
 import json
 import os
@@ -103,9 +113,17 @@ import sys
 try:
     devices = json.load(sys.stdin)
 except Exception:
-    devices = []
+    raise SystemExit("Flutter device discovery did not return valid JSON")
 needle = os.environ["IOS_DEVICE_ID"]
-selected = next((d for d in devices if d.get("id") == needle), {})
+selected = next((d for d in devices if d.get("id") == needle), None)
+if selected is None:
+    raise SystemExit("The requested Flutter target is not currently visible")
+target = str(selected.get("targetPlatform", "")).lower()
+platform = str(selected.get("platform", "")).lower()
+if selected.get("emulator"):
+    raise SystemExit("The requested Flutter target is an emulator, not a physical iPhone")
+if not (target.startswith("ios") or platform.startswith("ios")):
+    raise SystemExit("The requested Flutter target is not an iOS device")
 connection = selected.get("connectionInterface", selected.get("connection-interface", "unknown"))
 print("target_fingerprint=" + hashlib.sha256(needle.encode()).hexdigest()[:12])
 print("device_class=physical-iPhone")
@@ -113,7 +131,10 @@ print("platform=" + str(selected.get("platform", "ios")))
 print("target_platform=" + str(selected.get("targetPlatform", "ios")))
 print("connection_interface=" + str(connection))
 print("emulator=false")
-' > "$EVIDENCE_DIR/device.txt"
+' > "$EVIDENCE_DIR/device.txt"; then
+  echo "The selected Flutter target is not an eligible paired physical iPhone." >&2
+  exit 78
+fi
 
 (
   cd "$ROOT"
