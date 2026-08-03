@@ -64,12 +64,18 @@ if grep -En 'adb_[[:space:]].*\$PRODUCTION_PKG|adb[[:space:]].*\$PRODUCTION_PKG'
   exit 1
 fi
 
-# 6. Operator hardware defaults remain non-destructive. The isolated package is
-# force-stopped, but neither app is uninstalled/cleared and shared logcat remains.
+# 6. Operator hardware defaults remain non-destructive. Flutter drive normally
+# uninstalls its target, so the lab must opt out, verify an installed APK path,
+# and then only force-stop the isolated package during cleanup.
 if grep -En 'adb_?[[:space:]].*(uninstall|pm clear)|logcat[[:space:]]+-c' "$PROBE"; then
   echo 'isolated recording probe may not uninstall, clear app data, or clear logcat' >&2
   exit 1
 fi
+grep -Fq -- '--keep-app-running' "$PROBE"
+grep -Fq 'pm path "$LAB_PKG"' "$PROBE"
+grep -Fq 'flutter_drive_keep_app_running=true' "$PROBE"
+grep -Fq 'device_lab_package_uninstalled=false' "$PROBE"
+grep -Fq 'package_installation_verified_after_drive=true' "$PROBE"
 grep -Fq 'shared_logcat_cleared=false' "$PROBE"
 grep -Fq 'raw_audio_exported=false' "$PROBE"
 grep -Fq 'production_package_addressed=false' "$PROBE"
