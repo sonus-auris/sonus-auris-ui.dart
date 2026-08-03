@@ -51,6 +51,11 @@ jobs:
           bash -n scripts/device-lab/*.sh
           python3 -m py_compile scripts/device-lab/evidence-policy.py
           python3 scripts/device-lab/evidence-policy.py --self-test
+          grep -Fq '"uuid"' scripts/device-lab/evidence-policy.py
+          if grep -Fq 'SKIP_LIVE_LOGS' scripts/device-lab/evidence-policy.py; then
+            echo 'All uploaded text logs, including run.log, must pass evidence policy.' >&2
+            exit 1
+          fi
 
       - name: Enforce non-destructive physical-device defaults
         run: |
@@ -137,12 +142,14 @@ jobs:
         run: bash scripts/device-lab/ios-simulator-smoke.sh
 
       - name: Redact and verify simulator evidence
+        id: evidence_policy
+        if: always()
         env:
           SONUS_DEVICE_LAB_DIR: ${{ runner.temp }}/sonus-ios-simulator-evidence
         run: python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
 
       - name: Upload sanitized simulator evidence
-        if: always()
+        if: ${{ always() && steps.evidence_policy.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonus-ios-simulator-evidence
