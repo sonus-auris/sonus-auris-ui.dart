@@ -37,6 +37,7 @@ jobs:
           test/pagelet_renderer_test.dart
           test/pagelet_protocol_test.dart
           test/pagelet_action_dispatcher_test.dart
+          test/pagelet_conformance_negative_test.dart
       - name: Generate honest coverage report
         run: |
           python3 scripts/pagelet_conformance_report.py \
