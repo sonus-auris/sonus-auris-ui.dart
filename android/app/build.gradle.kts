@@ -29,7 +29,6 @@ if (deviceLabAndroidBuild && permissionLabAndroidBuild) {
         "SONUS_DEVICE_LAB_ANDROID and SONUS_PERMISSION_LAB_ANDROID are mutually exclusive."
     )
 }
-val isolatedLabAndroidBuild = deviceLabAndroidBuild || permissionLabAndroidBuild
 val resolvedApplicationId = when {
     deviceLabAndroidBuild -> "$productionApplicationId.device_lab"
     permissionLabAndroidBuild -> "$productionApplicationId.permission_lab"
@@ -148,12 +147,18 @@ gradle.taskGraph.whenReady {
                 name.startsWith("sign"))
     }
 
-    // All lab identities are intentionally debug-only. Refuse any release graph
-    // even when a local developer also opts into debug-signed releases.
-    if (isolatedLabAndroidBuild && releaseTask != null) {
+    // Keep independent guards for each isolated identity. The explicit
+    // recording-lab guard is also a stable contract for the parent device lab.
+    if (deviceLabAndroidBuild && releaseTask != null) {
         throw GradleException(
-            "Refusing to build isolated lab application ID '$resolvedApplicationId' " +
-                "with release task '${releaseTask.path}'. Device-lab probes are debug-only."
+            "Refusing to build device-lab application ID '$resolvedApplicationId' " +
+                "with release task '${releaseTask.path}'. Device-lab recording probes are debug-only."
+        )
+    }
+    if (permissionLabAndroidBuild && releaseTask != null) {
+        throw GradleException(
+            "Refusing to build permission-lab application ID '$resolvedApplicationId' " +
+                "with release task '${releaseTask.path}'. Permission-lab probes are debug-only."
         )
     }
 
