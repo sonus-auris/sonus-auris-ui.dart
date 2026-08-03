@@ -3,7 +3,7 @@
 // The host creates a simulator solely for this test, installs this integration
 // target, revokes microphone access for the app bundle, and deletes the entire
 // test-created simulator afterward. No existing simulator or physical iPhone is
-// addressed by the harness.
+// selected or mutated by the harness.
 import 'dart:io';
 
 import 'package:audio_dashcam/src/models/app_config.dart';
