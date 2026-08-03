@@ -6,15 +6,18 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 GRADLE="$ROOT/android/app/build.gradle.kts"
 TARGET="$ROOT/integration_test/device_lab_permission_denied_test.dart"
 PROBE="$ROOT/scripts/device-lab/android-permission-denial-probe.sh"
+EMULATOR_SEQUENCE="$ROOT/scripts/device-lab/android-emulator-probes.sh"
 ORCHESTRATOR="$ROOT/scripts/device-lab/macos-end-device-smoke.sh"
+WORKFLOW="$ROOT/.github/workflows/device-lab.yml"
 
-for file in "$GRADLE" "$TARGET" "$PROBE" "$ORCHESTRATOR"; do
+for file in "$GRADLE" "$TARGET" "$PROBE" "$EMULATOR_SEQUENCE" "$ORCHESTRATOR" "$WORKFLOW"; do
   [[ -s "$file" ]] || {
     echo "required permission-denial lab file is missing: $file" >&2
     exit 1
   }
 done
 bash -n "$PROBE"
+bash -n "$EMULATOR_SEQUENCE"
 
 # 1. The denial lab has a third Android identity, label, and callback scheme;
 # recording and permission lab switches are mutually exclusive and debug-only.
@@ -82,8 +85,9 @@ grep -Fq 'probe_audio_artifacts=0' "$PROBE"
 grep -Fq 'shared_logcat_cleared=false' "$PROBE"
 echo 'permission-denial contract group 5 passed: bounded non-destructive defaults'
 
-# 6. A failed Flutter process, stream sanitizer, tee, or post-test service/app-op
-# assertion must propagate instead of producing a false-green result.
+# 6. A failed Flutter process, stream sanitizer, tee, post-test service/app-op
+# assertion, virtual-microphone setup, or sibling probe must propagate instead of
+# producing a false-green combined emulator result.
 grep -Fq 'set -euo pipefail' "$PROBE"
 grep -Fq 'wait "$DRIVE_PID" || drive_status=$?' "$PROBE"
 grep -Fq 'pipeline_status=("${PIPESTATUS[@]}")' "$PROBE"
@@ -91,13 +95,23 @@ grep -Fq 'stream_status="${pipeline_status[1]}"' "$PROBE"
 grep -Fq 'tee_status="${pipeline_status[2]}"' "$PROBE"
 grep -Fq 'ForegroundService' "$PROBE"
 grep -Fq "RECORD_AUDIO: (allow|foreground)" "$PROBE"
+grep -Fq 'permission_status=$?' "$EMULATOR_SEQUENCE"
+grep -Fq 'microphone_status=$?' "$EMULATOR_SEQUENCE"
+grep -Fq 'recording_status=$?' "$EMULATOR_SEQUENCE"
+grep -Fq 'android-permission-denial-probe.sh' "$EMULATOR_SEQUENCE"
+grep -Fq 'android-recording-probe.sh' "$EMULATOR_SEQUENCE"
 echo 'permission-denial contract group 6 passed: status propagation'
 
-# 7. The Mac lab exposes denial as a separate opt-in target and never implies
-# that enabling the normal Android smoke or recording probe runs it implicitly.
+# 7. Mac and hosted labs expose denial as an explicit target. The emulator action
+# receives one command and delegates sequencing to a shell file; multiline YAML
+# action scripts are forbidden because android-emulator-runner executes their
+# continuation lines as independent sh -c commands.
 grep -Fq 'SONUS_RUN_ANDROID_PERMISSION_DENIAL_PROBE' "$ORCHESTRATOR"
 grep -Fq 'android-permission-denial-probe.sh' "$ORCHESTRATOR"
 grep -Fq 'android_permission_denial_probe_opt_in=' "$ORCHESTRATOR"
-echo 'permission-denial contract group 7 passed: orchestrator opt-in'
+grep -Fq 'script: bash scripts/device-lab/android-emulator-probes.sh' "$WORKFLOW"
+grep -Fq 'SONUS_ANDROID_PERMISSION_EVIDENCE_DIR:' "$WORKFLOW"
+grep -Fq 'SONUS_ANDROID_RECORDING_EVIDENCE_DIR:' "$WORKFLOW"
+echo 'permission-denial contract group 7 passed: explicit orchestrators'
 
 echo 'isolated Android permission-denial contract passed: 7 groups'
