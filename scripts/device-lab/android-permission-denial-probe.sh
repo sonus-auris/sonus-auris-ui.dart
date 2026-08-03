@@ -209,6 +209,7 @@ ISOLATION
         --target="$TARGET" \
         --use-application-binary="$APK" \
         --dart-define=SONUS_DEVICE_LAB_PERMISSION_DENIAL=true \
+        --keep-app-running \
         -d "$SERIAL"
     ) 2>&1 | python3 "$EVIDENCE_POLICY" --stream | tee "$drive_log"
   ) &
@@ -235,6 +236,15 @@ ISOLATION
 
   grep -Fq 'SONUS_PERMISSION_DENIAL_RESULT' "$drive_log"
   grep -Fq 'SONUS_PERMISSION_DENIAL_CLEANUP_PASSED' "$drive_log"
+  if ! adb_ shell pm path "$PERMISSION_LAB_PKG" \
+    > "$EVIDENCE_DIR/package-path.txt" 2>&1; then
+    echo "Flutter drive removed the isolated permission-lab package unexpectedly." >&2
+    exit 7
+  fi
+  if ! grep -Fq 'package:' "$EVIDENCE_DIR/package-path.txt"; then
+    echo "The permission-lab package has no installed APK path after Flutter drive." >&2
+    exit 7
+  fi
 
   adb_ shell dumpsys activity services "$PERMISSION_LAB_PKG" \
     > "$EVIDENCE_DIR/services.txt" 2>&1 || true
@@ -243,11 +253,15 @@ ISOLATION
   if grep -Fq 'com.pravera.flutter_foreground_task.service.ForegroundService' \
     "$EVIDENCE_DIR/services.txt"; then
     echo "Denied permission unexpectedly left a microphone foreground service." >&2
-    exit 7
+    exit 8
+  fi
+  if grep -Fq 'No UID for' "$EVIDENCE_DIR/appops-record-audio.txt"; then
+    echo "Permission-lab app-op evidence could not resolve the installed package." >&2
+    exit 8
   fi
   if grep -Eq 'RECORD_AUDIO: (allow|foreground)' "$EVIDENCE_DIR/appops-record-audio.txt"; then
     echo "Denied permission unexpectedly produced an allowed microphone app-op." >&2
-    exit 7
+    exit 8
   fi
 
   cat > "$EVIDENCE_DIR/result.txt" <<RESULT
@@ -262,7 +276,9 @@ record_audio_appop_allowed=false
 raw_audio_exported=false
 probe_audio_artifacts=0
 shared_logcat_cleared=false
+flutter_drive_keep_app_running=true
 permission_lab_package_uninstalled=false
+package_installation_verified_after_drive=true
 RESULT
   echo "ANDROID ISOLATED PERMISSION-DENIAL PROBE PASSED"
   echo "Evidence: $EVIDENCE_DIR"
