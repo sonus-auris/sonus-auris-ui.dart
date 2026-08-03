@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DRIVER_PATH = ROOT / "scripts" / "device-lab" / "flutter-run-driver.py"
+IOS_SCRIPT_PATH = ROOT / "scripts" / "device-lab" / "ios-attached-smoke.sh"
 SPEC = importlib.util.spec_from_file_location("flutter_run_driver", DRIVER_PATH)
 assert SPEC and SPEC.loader
 DRIVER = importlib.util.module_from_spec(SPEC)
@@ -141,6 +142,24 @@ class PhysicalIosDriverTest(unittest.TestCase):
             self.assertNotIn("Alex's iPhone", text)
             self.assertIn("<redacted>", text)
             self.assertIn("<physical-iPhone>", text)
+
+    def test_physical_harness_uses_driver_and_remains_non_destructive(self) -> None:
+        script = IOS_SCRIPT_PATH.read_text(encoding="utf-8")
+        self.assertIn('flutter-run-driver.py', script)
+        self.assertIn('--max-log-bytes 524288', script)
+        self.assertNotIn('subprocess.Popen(', script)
+        self.assertNotIn('return_code not in (0, -15)', script)
+        self.assertIn('app_data_cleared=false', script)
+        self.assertIn('permissions_mutated=false', script)
+        self.assertIn('recording_automated=false', script)
+        for forbidden in (
+            'simctl erase',
+            'simctl uninstall',
+            'device reset',
+            'pm clear',
+            'adb uninstall',
+        ):
+            self.assertNotIn(forbidden, script)
 
 
 if __name__ == "__main__":
