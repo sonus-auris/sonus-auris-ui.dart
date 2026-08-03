@@ -13,6 +13,14 @@ Map<String, Object?> _fixture() {
   return (jsonDecode(raw) as Map).cast<String, Object?>();
 }
 
+Map<Object?, Object?> _fixtureAction(Map<String, Object?> json) {
+  final components = json['components']! as List;
+  final section = components.single as Map;
+  final children = section['children']! as List;
+  final button = children.last as Map;
+  return button['action']! as Map;
+}
+
 void main() {
   test('parses the canonical device-summary fixture', () {
     final pagelet = PageletDocument.fromJson(_fixture());
@@ -27,12 +35,7 @@ void main() {
 
   test('rejects a remotely invented native operation', () {
     final json = _fixture();
-    final components = json['components']! as List;
-    final section = components.single as Map;
-    final children = section['children']! as List;
-    final button = children.last as Map;
-    final action = button['action']! as Map;
-    action['kind'] = 'native.execute-shell';
+    _fixtureAction(json)['kind'] = 'native.execute-shell';
 
     expect(
       () => PageletDocument.fromJson(json),
@@ -74,6 +77,30 @@ void main() {
     await tester.tap(find.text('Manage devices'));
     expect(dispatched?.kind, PageletActionKind.navigate);
     expect(dispatched?.params['route'], 'devices');
+  });
+
+  testWidgets('blocks a compiled action that is not allowed on the surface', (
+    tester,
+  ) async {
+    final json = _fixture();
+    _fixtureAction(json)['kind'] = 'native.open-allowlisted-url';
+    final pagelet = PageletDocument.fromJson(json);
+    PageletAction? dispatched;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PageletRenderer(
+            document: pagelet,
+            onAction: (action) => dispatched = action,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Shared content unavailable.'), findsOneWidget);
+    expect(find.text('Manage devices'), findsNothing);
+    expect(dispatched, isNull);
   });
 
   testWidgets('uses a bundled fallback when remote content is unavailable', (
