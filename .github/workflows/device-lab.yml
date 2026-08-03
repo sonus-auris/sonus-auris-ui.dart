@@ -183,14 +183,14 @@ jobs:
           printf '%s\n' "$launch" > "$SONUS_DEVICE_LAB_DIR/post-update-launch.txt"
           sleep 4
           xcrun simctl terminate "$IOS_SIMULATOR_UDID" "$bundle_id"
-          cat > "$SONUS_DEVICE_LAB_DIR/data-container-preservation.txt" <<EOF
-status=passed
-before_fingerprint=$before_fingerprint
-after_fingerprint=$after_fingerprint
-in_place_reinstall=true
-app_data_cleared=false
-post_update_relaunch=true
-EOF
+          {
+            echo "status=passed"
+            echo "before_fingerprint=$before_fingerprint"
+            echo "after_fingerprint=$after_fingerprint"
+            echo "in_place_reinstall=true"
+            echo "app_data_cleared=false"
+            echo "post_update_relaunch=true"
+          } > "$SONUS_DEVICE_LAB_DIR/data-container-preservation.txt"
 
       - name: Redact and verify evidence policy
         run: python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
