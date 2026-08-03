@@ -45,12 +45,14 @@ grep -Fq 'sonusauris-device-lab' "$GRADLE"
 
 # 3. Dart capture is compile-time gated, validates both live and persisted PCM,
 # and emits only bounded metrics plus proof its WAV/partial files were removed.
+grep -Fq "bool.fromEnvironment(" "$TARGET"
 grep -Fq "'SONUS_DEVICE_LAB_RECORDING_PROBE'" "$TARGET"
 grep -Fq "'SONUS_DEVICE_LAB_REQUIRE_NONZERO_AUDIO'" "$TARGET"
 grep -Fq 'summarizePcm16Signal(bytes, payloadOffset: 44).observed()' "$TARGET"
 grep -Fq 'summarizePcm16Signal(' "$TARGET"
 grep -Fq 'signalRequired=$_requireNonzeroAudio' "$TARGET"
 grep -Fq 'signalObserved=$signalObserved' "$TARGET"
+grep -Fq 'SONUS_DEVICE_LAB_RECORDING_RESULT' "$TARGET"
 grep -Fq 'SONUS_DEVICE_LAB_AUDIO_CLEANUP_PASSED' "$TARGET"
 grep -Fq 'await index.clearAll();' "$TARGET"
 grep -Fq 'minimumNonTrivialSamples = 64' "$SIGNAL_SUPPORT"
@@ -79,14 +81,16 @@ if grep -En 'adb_[[:space:]].*\$PRODUCTION_PKG|adb[[:space:]].*\$PRODUCTION_PKG'
   exit 1
 fi
 
-# 6. The production package and shared device state remain untouched. Clearing
-# is allowed only for the dedicated test package so failed audio cannot persist.
+# 6. Production and shared state remain immutable. Clearing is allowed exactly
+# once in source and only for the dedicated test package; cleanup invokes that
+# helper again by name so an interrupted run cannot retain plaintext audio.
 if grep -En 'adb_?[[:space:]].*uninstall|logcat[[:space:]]+-c' "$PROBE"; then
   echo 'isolated recording probe may not uninstall packages or clear logcat' >&2
   exit 1
 fi
 [[ "$(grep -Ec 'pm clear' "$PROBE")" == "1" ]]
 grep -Fq 'pm clear "$LAB_PKG"' "$PROBE"
+grep -Fq 'clear_isolated_capture_state >/dev/null 2>&1 || true' "$PROBE"
 grep -Fq 'isolated_package_data_cleared_before_probe=' "$PROBE"
 grep -Fq 'isolated_package_data_cleared_after_probe=' "$PROBE"
 grep -Fq 'raw_audio_retained_on_device=false' "$PROBE"
@@ -99,15 +103,31 @@ if grep -Fq 'tail -n 160' "$PROBE"; then
   exit 1
 fi
 
-# 7. Real background behavior is host-driven and the app-op must be actively
-# running while the isolated recorder is behind Home.
+# 7. Real background behavior is host-driven and every asynchronous/pipeline
+# failure propagates. The active RECORD_AUDIO app-op, service, process, and
+# notification must all survive Home before the activity is foregrounded again.
 grep -Fq 'SONUS_DEVICE_LAB_BACKGROUND_READY' "$PROBE"
 grep -Fq 'input keyevent KEYCODE_HOME' "$PROBE"
 grep -Fq 'flutter_foreground_task.service.ForegroundService' "$PROBE"
-grep -Fq 'cmd appops get "$LAB_PKG" RECORD_AUDIO' "$PROBE"
-grep -Fq "RECORD_AUDIO: (allow|foreground).*\\(running\\)" "$PROBE"
+grep -Fq 'adb_ shell appops get "$LAB_PKG" RECORD_AUDIO' "$PROBE"
+grep -Fq 'RECORD_AUDIO: (allow|foreground).*\(running\)' "$PROBE"
 grep -Fq 'record_audio_appop_running_while_backgrounded=true' "$PROBE"
 grep -Fq 'Sonus Auris is recording' "$PROBE"
+grep -Fq 'persistent_notification_verified=true' "$PROBE"
+grep -Fq 'wait "$PROBE_PID" || background_status=$?' "$PROBE"
+grep -Fq 'if [[ "$background_status" != "0" ]]' "$PROBE"
+grep -Fq 'pipeline_status=("${PIPESTATUS[@]}")' "$PROBE"
+grep -Fq 'stream_status="${pipeline_status[1]}"' "$PROBE"
+grep -Fq 'tee_status="${pipeline_status[2]}"' "$PROBE"
+main_line="$(grep -n '^main() {' "$PROBE" | cut -d: -f1)"
+[[ -n "$main_line" ]]
+sed -n "$((main_line + 1)),$((main_line + 8))p" "$PROBE" |
+  grep -Fq 'set -euo pipefail'
+grep -Fq '/NotificationRecord\(/ {' "$PROBE"
+if grep -Fq '/^  NotificationRecord\(/' "$PROBE"; then
+  echo 'notification extraction must not depend on Android indentation' >&2
+  exit 1
+fi
 
 # 8. Physical targets require sustained non-zero PCM in both live and persisted
 # buffers; hosted emulators exercise lifecycle/cleanup without making that claim.
