@@ -308,6 +308,7 @@ ISOLATION
         --target="$TARGET" \
         --use-application-binary="$APK" \
         --dart-define=SONUS_DEVICE_LAB_RECORDING_PROBE=true \
+        --keep-app-running \
         -d "$SERIAL"
     ) 2>&1 | python3 "$EVIDENCE_POLICY" --stream | tee "$drive_log"
   ) &
@@ -342,13 +343,21 @@ ISOLATION
 
   grep -Fq 'SONUS_DEVICE_LAB_RECORDING_RESULT' "$drive_log"
   grep -Fq 'SONUS_DEVICE_LAB_AUDIO_CLEANUP_PASSED' "$drive_log"
+  if ! adb_ shell pm path "$LAB_PKG" > "$EVIDENCE_DIR/package-path.txt" 2>&1; then
+    echo "Flutter drive removed the isolated recording package unexpectedly." >&2
+    exit 7
+  fi
+  if ! grep -Fq 'package:' "$EVIDENCE_DIR/package-path.txt"; then
+    echo "The isolated recording package has no installed APK path after Flutter drive." >&2
+    exit 7
+  fi
   if recent_logcat | grep -Eq 'FATAL EXCEPTION|am_crash|Process .*device_lab.* has died'; then
     recent_logcat |
       grep -E "$LAB_PKG|FATAL EXCEPTION|AndroidRuntime|am_crash" |
       python3 "$ROOT/scripts/device-lab/bounded-log.py" --max-bytes 524288 \
       > "$EVIDENCE_DIR/crash-focused-logcat.txt" || true
     echo "Fatal Android evidence was observed during the isolated probe." >&2
-    exit 7
+    exit 8
   fi
 
   cat > "$EVIDENCE_DIR/result.txt" <<RESULT
@@ -362,7 +371,9 @@ persistent_notification_verified=true
 shared_logcat_cleared=false
 raw_audio_exported=false
 probe_audio_cleanup_passed=true
+flutter_drive_keep_app_running=true
 device_lab_package_uninstalled=false
+package_installation_verified_after_drive=true
 RESULT
   echo "ANDROID ISOLATED RECORDING PROBE PASSED"
   echo "Evidence: $EVIDENCE_DIR"
