@@ -1,0 +1,33 @@
+name: Android device-lab phase evidence
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/device-lab/android-attached-smoke.sh
+      - tests/ci/android-phase-evidence.test.py
+      - .github/workflows/android-phase-evidence.yml
+  pull_request:
+    paths:
+      - scripts/device-lab/android-attached-smoke.sh
+      - tests/ci/android-phase-evidence.test.py
+      - .github/workflows/android-phase-evidence.yml
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Phase-specific evidence contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate Python and shell contracts
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tests/ci/android-phase-evidence.test.py
+          python3 tests/ci/android-phase-evidence.test.py
