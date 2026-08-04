@@ -16,7 +16,7 @@
 #
 # Usage: permission-smoke.sh <apk-path> [adb-serial]
 #   apk-path   : built debug/release APK to install
-#   adb-serial : emulator serial (default: first attached device)
+#   adb-serial : authorized emulator serial; otherwise exactly one emulator is auto-selected
 set -euo pipefail
 
 APK="${1:?usage: permission-smoke.sh <apk-path> [adb-serial]}"
@@ -31,7 +31,10 @@ if [[ -n "$EVIDENCE_DIR" ]]; then
   exec > >(tee "$EVIDENCE_DIR/run.log") 2>&1
 fi
 
-adb_() { if [[ -n "$SERIAL" ]]; then adb -s "$SERIAL" "$@"; else adb "$@"; fi; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SERIAL="$(bash "$SCRIPT_DIR/resolve-emulator-serial.sh" "$SERIAL")"
+
+adb_() { adb -s "$SERIAL" "$@"; }
 
 echo "== waiting for device + full boot =="
 adb_ wait-for-device

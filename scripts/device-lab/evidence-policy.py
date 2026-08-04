@@ -3,7 +3,7 @@
 
 The policy is intentionally dependency-light so it can run on a developer Mac
 and in GitHub Actions. It never follows symlinks, never reads raw audio, waits
-for log writers to finish, and only rewrites small UTF-8 text files when
+for evidence writers to finish, and only rewrites small UTF-8 text files when
 --redact is explicitly selected.
 """
 
@@ -38,6 +38,16 @@ SENSITIVE_SUFFIXES = {
     ".pcm",
     ".wav",
 }
+SECRET_KEY = (
+    r"(?:access[_-]?token|refresh[_-]?token|id[_-]?token|provider[_-]?token|"
+    r"token|api[_-]?key|anon[_-]?key|code[_-]?verifier|"
+    r"authorization[_-]?code|auth[_-]?code|otp)"
+)
+STRONG_SPACE_KEY = (
+    r"(?:access[_-]?token|refresh[_-]?token|id[_-]?token|provider[_-]?token|"
+    r"api[_-]?key|anon[_-]?key|code[_-]?verifier|"
+    r"authorization[_-]?code|auth[_-]?code)"
+)
 
 
 @dataclass(frozen=True)
@@ -54,12 +64,14 @@ REDACTIONS = (
         "/Users/<redacted>",
     ),
     Redaction(
-        "uuid",
-        re.compile(
-            r"\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-5][0-9A-Fa-f]{3}-"
-            r"[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}\b"
-        ),
-        "<redacted-uuid>",
+        "windows-user-path",
+        re.compile(r"(?i)\\Users\\(?!<redacted>)[^\\\s]+"),
+        r"\\Users\\<redacted>",
+    ),
+    Redaction(
+        "url-basic-auth",
+        re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^/@\s:]+:[^/@\s]+@"),
+        r"\1<redacted-userinfo>@",
     ),
     Redaction(
         "bearer-token",
@@ -76,25 +88,74 @@ REDACTIONS = (
     Redaction(
         "auth-parameter",
         re.compile(
-            r"(?i)(access_token|refresh_token|id_token|provider_token|token|apikey|"
-            r"code_verifier|authorization_code|auth_code|otp)=((?!<redacted>)[^&\s]+)"
+            rf"(?ix)(?<![A-Za-z0-9_])"
+            rf"([\"']?{SECRET_KEY}[\"']?\s*(?:=|:)\s*[\"']?)"
+            rf"((?!<redacted>)[^&;,}}\s\"']+)"
         ),
-        r"\1=<redacted>",
+        r"\1<redacted>",
+    ),
+    Redaction(
+        "encoded-auth-parameter",
+        re.compile(
+            rf"(?ix)({SECRET_KEY}%3[dD])"
+            rf"((?!<redacted>)(?:(?!%26|%3[bB])(?:%[0-9a-f]{{2}}|[^%&\s]))+)"
+        ),
+        r"\1<redacted>",
+    ),
+    Redaction(
+        "space-auth-parameter",
+        re.compile(
+            rf"(?ix)(?<![A-Za-z0-9_])({STRONG_SPACE_KEY}\s+)"
+            rf"((?!<redacted>)[A-Za-z0-9._~+/%=-]{{4,}})"
+        ),
+        r"\1<redacted>",
+    ),
+    Redaction(
+        "space-otp",
+        re.compile(r"(?i)(?<![A-Za-z0-9_])(\botp\s+)(\d{4,10})"),
+        r"\1<redacted>",
     ),
     Redaction(
         "email",
-        re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+        re.compile(
+            r"(?i)(?![A-Za-z0-9._%+-]+@\d+x\.(?:png|jpe?g|gif|webp|svg)\b)"
+            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+        ),
         "<redacted-email>",
     ),
     Redaction(
-        "vm-service-http",
-        re.compile(r"http://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+"),
-        "http://127.0.0.1:<port>/<redacted>",
+        "phone",
+        re.compile(
+            r"(?i)(\b(?:phone|phone[_-]?number|mobile|msisdn)\s*"
+            r"(?:=|:)\s*)(?:\+?\d[\d .()\-]{6,}\d)"
+        ),
+        r"\1<redacted-phone>",
     ),
     Redaction(
-        "vm-service-ws",
-        re.compile(r"ws://127\.0\.0\.1:\d+/[A-Za-z0-9_=/.-]+"),
-        "ws://127.0.0.1:<port>/<redacted>",
+        "uuid",
+        re.compile(
+            r"\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+            r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b"
+        ),
+        "<redacted-uuid>",
+    ),
+    Redaction(
+        "ios-device-id",
+        re.compile(r"\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}\b"),
+        "<redacted-ios-device>",
+    ),
+    Redaction(
+        "device-id",
+        re.compile(
+            r"(?i)(\b(?:device|device[_-]?id|serial|udid)\s*(?:=|:)\s*)"
+            r"[A-Za-z0-9._:-]{8,}"
+        ),
+        r"\1<redacted-device>",
+    ),
+    Redaction(
+        "vm-service",
+        re.compile(r"(?i)\b((?:https?|wss?)://127\.0\.0\.1):\d+/[^\s]*"),
+        r"\1:<port>/<redacted>",
     ),
     Redaction(
         "github-token",
@@ -115,12 +176,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--redact",
         action="store_true",
-        help="atomically redact recognized secrets, identifiers, and local paths",
+        help="atomically redact recognized secrets and local account paths",
     )
     parser.add_argument(
         "--self-test",
         action="store_true",
         help="run dependency-free policy regression tests",
+    )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="sanitize stdin to stdout for live evidence capture",
     )
     return parser.parse_args(argv)
 
@@ -145,18 +211,15 @@ def wait_for_quiescent_file(path: Path) -> None:
         else:
             raise ValueError(f"evidence log still has an open writer: {path.name}")
 
-    # Bash process substitutions can outlive the parent shell briefly. Requiring
-    # a stable size/mtime window prevents an atomic redaction from racing a late
-    # `tee` flush even where `lsof` is unavailable.
     minimum_observation = 0.8 if path.name in LIVE_LOG_NAMES else 0.2
     stable_since: float | None = None
     previous: tuple[int, int] | None = None
     while time.monotonic() < deadline:
         try:
-            stat = path.stat()
+            metadata = path.stat()
         except OSError as error:
             raise ValueError(f"cannot stat evidence file {path}: {error}") from error
-        signature = (stat.st_size, stat.st_mtime_ns)
+        signature = (metadata.st_size, metadata.st_mtime_ns)
         now = time.monotonic()
         if signature == previous:
             if stable_since is None:
@@ -258,7 +321,6 @@ def inspect_evidence(root: Path, redact: bool) -> tuple[int, int]:
         "writers_quiescent=true\n"
         "raw_audio_present=false\n"
         "secret_patterns_present=false\n"
-        "raw_identifiers_present=false\n"
         "symlinks_present=false\n",
         encoding="utf-8",
     )
@@ -266,10 +328,63 @@ def inspect_evidence(root: Path, redact: bool) -> tuple[int, int]:
 
 
 def run_self_test() -> None:
+    secrets = {
+        "query": "access_token=SYNTHETIC_SECRET&otp=654321",
+        "json": '{"access_token":"SYNTHETIC_SECRET","otp":"654321"}',
+        "colon": "access_token: SYNTHETIC_SECRET; otp: 654321",
+        "space": "code_verifier SYNTHETIC_SECRET",
+        "cookie": "Set-Cookie: refresh_token=SYNTHETIC_SECRET; HttpOnly",
+        "fragment": (
+            "sonusauris://callback#access_token=SYNTHETIC_SECRET"
+            "&id_token=SYNTHETIC_ID"
+        ),
+        "bearer": "Authorization: Bearer SYNTHETIC.bearer-token_123",
+        "basic-auth": "https://synthetic-user:synthetic-pass@example.invalid/private",
+        "email": "account=synthetic@example.invalid",
+        "phone": "phone=+1 (202) 555-0199",
+        "home": "/Users/synthetic-user/codes/sonus",
+        "uuid": "11111111-2222-3333-4444-555555555555",
+        "ios-device": "device=00008120-001234567890001E",
+        "encoded": "access_token%3DSYNTHETIC_SECRET%26otp%3D654321",
+        "encoded-value": (
+            "access_token%3DSYNTHETIC_HEAD%2FLEAK_MARKER%3D%3D"
+            "%26state%3Dsafe"
+        ),
+        "jwt": "eyJabcdefgh.ijklmnop.qrstuvwx",
+        "loopback": "ws://127.0.0.1:54321/secret/path?token=SYNTHETIC_SECRET",
+        "github": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
+        "openai": "sk-abcdefghijklmnopqrstuvwxyz1234567890",
+    }
+    forbidden = (
+        "SYNTHETIC_SECRET",
+        "SYNTHETIC_ID",
+        "654321",
+        "SYNTHETIC_HEAD",
+        "LEAK_MARKER",
+        "synthetic-user",
+        "synthetic-pass",
+        "synthetic@example.invalid",
+        "202) 555",
+        "11111111-2222",
+        "00008120-001234567890001E",
+        "eyJabcdefgh",
+        "/secret/path",
+        "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
+        "sk-abcdefghijklmnopqrstuvwxyz1234567890",
+    )
+    ordinary = (
+        "token count: 42",
+        "code: 404",
+        "otp retries remaining: 3",
+        "AppIcon60x60@2x.png",
+    )
+
     with tempfile.TemporaryDirectory(prefix="sonus-evidence-policy-") as temp:
         root = Path(temp)
-        fixture = root / "run.log"
-        fixture.touch()
+        fixture = root / "fixture.txt"
+        run_log = root / "run.log"
+        fixture.write_text("\n".join(secrets.values()) + "\n", encoding="utf-8")
+        run_log.touch()
         writer = subprocess.Popen(
             [
                 sys.executable,
@@ -278,26 +393,24 @@ def run_self_test() -> None:
                     "import pathlib,sys,time; "
                     "p=pathlib.Path(sys.argv[1]); "
                     "f=p.open('w', encoding='utf-8'); "
-                    "time.sleep(0.5); "
-                    "f.write('/Users/alex/work account@example.com Bearer abc.def.ghi '"
-                    "'access_token=secret http://127.0.0.1:12345/abc=/ '"
-                    "'ws://127.0.0.1:12345/abc=/ '"
-                    "'9E2C2CF0-7DD4-4B9D-B6CE-63C9E42B95A7\\n'); "
+                    "time.sleep(0.35); "
+                    "f.write('CoreSimulator/Devices/"
+                    "11111111-2222-3333-4444-555555555555/data\\n'); "
                     "f.flush(); f.close()"
                 ),
-                str(fixture),
+                str(run_log),
             ]
         )
-        time.sleep(0.1)
+        time.sleep(0.05)
         inspect_evidence(root, redact=True)
         assert writer.wait(timeout=5) == 0
-        clean = fixture.read_text(encoding="utf-8")
-        assert "/Users/alex" not in clean
-        assert "account@example.com" not in clean
-        assert "access_token=secret" not in clean
-        assert "127.0.0.1:12345/abc" not in clean
-        assert "9E2C2CF0-7DD4-4B9D-B6CE-63C9E42B95A7" not in clean
-        assert "<redacted-uuid>" in clean
+        clean = fixture.read_text(encoding="utf-8") + run_log.read_text(encoding="utf-8")
+        for marker in forbidden:
+            assert marker not in clean, marker
+        for line in ordinary:
+            sanitized, _ = sanitize_text(line)
+            assert sanitized == line, (line, sanitized)
+        assert remaining_violations(clean) == set()
 
     with tempfile.TemporaryDirectory(prefix="sonus-evidence-policy-audio-") as temp:
         root = Path(temp)
@@ -319,7 +432,22 @@ def run_self_test() -> None:
         else:
             raise AssertionError("unredacted secret unexpectedly passed verify-only mode")
 
-    print("Sonus Auris evidence policy self-test passed")
+    with tempfile.TemporaryDirectory(prefix="sonus-evidence-policy-symlink-") as temp:
+        root = Path(temp)
+        target = root / "target.txt"
+        target.write_text("safe\n", encoding="utf-8")
+        (root / "link.txt").symlink_to(target.name)
+        try:
+            inspect_evidence(root, redact=True)
+        except ValueError as error:
+            assert "symlink evidence is forbidden" in str(error)
+        else:
+            raise AssertionError("symlink unexpectedly passed evidence policy")
+
+    print(
+        "Sonus Auris evidence policy self-test passed: "
+        f"{len(secrets)} secret cases + {len(ordinary)} preservation cases"
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -327,8 +455,16 @@ def main(argv: list[str]) -> int:
     if args.self_test:
         run_self_test()
         return 0
+    if args.stream:
+        if args.evidence_dir is not None or args.redact:
+            raise ValueError("--stream cannot be combined with evidence_dir or --redact")
+        for line in sys.stdin:
+            clean, _ = sanitize_text(line)
+            sys.stdout.write(clean)
+            sys.stdout.flush()
+        return 0
     if args.evidence_dir is None:
-        raise ValueError("evidence_dir is required unless --self-test is used")
+        raise ValueError("evidence_dir is required unless --self-test or --stream is used")
     scanned, redacted = inspect_evidence(args.evidence_dir, args.redact)
     print(f"Evidence policy passed: scanned={scanned} redacted={redacted}")
     return 0
