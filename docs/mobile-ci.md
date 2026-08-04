@@ -1,13 +1,13 @@
 # Mobile and desktop CI/release plan
 
-Last reviewed: July 30, 2026.
+Last reviewed: August 2, 2026.
 
 ## Runner matrix
 
 | Target | Runner | Automatic evidence | Protected release path |
 |---|---|---|---|
 | Android | GitHub Linux plus the Kubernetes build server | analyze, unit tests, emulator tests, debug APK build | signed AAB for Play, signature-verified signed APK for physical-device acceptance, optional Play Developer API commit |
-| iOS | GitHub-hosted macOS 15 | unsigned release compile using the current Xcode/iOS SDK | signed IPA, optional App Store Connect upload |
+| iOS | GitHub-hosted macOS 15 | unsigned release compile plus non-destructive iOS Simulator install, launch, crash-log, and cold-relaunch smoke | signed IPA, optional App Store Connect upload |
 | Linux desktop | GitHub Linux plus an on-cluster fixed build profile | release bundle from `lib/main_desktop.dart` | `.deb` installer |
 | macOS desktop | GitHub-hosted macOS 15 | unsigned `.app` from `lib/main_desktop.dart` | Developer ID signed, notarized, stapled `.dmg` |
 | Windows desktop | GitHub-hosted Windows | unsigned release directory from `lib/main_desktop.dart` | Authenticode-signed Inno Setup `.exe` |
@@ -17,6 +17,16 @@ licensed and available only on macOS; Windows desktop must be compiled on
 Windows. GitHub-hosted native runners provide reproducible clean machines now;
 dedicated native self-hosted workers can replace them later without changing the
 workflow contract.
+
+Hosted CI cannot truthfully prove behavior on the operator's microphones,
+physical iPhone, USB Android handset, macOS permission database, Bluetooth
+accessories, battery, thermal envelope, or real app data. The complementary,
+non-destructive operator workflow is documented in
+[`docs/end-device-testing.md`](end-device-testing.md) and implemented under
+`scripts/device-lab/`. Its one-command Mac orchestrator preserves app/device data,
+does not mutate permissions, and emits a separate sanitized evidence directory
+for every available target. Physical-device evidence remains pending until that
+workflow actually runs on the MacBook that owns the paired/attached devices.
 
 ## Protected mobile release inputs
 
@@ -107,8 +117,8 @@ metadata or an HTTP redirect, but it must not proxy public installer bytes.
 
 ## Release acceptance sequence
 
-1. Merge a green version bump to `main` and confirm unit, emulator, unsigned
-   iOS, desktop, and release-tooling jobs.
+1. Merge a green version bump to `main` and confirm unit, emulator, iOS
+   Simulator, unsigned iOS, desktop, and release-tooling jobs.
 2. Confirm the Argo-managed Kubernetes backend is ready and production Supabase
    passes auth/RLS isolation smoke tests.
 3. Dispatch Android with `publish_to_play=false`. Download the complete protected
