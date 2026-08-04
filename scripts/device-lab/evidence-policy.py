@@ -96,7 +96,10 @@ REDACTIONS = (
     ),
     Redaction(
         "encoded-auth-parameter",
-        re.compile(rf"(?ix)({SECRET_KEY}%3[dD])((?!<redacted>)[^%&\s]+)"),
+        re.compile(
+            rf"(?ix)({SECRET_KEY}%3[dD])"
+            rf"((?!<redacted>)(?:(?!%26|%3[bB])(?:%[0-9a-f]{{2}}|[^%&\s]))+)"
+        ),
         r"\1<redacted>",
     ),
     Redaction(
@@ -343,6 +346,10 @@ def run_self_test() -> None:
         "uuid": "11111111-2222-3333-4444-555555555555",
         "ios-device": "device=00008120-001234567890001E",
         "encoded": "access_token%3DSYNTHETIC_SECRET%26otp%3D654321",
+        "encoded-value": (
+            "access_token%3DSYNTHETIC_HEAD%2FLEAK_MARKER%3D%3D"
+            "%26state%3Dsafe"
+        ),
         "jwt": "eyJabcdefgh.ijklmnop.qrstuvwx",
         "loopback": "ws://127.0.0.1:54321/secret/path?token=SYNTHETIC_SECRET",
         "github": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
@@ -352,6 +359,8 @@ def run_self_test() -> None:
         "SYNTHETIC_SECRET",
         "SYNTHETIC_ID",
         "654321",
+        "SYNTHETIC_HEAD",
+        "LEAK_MARKER",
         "synthetic-user",
         "synthetic-pass",
         "synthetic@example.invalid",
