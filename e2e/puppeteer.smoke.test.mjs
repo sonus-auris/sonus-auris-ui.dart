@@ -78,7 +78,9 @@ test('[puppeteer] the passwordless sign-in screen renders', async () => {
   );
   assert.match(text, /Sign in/i);
   assert.match(text, /Email me a code/i);
-  assert.match(text, /magic link/i);
+  // The email-link fallback is advertised on this first step as "The email
+  // link is a fallback"; the words "magic link" only appear on the code step.
+  assert.match(text, /email link is a fallback/i);
   assert.match(text, /new accounts are created automatically/i);
 });
 

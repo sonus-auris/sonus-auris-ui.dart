@@ -53,8 +53,16 @@ class _SonusConsoleAppState extends State<SonusConsoleApp> {
     }
   }
 
+  /// How many delivered callback URIs the replay guard remembers. Deep links
+  /// arrive over an OS channel any local application can write to, so the set
+  /// is bounded rather than grown once per delivered URI.
+  static const int _maxRememberedAuthLinks = 32;
+
   Future<void> _acceptAppLink(Uri link) async {
     if (!_handledAuthLinks.add(link.toString())) return;
+    while (_handledAuthLinks.length > _maxRememberedAuthLinks) {
+      _handledAuthLinks.remove(_handledAuthLinks.first); // oldest first
+    }
     final accepted = await _controller.acceptMagicLink(link);
     if (accepted) clearBrowserAuthFragment();
   }

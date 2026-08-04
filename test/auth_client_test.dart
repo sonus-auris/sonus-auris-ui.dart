@@ -285,26 +285,109 @@ void main() {
   );
 
   test('consumeMagicLink accepts only the configured callback URI', () async {
-    final encoded = jsonDecode(sessionBody()) as Map<String, Object?>;
-    final callback = Uri.parse(
-      'https://console.example/auth/callback'
-      '#access_token=${encoded['access_token']}'
-      '&refresh_token=${encoded['refresh_token']}'
-      '&expires_in=3600',
-    );
+    var called = false;
     final client = AuthClient(
       config: _config,
-      httpClient: MockClient((_) async => http.Response('{}', 500)),
+      httpClient: MockClient((req) async {
+        called = true;
+        expect(req.url.path, '/auth/v1/verify');
+        return http.Response(sessionBody(), 200);
+      }),
     );
 
-    final session = await client.consumeMagicLink(callback);
+    final session = await client.consumeMagicLink(
+      Uri.parse(
+        'https://console.example/auth/callback?token_hash=server-verified',
+      ),
+    );
+    expect(called, isTrue);
     expect(session.userId, 'user-1');
     expect(session.refreshToken, 'refresh-1');
-    expect(
-      () => client.consumeMagicLink(callback.replace(scheme: 'another-app')),
-      throwsA(isA<FormatException>()),
-    );
+
+    for (final wrongTarget in [
+      'another-app://console.example/auth/callback?token_hash=t',
+      'https://evil.example/auth/callback?token_hash=t',
+      'https://console.example/auth/other?token_hash=t',
+      'https://console.example:8443/auth/callback?token_hash=t',
+    ]) {
+      expect(
+        () => client.consumeMagicLink(Uri.parse(wrongTarget)),
+        throwsA(isA<FormatException>()),
+        reason: '$wrongTarget must not be treated as our callback',
+      );
+    }
   });
+
+  test(
+    'consumeMagicLink refuses URL bearer tokens (no implicit flow)',
+    () async {
+      final encoded = jsonDecode(sessionBody()) as Map<String, Object?>;
+      var called = false;
+      final client = AuthClient(
+        config: _config,
+        httpClient: MockClient((_) async {
+          called = true;
+          return http.Response(sessionBody(), 200);
+        }),
+      );
+
+      // A session handed to us in the URL is bound to no PKCE verifier this
+      // client generated, so it must never become a signed-in session.
+      for (final implicit in [
+        'https://console.example/auth/callback'
+            '#access_token=${encoded['access_token']}'
+            '&refresh_token=${encoded['refresh_token']}&expires_in=3600',
+        'https://console.example/auth/callback'
+            '?access_token=${encoded['access_token']}&refresh_token=refresh-1',
+        'https://console.example/auth/callback?refresh_token=refresh-1',
+      ]) {
+        await expectLater(
+          client.consumeMagicLink(Uri.parse(implicit)),
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('older sign-in link'),
+            ),
+          ),
+        );
+      }
+      expect(
+        called,
+        isFalse,
+        reason: 'no token should be exchanged for an implicit link',
+      );
+    },
+  );
+
+  test(
+    'consumeMagicLink fails closed when no redirect is allow-listed',
+    () async {
+      var called = false;
+      final client = AuthClient(
+        // A scheme outside the allowlist makes `magicLinkRedirectUri` null; the
+        // weaker `ConsoleConfig.authRedirectUri` must not be used as a fallback.
+        config: const ConsoleConfig(
+          supabaseUrl: 'https://project.supabase.co',
+          supabaseAnonKey: 'sb_publishable_test',
+          authRedirectUrl: 'ftp://console.example/auth/callback',
+        ),
+        httpClient: MockClient((_) async {
+          called = true;
+          return http.Response(sessionBody(), 200);
+        }),
+      );
+
+      expect(client.magicLinkRedirectUri, isNull);
+      await expectLater(
+        client.consumeMagicLink(
+          Uri.parse('ftp://console.example/auth/callback?token_hash=t'),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      expect(called, isFalse);
+    },
+  );
 
   test('refreshSession uses the refresh_token grant', () async {
     final client = AuthClient(
