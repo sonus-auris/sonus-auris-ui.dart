@@ -2,7 +2,6 @@ name: DEN-1398 Android crash-scope finalizer
 
 on:
   pull_request:
-    branches: [main]
     types: [opened, synchronize, reopened]
     paths:
       - .github/workflows/den-1398-android-crash-scope-finalize.yml
