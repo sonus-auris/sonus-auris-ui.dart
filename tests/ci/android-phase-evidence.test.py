@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -31,6 +33,23 @@ def function_body(source: str, name: str) -> str:
     return match.group("body")
 
 
+def crash_detected(function_body_text: str, evidence: str) -> bool:
+    with tempfile.TemporaryDirectory(prefix="sonus-android-crash-scope-") as temp:
+        root = Path(temp)
+        (root / "test-crash-focused-logcat.txt").write_text(
+            evidence, encoding="utf-8"
+        )
+        script = f"""set -euo pipefail
+PKG=com.ores.sonus_auris
+EVIDENCE_DIR={shlex.quote(str(root))}
+fatal_crash_in_phase() {{
+{function_body_text}
+}}
+fatal_crash_in_phase test
+"""
+        return subprocess.run(["bash", "-c", script], check=False).returncode == 0
+
+
 def main() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
@@ -48,7 +67,33 @@ def main() -> None:
 
     fatal = function_body(source, "fatal_crash_in_phase")
     assert 'local phase="${1:?evidence phase is required}"' in fatal
+    assert 'local package_regex="${PKG//./' in fatal
     assert '$EVIDENCE_DIR/$phase-crash-focused-logcat.txt' in fatal
+    assert "FATAL EXCEPTION|" not in fatal
+    assert "am_crash.*$package_regex" in fatal
+    assert "Process:[[:space:]]*$package_regex" in fatal
+
+    unrelated = """AndroidRuntime: FATAL EXCEPTION: main
+AndroidRuntime: Process: com.example.other, PID: 7
+am_crash: [7,0,com.example.other,other]
+"""
+    assert not crash_detected(fatal, unrelated)
+    assert crash_detected(
+        fatal,
+        "AndroidRuntime: Process: com.ores.sonus_auris, PID: 8\n",
+    )
+    assert crash_detected(
+        fatal,
+        "am_crash: [8,0,com.ores.sonus_auris,main]\n",
+    )
+    assert crash_detected(
+        fatal,
+        "ActivityManager: Process com.ores.sonus_auris (pid 9) has died: fg TOP\n",
+    )
+    assert not crash_detected(
+        fatal,
+        "AndroidRuntime: Process: comXoresXsonus_auris, PID: 10\n",
+    )
 
     capture_calls = re.findall(
         r"(?m)^\s*capture_crash_evidence(?:\s+([a-z][a-z0-9-]*))?\s*$",

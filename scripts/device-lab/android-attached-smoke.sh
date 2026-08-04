@@ -333,7 +333,9 @@ capture_crash_evidence() {
 
 fatal_crash_in_phase() {
   local phase="${1:?evidence phase is required}"
-  grep -Eq "FATAL EXCEPTION|am_crash|Process $PKG .* has died" \
+  local package_regex="${PKG//./\\.}"
+  grep -Eq \
+    "Process:[[:space:]]*$package_regex([,[:space:]]|$)|am_crash.*$package_regex|Process[[:space:]]+$package_regex([[:space:]]+\([^)]*\))?[[:space:]]+has died" \
     "$EVIDENCE_DIR/$phase-crash-focused-logcat.txt"
 }
 
