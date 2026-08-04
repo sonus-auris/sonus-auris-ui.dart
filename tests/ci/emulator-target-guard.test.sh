@@ -10,8 +10,10 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/adb" <<'ADB'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%q ' "$@" >> "${FAKE_ADB_CALLS:?}"
-printf '\n' >> "$FAKE_ADB_CALLS"
+for log in "${FAKE_ADB_CALLS:?}" "${FAKE_ADB_ALL_CALLS:?}"; do
+  printf '%q ' "$@" >> "$log"
+  printf '\n' >> "$log"
+done
 if [[ "${1:-}" == "devices" ]]; then
   printf 'List of devices attached\n'
   cat "${FAKE_ADB_DEVICES:?}"
@@ -44,6 +46,8 @@ export PATH="$TMP/bin:$PATH"
 export FAKE_ADB_DEVICES="$TMP/devices"
 export FAKE_ADB_QEMU="$TMP/qemu"
 export FAKE_ADB_CALLS="$TMP/calls"
+export FAKE_ADB_ALL_CALLS="$TMP/all-calls"
+: > "$FAKE_ADB_ALL_CALLS"
 
 reset_fake() {
   : > "$FAKE_ADB_DEVICES"
@@ -116,11 +120,22 @@ printf '10.0.0.8:5555\tdevice\n' > "$FAKE_ADB_DEVICES"
 printf '10.0.0.8:5555\t1\n' > "$FAKE_ADB_QEMU"
 expect_success 10.0.0.8:5555 10.0.0.8:5555
 
-# The resolver may only enumerate, read state, and read ro.kernel.qemu.
-if grep -Eq '(^| )(uninstall|install|pm|am|logcat|shell input|shell rm)( |$)' "$FAKE_ADB_CALLS"; then
-  echo "target resolver issued a destructive or mutating adb command" >&2
-  cat "$FAKE_ADB_CALLS" >&2
+# Four auto-selection cases must remain in the cumulative audit after per-case
+# fixture resets. This prevents an earlier mutating call from being erased by a
+# later explicit-target case.
+AUTO_DISCOVERY_CALLS="$(grep -c '^devices ' "$FAKE_ADB_ALL_CALLS" || true)"
+if [[ "$AUTO_DISCOVERY_CALLS" != "4" ]]; then
+  echo "expected four cumulative adb discovery calls, got $AUTO_DISCOVERY_CALLS" >&2
+  cat "$FAKE_ADB_ALL_CALLS" >&2
   exit 1
 fi
 
-echo "emulator target guard tests passed: 6 cases"
+# Across every case, the resolver may only enumerate, read state, and read
+# ro.kernel.qemu. Never audit only the most recently reset fixture.
+if grep -Eq '(^| )(uninstall|install|pm|am|logcat|shell input|shell rm)( |$)' "$FAKE_ADB_ALL_CALLS"; then
+  echo "target resolver issued a destructive or mutating adb command" >&2
+  cat "$FAKE_ADB_ALL_CALLS" >&2
+  exit 1
+fi
+
+echo "emulator target guard tests passed: 6 cases with cumulative adb audit"
