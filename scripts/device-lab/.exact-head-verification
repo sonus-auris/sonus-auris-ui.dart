@@ -1,0 +1,1 @@
+This transient marker exists only to trigger exact-head verification and is deleted by the immediately following commit.
