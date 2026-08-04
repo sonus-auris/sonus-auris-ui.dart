@@ -104,7 +104,7 @@ jobs:
           '''
           new_assertions = '''    fatal = function_body(source, "fatal_crash_in_phase")
               assert 'local phase="${1:?evidence phase is required}"' in fatal
-              assert 'local package_regex="${PKG//./\\\\.}"' in fatal
+              assert 'local package_regex="${PKG//./' in fatal
               assert '$EVIDENCE_DIR/$phase-crash-focused-logcat.txt' in fatal
               assert "FATAL EXCEPTION|" not in fatal
               assert "am_crash.*$package_regex" in fatal
