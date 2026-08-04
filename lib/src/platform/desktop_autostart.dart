@@ -7,6 +7,16 @@ import 'package:flutter/services.dart';
 import 'package:launch_at_startup/launch_at_startup.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Compile-time safety boundary for packaged runtime probes.
+///
+/// The device-lab app is launched with an isolated bundle identifier and this
+/// flag set. It must never inspect, migrate, disable, or register the operator's
+/// real Sonus Auris login item while testing launch/Quit behavior.
+const bool kSonusDeviceLabNoSideEffects = bool.fromEnvironment(
+  'SONUS_DEVICE_LAB_NO_SIDE_EFFECTS',
+  defaultValue: false,
+);
+
 /// Registers the installed desktop app as a login item.
 ///
 /// macOS release builds use `SMAppService.mainApp`, which launches the signed
@@ -19,9 +29,7 @@ class DesktopAutostart {
       'desktop.autostart.macos.smappservice.migrated.v1';
   static const _macLegacyEnabledKey =
       'desktop.autostart.macos.legacy-enabled.v1';
-  static const _macChannel = MethodChannel(
-    'sonus_auris/desktop_autostart',
-  );
+  static const _macChannel = MethodChannel('sonus_auris/desktop_autostart');
 
   static Future<void>? _macMigration;
 
@@ -29,14 +37,16 @@ class DesktopAutostart {
       Platform.isMacOS || Platform.isWindows || Platform.isLinux;
 
   static bool get canConfigure =>
-      isSupported && (!Platform.isMacOS || kReleaseMode);
+      !kSonusDeviceLabNoSideEffects &&
+      isSupported &&
+      (!Platform.isMacOS || kReleaseMode);
 
   /// Wires the legacy cross-platform package on every desktop platform. On
   /// macOS it is used only to detect and remove an older LaunchAgent that may
   /// point at Terminal/a debug executable; packaged startup is owned by the
   /// native `SMAppService.mainApp` bridge.
   static void setup() {
-    if (!isSupported) return;
+    if (!isSupported || kSonusDeviceLabNoSideEffects) return;
     launchAtStartup.setup(
       appName: 'Sonus Auris',
       appPath: Platform.resolvedExecutable,
@@ -86,7 +96,7 @@ class DesktopAutostart {
   }
 
   static Future<void> _awaitMacMigration() async {
-    if (!Platform.isMacOS) return;
+    if (kSonusDeviceLabNoSideEffects || !Platform.isMacOS) return;
     _macMigration ??= _migrateLegacyMacRegistration();
     await _macMigration;
   }
@@ -98,13 +108,13 @@ class DesktopAutostart {
   /// legacy item was enabled, and the next packaged release completes the native
   /// registration instead of allowing Terminal to remain the permission owner.
   static Future<void> _migrateLegacyMacRegistration() async {
+    if (kSonusDeviceLabNoSideEffects) return;
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool(_macMigrationKey) ?? false) return;
 
     var legacyWasEnabled = prefs.getBool(_macLegacyEnabledKey) ?? false;
     try {
-      legacyWasEnabled =
-          legacyWasEnabled || await launchAtStartup.isEnabled();
+      legacyWasEnabled = legacyWasEnabled || await launchAtStartup.isEnabled();
     } catch (_) {
       // Continue with any state captured by an earlier debug launch.
     }
@@ -122,21 +132,20 @@ class DesktopAutostart {
     if (!kReleaseMode) return;
 
     if (legacyWasEnabled) {
-      await _macChannel.invokeMethod<void>(
-        'setEnabled',
-        const <String, Object>{'enabled': true},
-      );
+      await _macChannel.invokeMethod<void>('setEnabled', const <String, Object>{
+        'enabled': true,
+      });
     }
     await prefs.remove(_macLegacyEnabledKey);
     await prefs.setBool(_macMigrationKey, true);
   }
 
   static Future<void> _setEnabled(bool enabled) async {
+    if (kSonusDeviceLabNoSideEffects) return;
     if (Platform.isMacOS) {
-      await _macChannel.invokeMethod<void>(
-        'setEnabled',
-        <String, Object>{'enabled': enabled},
-      );
+      await _macChannel.invokeMethod<void>('setEnabled', <String, Object>{
+        'enabled': enabled,
+      });
       return;
     }
     if (enabled) {
