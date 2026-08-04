@@ -15,8 +15,16 @@ readonly config_names=(
   SONUS_SUPABASE_ANON_KEY
 )
 
+# macOS still ships Bash 3.2, which does not support Bash 4's `${value,,}`
+# lowercase expansion. Keep this resolver portable across Linux and macOS CI.
+lowercase() {
+  printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]'
+}
+
 is_true() {
-  case "${1,,}" in
+  local normalized
+  normalized="$(lowercase "$1")"
+  case "$normalized" in
     1|true|yes|on) return 0 ;;
     0|false|no|off|'') return 1 ;;
     *)
@@ -59,7 +67,8 @@ validate_http_url() {
       echo "$name must use HTTPS for a distributable desktop build." >&2
       return 1
     fi
-    local normalized_authority="${authority,,}"
+    local normalized_authority
+    normalized_authority="$(lowercase "$authority")"
     case "$normalized_authority" in
       localhost|localhost:*|127.*|0.0.0.0|0.0.0.0:*|'[::1]'|'[::1]':*)
         echo "$name may not use a loopback host for a distributable desktop build." >&2
@@ -81,7 +90,8 @@ validate_publishable_key() {
     return 1
   fi
   if [[ "$mode" != 'compile-only' ]]; then
-    local normalized_key="${value,,}"
+    local normalized_key
+    normalized_key="$(lowercase "$value")"
     if [[ "$normalized_key" == sb_secret_* || "$normalized_key" == *service_role* ]]; then
       echo "SONUS_SUPABASE_ANON_KEY must be a public publishable/anon key, never a secret or service-role key." >&2
       return 1

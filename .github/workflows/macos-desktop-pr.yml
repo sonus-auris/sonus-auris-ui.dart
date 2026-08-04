@@ -1,0 +1,53 @@
+name: macOS desktop PR compile
+
+on:
+  pull_request:
+    paths:
+      - 'lib/**'
+      - 'macos/**'
+      - 'packages/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'scripts/ci/resolve-desktop-build-config.sh'
+      - '.github/workflows/macos-desktop-pr.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-desktop-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  SONUS_BACKEND_BASE_URL: ${{ vars.SONUS_BACKEND_BASE_URL }}
+  SONUS_SUPABASE_URL: ${{ vars.SONUS_SUPABASE_URL }}
+  SONUS_SUPABASE_ANON_KEY: ${{ vars.SONUS_SUPABASE_PUBLISHABLE_KEY }}
+
+jobs:
+  compile:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+
+      - run: flutter pub get
+
+      - name: Resolve compile-only desktop configuration
+        env:
+          SONUS_REQUIRE_REAL_CONFIG: 'false'
+        run: bash scripts/ci/resolve-desktop-build-config.sh
+
+      - name: Compile packaged Sonus Auris macOS app
+        run: >-
+          flutter build macos --release -t lib/main_desktop.dart
+          "--dart-define=SONUS_BACKEND_BASE_URL=${SONUS_BACKEND_BASE_URL}"
+          "--dart-define=SONUS_SUPABASE_URL=${SONUS_SUPABASE_URL}"
+          "--dart-define=SONUS_SUPABASE_ANON_KEY=${SONUS_SUPABASE_ANON_KEY}"
