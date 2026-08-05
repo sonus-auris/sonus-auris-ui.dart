@@ -7,17 +7,37 @@ void main() {
     final manifest = File(
       'android/app/src/main/AndroidManifest.xml',
     ).readAsStringSync();
+    final gradle = File('android/app/build.gradle.kts').readAsStringSync();
     final filter = RegExp(
       r'<intent-filter android:label="supabase_magic_link">([\s\S]*?)'
       r'</intent-filter>',
     ).firstMatch(manifest)?.group(1);
+    final schemeResolver = RegExp(
+      r'val resolvedUriScheme = if \(deviceLabAndroidBuild\) '
+      r'"([^"]+)" else "([^"]+)"',
+    ).firstMatch(gradle);
 
     expect(filter, isNotNull);
-    expect(filter, contains('android:scheme="sonusauris"'));
+    expect(filter, contains(r'android:scheme="${sonusUriScheme}"'));
     expect(filter, contains('android:host="auth"'));
     expect(filter, contains('android:path="/callback"'));
     expect(filter, isNot(contains('oauth')));
     expect(filter, isNot(contains('pathPrefix')));
+    expect(
+      gradle,
+      contains('manifestPlaceholders["sonusUriScheme"] = resolvedUriScheme'),
+    );
+    expect(schemeResolver, isNotNull);
+    expect(
+      schemeResolver?.group(1),
+      'sonusauris-device-lab',
+      reason: 'device-lab callbacks must not enter the production app',
+    );
+    expect(
+      schemeResolver?.group(2),
+      'sonusauris',
+      reason: 'the production passwordless callback scheme must remain stable',
+    );
   });
 
   test('Apple builds register the passwordless callback scheme', () {
