@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "1.0.0",
+  "pageletId": "device-summary-rename",
+  "revision": 1,
+  "surface": "device-summary",
+  "title": "This device",
+  "components": [
+    {
+      "id": "summary",
+      "type": "section",
+      "children": [
+        {
+          "id": "device-name",
+          "type": "text",
+          "text": "Alex's MacBook",
+          "semanticRole": "heading"
+        },
+        {
+          "id": "rename-device",
+          "type": "button",
+          "text": "Rename this device",
+          "semanticRole": "action",
+          "action": {
+            "id": "confirm-device-rename",
+            "kind": "native.confirm-device-rename",
+            "params": {
+              "deviceId": "device-demo-01",
+              "proposedName": "Studio Recorder"
+            },
+            "requiresConfirmation": true
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "generatedAt": "2030-01-01T00:00:00Z",
+    "expiresAt": "2030-01-02T00:00:00Z",
+    "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}
