@@ -1,0 +1,39 @@
+name: iOS Simulator log evidence
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/device-lab/ios-simulator-smoke.sh
+      - scripts/device-lab/log-evidence.py
+      - tests/ci/ios-simulator-log-evidence.test.py
+      - .github/workflows/ios-simulator-log-evidence.yml
+  pull_request:
+    paths:
+      - scripts/device-lab/ios-simulator-smoke.sh
+      - scripts/device-lab/log-evidence.py
+      - tests/ci/ios-simulator-log-evidence.test.py
+      - .github/workflows/ios-simulator-log-evidence.yml
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Complete bounded simulator-log contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate log reducer and simulator integration
+        run: |
+          set -euo pipefail
+          bash -n scripts/device-lab/ios-simulator-smoke.sh
+          python3 -m py_compile \
+            scripts/device-lab/log-evidence.py \
+            tests/ci/ios-simulator-log-evidence.test.py
+          python3 scripts/device-lab/log-evidence.py --self-test
+          python3 tests/ci/ios-simulator-log-evidence.test.py
