@@ -30,46 +30,64 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Install Linux desktop toolchain
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: >-
-          sudo apt-get update && sudo apt-get install -y
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
           clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
           libsecret-1-dev libwebkit2gtk-4.1-dev
+          libayatana-appindicator3-dev
+
+      - name: Verify Linux tray dependency contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          if pkg-config --exists ayatana-appindicator3-0.1; then
+            package=ayatana-appindicator3-0.1
+          elif pkg-config --exists appindicator3-0.1; then
+            package=appindicator3-0.1
+          else
+            echo "tray_manager requires ayatana-appindicator3-0.1 or appindicator3-0.1, but neither pkg-config module is installed." >&2
+            exit 1
+          fi
+          echo "Linux tray module: $package $(pkg-config --modversion "$package")"
+
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           flutter-version: 3.44.2
           cache: true
+
       - run: flutter pub get
-      - name: Resolve account configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            SONUS_BACKEND_BASE_URL="${SONUS_BACKEND_BASE_URL:-http://127.0.0.1:8126}"
-            SONUS_SUPABASE_URL="${SONUS_SUPABASE_URL:-http://127.0.0.1:54321}"
-            SONUS_SUPABASE_ANON_KEY="${SONUS_SUPABASE_ANON_KEY:-sb_publishable_compile_only}"
-          fi
-          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "Required desktop build setting is missing: $name" >&2
-              exit 1
-            fi
-            echo "$name=${!name}" >> "$GITHUB_ENV"
-          done
+
+      - name: Resolve desktop account configuration
+        id: desktop-config
+        env:
+          SONUS_REQUIRE_REAL_CONFIG: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_r2 }}
+        run: bash scripts/ci/resolve-desktop-build-config.sh
+
       - name: Build Linux desktop recorder
         run: >-
           flutter build linux --release -t lib/main_desktop.dart
           "--dart-define=SONUS_BACKEND_BASE_URL=${SONUS_BACKEND_BASE_URL}"
           "--dart-define=SONUS_SUPABASE_URL=${SONUS_SUPABASE_URL}"
           "--dart-define=SONUS_SUPABASE_ANON_KEY=${SONUS_SUPABASE_ANON_KEY}"
+
       - name: Package Linux desktop alpha
+        if: ${{ steps.desktop-config.outputs.distributable == 'true' }}
         shell: bash
         run: tar -C build/linux/x64/release -czf sonus-auris-flutter-linux-x64.tar.gz bundle
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ steps.desktop-config.outputs.distributable == 'true' }}
         with:
           name: sonus-auris-flutter-linux-x64
           path: sonus-auris-flutter-linux-x64.tar.gz
+          if-no-files-found: error
           retention-days: 14
 
   macos:
@@ -78,38 +96,44 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           flutter-version: 3.44.2
           cache: true
+
       - run: flutter pub get
-      - name: Require account configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "Required desktop build setting is missing: $name" >&2
-              exit 1
-            fi
-          done
+
+      - name: Resolve desktop account configuration
+        id: desktop-config
+        env:
+          SONUS_REQUIRE_REAL_CONFIG: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_r2 }}
+        run: bash scripts/ci/resolve-desktop-build-config.sh
+
       - name: Build macOS desktop recorder
         run: >-
           flutter build macos --release -t lib/main_desktop.dart
           "--dart-define=SONUS_BACKEND_BASE_URL=${SONUS_BACKEND_BASE_URL}"
           "--dart-define=SONUS_SUPABASE_URL=${SONUS_SUPABASE_URL}"
           "--dart-define=SONUS_SUPABASE_ANON_KEY=${SONUS_SUPABASE_ANON_KEY}"
+
       - name: Package macOS desktop alpha
+        if: ${{ steps.desktop-config.outputs.distributable == 'true' }}
         shell: bash
         run: >-
           ditto -c -k --sequesterRsrc --keepParent
           "build/macos/Build/Products/Release/Sonus Auris.app"
           sonus-auris-flutter-macos-arm64.zip
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ steps.desktop-config.outputs.distributable == 'true' }}
         with:
           name: sonus-auris-flutter-macos-arm64
           path: sonus-auris-flutter-macos-arm64.zip
+          if-no-files-found: error
           retention-days: 14
 
   windows:
@@ -118,22 +142,24 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           flutter-version: 3.44.2
           cache: true
+
       - run: flutter pub get
-      - name: Require account configuration
+
+      - name: Resolve desktop account configuration
+        id: desktop-config
         shell: bash
-        run: |
-          set -euo pipefail
-          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "Required desktop build setting is missing: $name" >&2
-              exit 1
-            fi
-          done
+        env:
+          SONUS_REQUIRE_REAL_CONFIG: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_r2 }}
+        run: bash scripts/ci/resolve-desktop-build-config.sh
+
       - name: Build Windows desktop recorder
         shell: bash
         run: >-
@@ -141,16 +167,21 @@ jobs:
           "--dart-define=SONUS_BACKEND_BASE_URL=${SONUS_BACKEND_BASE_URL}"
           "--dart-define=SONUS_SUPABASE_URL=${SONUS_SUPABASE_URL}"
           "--dart-define=SONUS_SUPABASE_ANON_KEY=${SONUS_SUPABASE_ANON_KEY}"
+
       - name: Package Windows desktop alpha
+        if: ${{ steps.desktop-config.outputs.distributable == 'true' }}
         shell: pwsh
         run: >-
           Compress-Archive
           -Path build/windows/x64/runner/Release/*
           -DestinationPath sonus-auris-flutter-windows-x64.zip
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ steps.desktop-config.outputs.distributable == 'true' }}
         with:
           name: sonus-auris-flutter-windows-x64
           path: sonus-auris-flutter-windows-x64.zip
+          if-no-files-found: error
           retention-days: 14
 
   publish-r2:
@@ -161,11 +192,15 @@ jobs:
     timeout-minutes: 10
     environment: desktop-alpha
     steps:
-      - uses: actions/download-artifact@v4
+      # Pinned: this job holds the R2 publishing credentials, so a retagged
+      # mutable ref here would run alongside them. Same SHA (and now the same
+      # major) as the uploads above and as desktop-release.yml.
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: sonus-auris-flutter-*
           path: dist
           merge-multiple: true
+
       - name: Verify, checksum, and publish archives
         shell: bash
         env:

@@ -13,11 +13,13 @@ on:
     paths:
       - ci/android-emulator/**
       - scripts/emulator/**
+      - tests/ci/emulator-target-guard.test.sh
       - .github/workflows/build-emulator-image.yml
   pull_request:
     paths:
       - ci/android-emulator/**
       - scripts/emulator/**
+      - tests/ci/emulator-target-guard.test.sh
       - .github/workflows/build-emulator-image.yml
 
 permissions:
@@ -29,6 +31,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate emulator target guard
+        run: |
+          set -euo pipefail
+          bash -n scripts/emulator/permission-smoke.sh
+          bash -n scripts/emulator/resolve-emulator-serial.sh
+          bash -n tests/ci/emulator-target-guard.test.sh
+          bash tests/ci/emulator-target-guard.test.sh
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       # Pull requests build the Dockerfile to prove it still works, but must not
       # publish: the :latest tag is consumed by the production k8s permission-test

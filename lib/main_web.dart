@@ -36,6 +36,13 @@ const _authRedirectUrl = String.fromEnvironment(
 );
 const _pendingAuthPreferenceKey = 'sonus_auris.web.pending_auth.v1';
 
+/// Shown while a first-factor-only (AAL1) session is held. The browser surface
+/// has no enrolment/challenge UI of its own, so it points at the clients that
+/// do rather than silently opening account data at AAL1.
+const _secondFactorRequiredStatus =
+    'Two-factor verification is required before account data opens. Complete '
+    'it in the Sonus Auris mobile or desktop app, then reload this page.';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const SonusWebApp());
@@ -346,6 +353,18 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     if (!mounted) {
       return;
     }
+    // An email code or magic link establishes only AAL1. Mobile and desktop
+    // hold that behind SupabaseMfaGate; the browser must not be the one
+    // surface where a first factor alone opens the account.
+    if (!session.isPasswordlessAal2) {
+      setState(() {
+        _config = config;
+        _session = session;
+        _status = _secondFactorRequiredStatus;
+      });
+      _scheduleRefresh();
+      return;
+    }
     setState(() {
       _config = config;
       _session = session;
@@ -384,6 +403,12 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
       });
     }
   }
+
+  /// Whether cloud account access is authorized: a held session whose access
+  /// token records a passwordless first factor *and* a completed second factor
+  /// (AAL2). Mirrors `AppViewModel.isSignedIn`, so the browser applies the same
+  /// mandatory-MFA rule as the mobile and desktop clients.
+  bool get _isAuthorized => _session?.isPasswordlessAal2 ?? false;
 
   CloudSecrets get _deviceSecrets {
     final session = _session;
@@ -552,7 +577,8 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final signedIn = _session != null;
+    final hasSession = _session != null;
+    final signedIn = _isAuthorized;
     return MaterialApp(
       title: 'Sonus Auris Web',
       debugShowCheckedModeBanner: false,
@@ -564,7 +590,9 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
         appBar: AppBar(
           title: const Text('Sonus Auris'),
           actions: [
-            if (signedIn)
+            // Offered for a first-factor-only session too, so a user held at
+            // the second-factor gate can still leave.
+            if (hasSession)
               TextButton.icon(
                 onPressed: () => unawaited(_signOut()),
                 icon: const Icon(Icons.logout),
@@ -589,7 +617,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
                   'Supabase telemetry table and live Realtime channel.',
                 ),
                 const SizedBox(height: 20),
-                if (!signedIn)
+                if (!hasSession)
                   SupabaseAuthForm(
                     emailController: _email,
                     codeController: _code,
@@ -598,6 +626,39 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
                     showProjectConfiguration: true,
                     onRequestCode: _sendMagicLink,
                     onSubmitCode: _verifyEmailCode,
+                  )
+                else if (!signedIn)
+                  Card(
+                    key: const ValueKey('web-second-factor-required'),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.lock_outline),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Two-factor verification required',
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Your email code confirmed the first factor only. '
+                            'Devices, diagnostics, and live streaming stay '
+                            'closed until a verified second factor upgrades '
+                            'this session.',
+                          ),
+                        ],
+                      ),
+                    ),
                   )
                 else ...[
                   Card(

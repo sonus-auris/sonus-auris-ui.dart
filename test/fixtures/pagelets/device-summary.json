@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "1.0.0",
+  "pageletId": "device-summary",
+  "revision": 1,
+  "surface": "device-summary",
+  "title": "This device",
+  "components": [
+    {
+      "id": "summary",
+      "type": "section",
+      "children": [
+        {
+          "id": "device-name",
+          "type": "text",
+          "text": "Alex's MacBook",
+          "semanticRole": "heading"
+        },
+        {
+          "id": "capture-status",
+          "type": "status",
+          "text": "Recording protection is active",
+          "tone": "positive",
+          "semanticRole": "status"
+        },
+        {
+          "id": "retention",
+          "type": "metric",
+          "label": "Local plaintext window",
+          "value": "100 hours",
+          "semanticRole": "metric"
+        },
+        {
+          "id": "open-devices",
+          "type": "button",
+          "text": "Manage devices",
+          "semanticRole": "action",
+          "action": {
+            "id": "open-devices-screen",
+            "kind": "native.navigate",
+            "params": {
+              "route": "devices"
+            },
+            "requiresConfirmation": false
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "generatedAt": "2026-08-02T00:00:00Z",
+    "expiresAt": "2026-08-03T00:00:00Z",
+    "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

@@ -41,6 +41,9 @@ class RecordingSegment {
     this.permanentError,
     this.error,
     this.geoTag,
+    this.nextUploadGeneration = 1,
+    this.activeUploadGeneration = 0,
+    this.acknowledgedUploadGeneration = 0,
   });
 
   final String id;
@@ -65,6 +68,15 @@ class RecordingSegment {
   final DateTime? permanentSavedAtUtc;
   final String? permanentError;
   final String? error;
+
+  /// Next durable attempt generation allocated by the upload state machine.
+  final int nextUploadGeneration;
+
+  /// Generation whose asynchronous result is currently allowed to commit.
+  final int activeUploadGeneration;
+
+  /// Last generation that produced a verified remote acknowledgement.
+  final int acknowledgedUploadGeneration;
 
   /// Optional capture-location evidence (null unless location tagging is on and
   /// a fix was available). See [GeoTag].
@@ -149,6 +161,9 @@ class RecordingSegment {
     Object? permanentError = _unset,
     Object? error = _unset,
     Object? geoTag = _unset,
+    int? nextUploadGeneration,
+    int? activeUploadGeneration,
+    int? acknowledgedUploadGeneration,
   }) {
     return RecordingSegment(
       id: id ?? this.id,
@@ -186,6 +201,11 @@ class RecordingSegment {
           : permanentError as String?,
       error: identical(error, _unset) ? this.error : error as String?,
       geoTag: identical(geoTag, _unset) ? this.geoTag : geoTag as GeoTag?,
+      nextUploadGeneration: nextUploadGeneration ?? this.nextUploadGeneration,
+      activeUploadGeneration:
+          activeUploadGeneration ?? this.activeUploadGeneration,
+      acknowledgedUploadGeneration:
+          acknowledgedUploadGeneration ?? this.acknowledgedUploadGeneration,
     );
   }
 
@@ -214,10 +234,23 @@ class RecordingSegment {
       'permanentError': permanentError,
       'error': error,
       'geoTag': geoTag?.toJson(),
+      'nextUploadGeneration': nextUploadGeneration,
+      'activeUploadGeneration': activeUploadGeneration,
+      'acknowledgedUploadGeneration': acknowledgedUploadGeneration,
     };
   }
 
   factory RecordingSegment.fromJson(Map<String, dynamic> json) {
+    final nextGeneration = _asPositiveInt(json['nextUploadGeneration']);
+    final activeGeneration = _asNonNegativeInt(json['activeUploadGeneration']);
+    final acknowledgedGeneration = _asNonNegativeInt(
+      json['acknowledgedUploadGeneration'],
+    );
+    final normalizedNextGeneration = [
+      nextGeneration,
+      activeGeneration + 1,
+      acknowledgedGeneration + 1,
+    ].reduce((left, right) => left > right ? left : right);
     return RecordingSegment(
       id: json['id'] as String,
       startedAtUtc: DateTime.parse(json['startedAtUtc'] as String).toUtc(),
@@ -250,6 +283,9 @@ class RecordingSegment {
       geoTag: json['geoTag'] is Map<String, dynamic>
           ? GeoTag.fromJson(json['geoTag'] as Map<String, dynamic>)
           : null,
+      nextUploadGeneration: normalizedNextGeneration,
+      activeUploadGeneration: activeGeneration,
+      acknowledgedUploadGeneration: acknowledgedGeneration,
     );
   }
 
@@ -270,5 +306,15 @@ class RecordingSegment {
       return value.round();
     }
     return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static int _asPositiveInt(Object? value) {
+    final parsed = _asInt(value);
+    return parsed <= 0 ? 1 : parsed;
+  }
+
+  static int _asNonNegativeInt(Object? value) {
+    final parsed = _asInt(value);
+    return parsed < 0 ? 0 : parsed;
   }
 }

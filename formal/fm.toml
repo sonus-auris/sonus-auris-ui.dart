@@ -59,13 +59,28 @@ max_steps = 25
 strategy = "json-lines-itf-driver"
 targets = [
   "lib/src/models/recording_segment.dart",
+  "lib/src/services/segment_upload_state_machine.dart",
   "lib/src/app/app_controller.dart",
   "lib/src/services/segment_index.dart",
   "lib/src/services/s3_storage_client.dart",
   "lib/src/services/sound_recorder_backend_client.dart",
   "lib/src/retention/local_retention_policy.dart",
+  "test/segment_upload_state_machine_test.dart",
 ]
-status = "planned"
+status = "partial-upload-generation-refinement"
+implemented_claims = [
+  "persisted-monotonic-upload-generations",
+  "restart-invalidates-active-generation",
+  "late-success-and-failure-stutter",
+  "local-deletion-invalidates-upload-authority",
+  "content-free-generation-projection",
+]
+remaining_claims = [
+  "wire-production-AppController-through-generation-guarded-commit",
+  "replay-manifest-generated-ITF-through-Dart-adapter",
+  "exercise-direct-and-backend-encryption-before-egress",
+  "replay-crash-safe-retention-tombstones-through-production-SegmentIndex",
+]
 
 [adapters.typescript]
 strategy = "json-lines-itf-driver"

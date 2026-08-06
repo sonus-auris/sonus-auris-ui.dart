@@ -1,5 +1,6 @@
 import Cocoa
 import FlutterMacOS
+import ServiceManagement
 
 class MainFlutterWindow: NSWindow {
   override func awakeFromNib() {
@@ -9,11 +10,77 @@ class MainFlutterWindow: NSWindow {
     self.setFrame(windowFrame, display: true)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    MacAutostartBridge.register(
+      messenger: flutterViewController.engine.binaryMessenger
+    )
     MacIcloudBridge.register(
       messenger: flutterViewController.engine.binaryMessenger
     )
 
     super.awakeFromNib()
+  }
+}
+
+/// Registers the packaged main app as the login item on macOS 13+. Using
+/// SMAppService.mainApp keeps launch-at-login tied to the Sonus Auris bundle
+/// instead of a shell/debug executable, so privacy prompts show Sonus Auris.
+private enum MacAutostartBridge {
+  private static let channelName = "sonus_auris/desktop_autostart"
+
+  static func register(messenger: FlutterBinaryMessenger) {
+    FlutterMethodChannel(
+      name: channelName,
+      binaryMessenger: messenger
+    ).setMethodCallHandler { call, result in
+      switch call.method {
+      case "isEnabled":
+        guard #available(macOS 13.0, *) else {
+          result(false)
+          return
+        }
+        let status = SMAppService.mainApp.status
+        result(status == .enabled || status == .requiresApproval)
+      case "setEnabled":
+        guard
+          let arguments = call.arguments as? [String: Any],
+          let enabled = arguments["enabled"] as? Bool
+        else {
+          result(FlutterError(
+            code: "bad_args",
+            message: "enabled must be a boolean",
+            details: nil
+          ))
+          return
+        }
+        guard #available(macOS 13.0, *) else {
+          result(FlutterError(
+            code: "unsupported_macos",
+            message: "Launch at login requires macOS 13 or later.",
+            details: nil
+          ))
+          return
+        }
+        do {
+          let service = SMAppService.mainApp
+          if enabled {
+            if service.status == .notRegistered || service.status == .notFound {
+              try service.register()
+            }
+          } else if service.status != .notRegistered {
+            try service.unregister()
+          }
+          result(nil)
+        } catch {
+          result(FlutterError(
+            code: "autostart_failed",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
   }
 }
 

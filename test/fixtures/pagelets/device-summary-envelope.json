@@ -1,0 +1,49 @@
+{
+  "protocolVersion": "1.0.0",
+  "requestId": "req_demo_request_0001",
+  "sessionNonce": "nonce_demo_session_0000000000000001",
+  "issuedAt": "2030-01-01T00:00:00Z",
+  "expiresAt": "2030-01-01T00:05:00Z",
+  "host": {
+    "appVersion": "1.0.0",
+    "platform": "macos",
+    "renderer": "native-schema"
+  },
+  "document": {
+    "schemaVersion": "1.0.0",
+    "pageletId": "device-summary",
+    "revision": 1,
+    "surface": "device-summary",
+    "title": "This device",
+    "components": [
+      {
+        "id": "summary",
+        "type": "section",
+        "children": [
+          {
+            "id": "device-name",
+            "type": "text",
+            "text": "Demo recorder",
+            "semanticRole": "heading"
+          },
+          {
+            "id": "refresh-summary",
+            "type": "button",
+            "text": "Refresh status",
+            "semanticRole": "action",
+            "action": {
+              "id": "refresh-device-summary",
+              "kind": "native.refresh",
+              "requiresConfirmation": false
+            }
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "generatedAt": "2030-01-01T00:00:00Z",
+      "expiresAt": "2030-01-01T00:05:00Z",
+      "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+}
