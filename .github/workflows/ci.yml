@@ -48,6 +48,30 @@ jobs:
       - name: Unit tests (hard gate)
         run: flutter test
 
+  console-analyze-test-build:
+    name: Console analyze, test, and web build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/console
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.3
+          cache: true
+
+      - run: flutter --version
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter build web --release
+
   # Drives the Flutter web build in a real headless Chrome via chromedriver, so
   # the passwordless auth invariants are proved against browser output rather
   # than the VM widget harness. Hermetic: the code step is exercised through a

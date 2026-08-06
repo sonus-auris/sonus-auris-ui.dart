@@ -4,7 +4,7 @@ import 'package:audio_dashcam/src/services/crypto/segment_cipher.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-// Fixed AES-256-GCM SAC1 vector shared with desktop.app.rs/cloud_backup.rs:
+// Fixed AES-256-GCM SAC1 vector shared with sonus-auris-desktop.rs/cloud_backup.rs:
 // MK=0x07*32, DEK=0x09*32, wrap nonce=0x01*12, content nonce=0x02*12.
 const _rustContainerHex =
     '534143310101003c'

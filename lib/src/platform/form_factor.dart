@@ -11,7 +11,7 @@ enum FormFactor { mobile, desktop }
 ///   * [recorder] — phones and the Flutter desktop build: captures **this**
 ///     device's audio and shows only this device's data.
 ///   * [masterViewer] — browses/decrypts **all** devices' audio (the purpose-
-///     built Rust `desktop.app.rs` owns this role today; a Flutter build could
+///     built Rust `sonus-auris-desktop.rs` owns this role today; a Flutter build could
 ///     opt into it later behind the account private key).
 enum DeviceRole { recorder, masterViewer }
 

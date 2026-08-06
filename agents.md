@@ -1,4 +1,4 @@
-# Agent guidelines — sonus-auris-ui.dart
+# Agent guidelines — sonus-auris-flutter.dart
 
 Dart/Flutter client — always-on rolling-window audio recorder (a dashcam for audio).
 
@@ -16,7 +16,7 @@ Dart/Flutter client — always-on rolling-window audio recorder (a dashcam for a
 
 ## Desktop implementation parity
 
-- Sonus Auris actively maintains two desktop applications: this repository's Flutter desktop entrypoint and `sonus-auris/desktop.app.rs` in Rust.
+- Sonus Auris actively maintains two desktop implementations: this repository's Flutter recorder/console apps and `sonus-auris/sonus-auris-desktop.rs` in Rust.
 - Implement user-facing desktop features, privacy controls, lifecycle behavior, and bug fixes in both desktop applications unless a tracked design decision explicitly marks a capability as platform-specific or intentionally deferred.
 - Keep behavior, terminology, defaults, retention limits, consent text, authentication requirements, cloud contracts, and release expectations aligned across the Rust and Flutter desktop implementations.
 - When a change lands in only one desktop repository, create or update the paired Linear issue and document the remaining parity work in the PR.

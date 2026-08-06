@@ -1,6 +1,47 @@
-# Audio Dashcam
+# Sonus Auris Flutter
 
-Flutter Android/iOS app for continuous rolling audio capture. It keeps one microphone stream open, writes short overlapped `.wav` segments, keeps the most recent local window on-device, and uploads segments through either the sound-recorder backend or a direct S3-compatible fallback.
+Canonical Flutter repository for Sonus Auris. It consolidates the complete
+histories and active code from `sonus-auris-ui.dart` and
+`sonus-auris-web-desktop.dart` without forcing two distinct applications into
+one entry point.
+
+## Applications
+
+| Path | Package | Targets | Responsibility |
+| --- | --- | --- | --- |
+| Repository root | `audio_dashcam` | Android, iOS, macOS, Windows, Linux, web | Recorder product: capture, playback, encrypted retention, native integrations, and optional cloud transfer. |
+| `apps/console` | `sonus_auris_console` | Web, macOS, Windows, Linux | Signed-in device/account console imported from `sonus-auris-web-desktop.dart`. |
+| `packages/sonus_auris_interfaces` | `sonus_auris_interfaces` | Shared Dart package | Generated portable Supabase row contracts consumed by both apps. |
+
+The two former Flutter repositories are deprecated after this repository is
+published. Their histories remain reachable through the consolidation merge.
+
+The public service boundary is `api.sonusauris.app`, backed by
+`sonus-auris-api-server.rs`. The canonical passwordless browser account site at
+`user.sonusauris.app` is the server-rendered `sonus-auris-web-server.rs`; the
+Flutter console remains a native/web client surface and should not acquire
+server-only credentials.
+
+## Verify both apps
+
+```sh
+flutter pub get
+flutter analyze --no-fatal-infos
+flutter test
+
+cd apps/console
+flutter pub get
+flutter analyze
+flutter test
+flutter build web --release
+```
+
+## Recorder product
+
+The root Flutter app provides continuous rolling audio capture. It keeps one
+microphone stream open, writes short overlapped `.wav` segments, keeps the most
+recent local window on-device, and uploads segments through the Sonus Auris API
+or a direct S3-compatible fallback.
 
 The recorder is the product core: a private audio dashcam for musicians,
 note-takers, and people preserving contemporaneous context. Sleep estimates,
@@ -321,7 +362,7 @@ can configure direct S3/R2 while signed out; account-linked OAuth providers
 appear after passwordless sign-in and device registration.
 
 > This is the **Flutter** desktop app. There is also a separate, lean **pure-Rust**
-> desktop recorder in the `desktop.app.rs` repo — two desktop apps by design.
+> desktop recorder in the `sonus-auris-desktop.rs` repo — two desktop apps by design.
 
 ## Emulator Validation
 

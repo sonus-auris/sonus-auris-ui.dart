@@ -1,6 +1,6 @@
 {
   "schemaVersion": "formal-methods.v1",
-  "repoUrl": "https://github.com/sonus-auris/sonus-auris-ui.dart.git",
+  "repoUrl": "https://github.com/sonus-auris/sonus-auris-flutter.dart.git",
   "gitRef": "main",
   "paths": [
     "lib/",

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Sonus Auris Console
+Comment=Passwordless multi-device Sonus Auris console
+Exec=sonus_auris_console %U
+Icon=app.sonusauris.sonus_auris_console
+Terminal=false
+Categories=AudioVideo;Utility;
+MimeType=x-scheme-handler/sonusauris-console;
+StartupNotify=true

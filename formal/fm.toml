@@ -1,6 +1,6 @@
 # Provisional manifest consumed directly by GitHub Actions until DEN-565 lands.
 schema_version = 1
-project = "sonus-auris-ui.dart"
+project = "sonus-auris-flutter.dart"
 model = "encrypted-segment-lifecycle-v1"
 language = "quint"
 spec = "formal/segment_lifecycle.qnt"

@@ -1,5 +1,5 @@
 [help]
-url = "https://github.com/sonus-auris/sonus-auris-ui.dart"
+url = "https://github.com/sonus-auris/sonus-auris-flutter.dart"
 columns = ["options", "env", "type", "description"]
 
 [parse]

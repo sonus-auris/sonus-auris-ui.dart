@@ -17,7 +17,7 @@ in **DEN-296**, and the current Samsung release-candidate acceptance remains in
 | Physical iPhone | USB for first pairing, then USB or paired Wi-Fi | development-signed install/update, two bounded launch cycles by default, sanitized Flutter/Xcode output | microphone prompt, recording indicator, lock/background capture, playback, Bluetooth changes, battery/thermal/storage observations |
 | Physical Android | authorized USB ADB | non-destructive install/update, pre/post package-state comparison, launch, process/UI health, Home/foreground resume, time-bounded crash logs without clearing logcat, force-stop and cold relaunch | disclosure-driven permission prompts, recording notification/indicator, lock/background capture, playback, Bluetooth changes, battery/thermal/storage observations |
 | Flutter macOS | isolated packaged `.app` | production bundle/signature verification, side-effect-suppressed isolated launch, crash-focused unified log, bounded app-event Quit | microphone grant and a short explicitly consented recording in the normal app |
-| Rust macOS | packaged `.app` plus device probe in `desktop.app.rs` | CoreAudio enumeration/repeatability, isolated-data bundle launch/Quit, optional explicitly consented bounded WAV probe | microphone grant and comparison with the Flutter desktop result |
+| Rust macOS | packaged `.app` plus device probe in `sonus-auris-desktop.rs` | CoreAudio enumeration/repeatability, isolated-data bundle launch/Quit, optional explicitly consented bounded WAV probe | microphone grant and comparison with the Flutter desktop result |
 
 ## Safety contract
 
@@ -86,7 +86,7 @@ distribution signing used by the protected release workflow.
 
 ## Run the complete Mac device lab
 
-From `sonus-auris-ui.dart`:
+From `sonus-auris-flutter.dart`:
 
 ```bash
 SONUS_RUN_IOS_DEVICE=1 \
@@ -268,7 +268,7 @@ explicit-Quit regression.
 The Rust desktop repository contains its paired runbook and probe:
 
 ```bash
-cd ../desktop.app.rs
+cd ../sonus-auris-desktop.rs
 bash scripts/device-lab/macos-runtime-smoke.sh
 ```
 

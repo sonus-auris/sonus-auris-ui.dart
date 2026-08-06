@@ -4,10 +4,12 @@ This repository is the **live Flutter product implementation** for Sonus Auris a
 
 ## Canonical pair
 
-- Flutter: [`sonus-auris/sonus-auris-ui.dart`](https://github.com/sonus-auris/sonus-auris-ui.dart) — **live**; this repository.
-- Rust: [`sonus-auris/desktop.app.rs`](https://github.com/sonus-auris/desktop.app.rs) — **live**; the canonical pure-Rust desktop recorder and viewer implementation.
+- Flutter: [`sonus-auris/sonus-auris-flutter.dart`](https://github.com/sonus-auris/sonus-auris-flutter.dart) — **live**; this repository.
+- Rust: [`sonus-auris/sonus-auris-desktop.rs`](https://github.com/sonus-auris/sonus-auris-desktop.rs) — **live**; the canonical pure-Rust desktop recorder and viewer implementation.
 
-Sonus Auris also has an additional Flutter device console at [`sonus-auris/sonus-auris-web-desktop.dart`](https://github.com/sonus-auris/sonus-auris-web-desktop.dart). It is a related console surface, not a replacement for the canonical Rust ↔ Flutter product pair.
+The additional Flutter device console is consolidated into this repository at
+`apps/console`. The former `sonus-auris-web-desktop.dart` repository is
+deprecated.
 
 ## Feature-delivery contract
 
@@ -15,8 +17,8 @@ For every desktop-facing feature:
 
 1. inspect both canonical implementations before deciding scope;
 2. define shared acceptance criteria and identify affected APIs, schemas, clients, assets, fixtures, encryption formats, and device behavior;
-3. update both repositories, or record an explicit implementation-specific no-change rationale;
-4. assess whether the additional device console also needs a corresponding change;
+3. update both canonical repositories, or record an explicit implementation-specific no-change rationale;
+4. assess whether `apps/console` also needs a corresponding change;
 5. test and report Rust and Flutter status separately; and
 6. keep reciprocal repository references current.
 
