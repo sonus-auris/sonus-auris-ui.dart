@@ -30,6 +30,13 @@
           "semanticRole": "metric"
         },
         {
+          "id": "connection",
+          "type": "status",
+          "text": "Cloud backup connected",
+          "tone": "positive",
+          "semanticRole": "status"
+        },
+        {
           "id": "open-devices",
           "type": "button",
           "text": "Manage devices",
@@ -40,6 +47,17 @@
             "params": {
               "route": "devices"
             },
+            "requiresConfirmation": false
+          }
+        },
+        {
+          "id": "refresh-summary",
+          "type": "button",
+          "text": "Refresh status",
+          "semanticRole": "action",
+          "action": {
+            "id": "refresh-device-summary",
+            "kind": "native.refresh",
             "requiresConfirmation": false
           }
         }
