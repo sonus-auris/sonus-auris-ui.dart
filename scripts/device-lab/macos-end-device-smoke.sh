@@ -8,8 +8,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="${SONUS_DEVICE_LAB_DIR:-$ROOT/build/device-lab/run-$STAMP}"
 RUN_IOS_SIMULATOR="${SONUS_RUN_IOS_SIMULATOR:-1}"
+RUN_IOS_PERMISSION_DENIAL_PROBE="${SONUS_RUN_IOS_PERMISSION_DENIAL_PROBE:-0}"
 RUN_IOS_DEVICE="${SONUS_RUN_IOS_DEVICE:-auto}"
 RUN_ANDROID_DEVICE="${SONUS_RUN_ANDROID_DEVICE:-auto}"
+RUN_ANDROID_PERMISSION_DENIAL_PROBE="${SONUS_RUN_ANDROID_PERMISSION_DENIAL_PROBE:-0}"
 RUN_ANDROID_RECORDING_PROBE="${SONUS_RUN_ANDROID_RECORDING_PROBE:-0}"
 RUN_FLUTTER_MACOS="${SONUS_RUN_FLUTTER_MACOS:-1}"
 EVIDENCE_POLICY="$ROOT/scripts/device-lab/evidence-policy.py"
@@ -149,6 +151,16 @@ else
   record_status ios-simulator skipped
 fi
 
+# The permission-denial target creates and deletes a disposable Simulator of its
+# own. It never reuses or changes the normal iOS Simulator selected above.
+case "$RUN_IOS_PERMISSION_DENIAL_PROBE" in
+  1|true|yes)
+    run_target ios-permission-denial-probe \
+      "$ROOT/scripts/device-lab/ios-permission-denial-probe.sh"
+    ;;
+  *) record_status ios-permission-denial-probe skipped ;;
+esac
+
 case "$RUN_IOS_DEVICE" in
   1|true|yes)
     run_target ios-device "$ROOT/scripts/device-lab/ios-attached-smoke.sh"
@@ -192,6 +204,25 @@ case "$RUN_ANDROID_DEVICE" in
   *) record_status android-device skipped ;;
 esac
 
+# Permission denial is isolated from both production and the recording lab. It
+# opens no microphone and requires no recording consent, but remains opt-in
+# because it deliberately exercises a user-fixed runtime permission state.
+case "$RUN_ANDROID_PERMISSION_DENIAL_PROBE" in
+  1|true|yes)
+    android_permission_serial="$(select_physical_android)"
+    selection_status=$?
+    if [[ "$selection_status" != "0" || -z "$android_permission_serial" ]]; then
+      echo "Android permission-denial probe was requested but no unambiguous authorized physical target was found." >&2
+      record_status android-permission-denial-probe failed
+    else
+      run_target android-permission-denial-probe \
+        "$ROOT/scripts/device-lab/android-permission-denial-probe.sh" \
+        "$android_permission_serial"
+    fi
+    ;;
+  *) record_status android-permission-denial-probe skipped ;;
+esac
+
 # Real microphone automation is intentionally separate from the default Android
 # lifecycle smoke. It requires both an explicit opt-in target flag and the exact
 # consent phrase enforced by android-recording-probe.sh.
@@ -223,6 +254,8 @@ skips=$skips
 failures=$failures
 evidence_policy=required
 physical_device_claims_require_this_run=true
+ios_permission_denial_probe_opt_in=$RUN_IOS_PERMISSION_DENIAL_PROBE
+android_permission_denial_probe_opt_in=$RUN_ANDROID_PERMISSION_DENIAL_PROBE
 android_recording_probe_opt_in=$RUN_ANDROID_RECORDING_PROBE
 SUMMARY
 cat "$RUN_DIR/results.txt"
