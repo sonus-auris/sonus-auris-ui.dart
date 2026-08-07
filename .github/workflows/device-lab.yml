@@ -1,8 +1,11 @@
-name: Device-lab script and iOS Simulator smoke
+name: Device-lab scripts, iOS Simulator, and isolated Android recording
 
 on:
   pull_request:
     paths:
+      - 'android/**'
+      - 'integration_test/device_lab_recording_probe_test.dart'
+      - 'integration_test/support/**'
       - 'lib/**'
       - 'ios/**'
       - 'macos/**'
@@ -10,12 +13,18 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'scripts/device-lab/**'
+      - 'test/device_lab_pcm16_signal_test.dart'
+      - 'tests/ci/android-device-lab-recording.test.sh'
+      - 'docs/android-recording-device-lab.md'
       - 'docs/end-device-testing.md'
       - 'docs/mobile-ci.md'
       - '.github/workflows/device-lab.yml'
   push:
     branches: [main]
     paths:
+      - 'android/**'
+      - 'integration_test/device_lab_recording_probe_test.dart'
+      - 'integration_test/support/**'
       - 'lib/**'
       - 'ios/**'
       - 'macos/**'
@@ -23,6 +32,9 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'scripts/device-lab/**'
+      - 'test/device_lab_pcm16_signal_test.dart'
+      - 'tests/ci/android-device-lab-recording.test.sh'
+      - 'docs/android-recording-device-lab.md'
       - 'docs/end-device-testing.md'
       - 'docs/mobile-ci.md'
       - '.github/workflows/device-lab.yml'
@@ -31,9 +43,12 @@ on:
 permissions:
   contents: read
 
+# Emulator and simulator jobs are expensive and produce diagnostic evidence.
+# Give every exact commit its own group: concurrent writers neither cancel an
+# in-flight run nor leave the newest device evidence behind stale queued heads.
 concurrency:
-  group: device-lab-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: device-lab-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   script-contract:
@@ -49,6 +64,8 @@ jobs:
         run: |
           set -euo pipefail
           bash -n scripts/device-lab/*.sh
+          bash -n tests/ci/android-device-lab-recording.test.sh
+          bash tests/ci/android-device-lab-recording.test.sh
           python3 -m py_compile scripts/device-lab/evidence-policy.py
           python3 scripts/device-lab/evidence-policy.py --self-test
           grep -Fq '"uuid"' scripts/device-lab/evidence-policy.py
@@ -61,18 +78,36 @@ jobs:
         run: |
           set -euo pipefail
           android=scripts/device-lab/android-attached-smoke.sh
+          android_recording=scripts/device-lab/android-recording-probe.sh
           ios_device=scripts/device-lab/ios-attached-smoke.sh
           ios_simulator=scripts/device-lab/ios-simulator-smoke.sh
           orchestrator=scripts/device-lab/macos-end-device-smoke.sh
-          if grep -En 'adb(_)? .*uninstall|pm clear|simctl erase|simctl uninstall|^[[:space:]]*adb(_)?[[:space:]].*logcat[[:space:]]+-c' \
-            "$android" "$ios_device" "$ios_simulator"; then
-            echo 'Attached-device/simulator scripts may not clear app, device, permission, or shared log data.' >&2
+          if grep -En 'adb(_)? .*uninstall|simctl erase|simctl uninstall|^[[:space:]]*adb(_)?[[:space:]].*logcat[[:space:]]+-c' \
+            "$android" "$android_recording" "$ios_device" "$ios_simulator"; then
+            echo 'Attached-device/simulator scripts may not uninstall apps or clear shared device/log state.' >&2
+            exit 1
+          fi
+          if grep -En 'pm clear' "$android" "$ios_device" "$ios_simulator"; then
+            echo 'Only the dedicated Android device-lab package may be cleared.' >&2
+            exit 1
+          fi
+          clear_hits="$(grep -En 'pm clear' "$android_recording" || true)"
+          if [[ "$(printf '%s\n' "$clear_hits" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')" != '1' ]] ||
+            ! printf '%s\n' "$clear_hits" | grep -Fq 'pm clear "$LAB_PKG"'; then
+            echo 'The recording probe must clear exactly the isolated package and nothing else.' >&2
             exit 1
           fi
           grep -Fq 'permissions_mutated=false' "$android"
           grep -Fq 'log_buffer_cleared=false' "$android"
           grep -Fq 'package_state_preserved=' "$android"
           grep -Fq '$(basename "$APK")' "$android"
+          grep -Fq 'I_CONSENT_TO_A_15_SECOND_SONUS_DEVICE_LAB_RECORDING' "$android_recording"
+          grep -Fq 'production_package_addressed=false' "$android_recording"
+          grep -Fq 'raw_audio_exported=false' "$android_recording"
+          grep -Fq 'raw_audio_retained_on_device=false' "$android_recording"
+          grep -Fq 'isolated_package_data_cleared_before_probe=' "$android_recording"
+          grep -Fq 'isolated_package_data_cleared_after_probe=' "$android_recording"
+          grep -Fq 'shared_logcat_cleared=false' "$android_recording"
           grep -Fq 'app_data_cleared=false' "$ios_device"
           grep -Fq 'launch_cycles_completed=' "$ios_device"
           grep -Fq 'selected.get("emulator")' "$ios_device"
@@ -84,6 +119,7 @@ jobs:
           grep -Fq 'existing_app_files_enumerated=false' "$ios_simulator"
           grep -Fq 'process_scoped_logs=true' "$ios_simulator"
           grep -Fq 'evidence-policy.py' "$orchestrator"
+          grep -Fq 'SONUS_RUN_ANDROID_RECORDING_PROBE' "$orchestrator"
           if grep -Fq 'shasum -a 256 "$APK" >' "$android"; then
             echo 'APK checksum evidence may not embed the operator checkout path.' >&2
             exit 1
@@ -102,8 +138,18 @@ jobs:
           grep -Fq "tell application id \\\"\$RUNTIME_BUNDLE_ID\\\" to quit" "$script"
           grep -Fq "const bool kSonusDeviceLabNoSideEffects" "$source"
           grep -Fq "if (!isSupported || kSonusDeviceLabNoSideEffects) return;" "$source"
-          if grep -En 'rm -|rm$|find .* -delete|simctl erase|pm clear|adb(_)? .*uninstall' scripts/device-lab/*.sh; then
+          if grep -En 'rm -|rm$|find .* -delete|simctl erase|adb(_)? .*uninstall' scripts/device-lab/*.sh; then
             echo 'Device-lab scripts may not delete app, recording, permission, or device data.' >&2
+            exit 1
+          fi
+          unexpected_clears="$(
+            grep -En 'pm clear' scripts/device-lab/*.sh 2>/dev/null |
+              grep -Fv 'android-recording-probe.sh:' |
+              grep -Fv 'pm clear "$LAB_PKG"' || true
+          )"
+          if [[ -n "$unexpected_clears" ]]; then
+            printf '%s\n' "$unexpected_clears" >&2
+            echo 'Only the isolated Android recording package may be cleared.' >&2
             exit 1
           fi
 
@@ -129,15 +175,28 @@ jobs:
           xcodebuild -version
           xcrun simctl list runtimes
 
-      - name: Validate device-lab Dart formatting
+      - name: Validate device-lab Dart formatting and PCM unit contract
         run: |
           set -euo pipefail
-          dart format lib/src/platform/desktop_autostart.dart
-          if ! git diff --exit-code -- lib/src/platform/desktop_autostart.dart; then
+          dart format \
+            integration_test/device_lab_recording_probe_test.dart \
+            integration_test/support/pcm16_signal.dart \
+            test/device_lab_pcm16_signal_test.dart \
+            lib/src/platform/desktop_autostart.dart
+          if ! git diff --exit-code -- \
+            integration_test/device_lab_recording_probe_test.dart \
+            integration_test/support/pcm16_signal.dart \
+            test/device_lab_pcm16_signal_test.dart \
+            lib/src/platform/desktop_autostart.dart; then
             echo 'Device-lab Dart source is not formatted; exact formatter delta follows.' >&2
-            git diff -- lib/src/platform/desktop_autostart.dart
+            git diff -- \
+              integration_test/device_lab_recording_probe_test.dart \
+              integration_test/support/pcm16_signal.dart \
+              test/device_lab_pcm16_signal_test.dart \
+              lib/src/platform/desktop_autostart.dart
             exit 1
           fi
+          flutter test test/device_lab_pcm16_signal_test.dart
 
       - name: Run non-destructive iOS Simulator smoke
         env:
@@ -150,7 +209,9 @@ jobs:
         if: always()
         env:
           SONUS_DEVICE_LAB_DIR: ${{ runner.temp }}/sonus-ios-simulator-evidence
-        run: python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
+        run: |
+          mkdir -p "$SONUS_DEVICE_LAB_DIR"
+          python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
 
       - name: Upload sanitized simulator evidence
         if: ${{ always() && steps.evidence_policy.outcome == 'success' }}
@@ -159,4 +220,67 @@ jobs:
           name: sonus-ios-simulator-evidence
           path: ${{ runner.temp }}/sonus-ios-simulator-evidence
           if-no-files-found: warn
+          retention-days: 7
+
+  android-isolated-recording:
+    name: Isolated Android recording/background probe (API 34)
+    needs: script-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+
+      - name: Run the operator-equivalent isolated probe on KVM
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        env:
+          QEMU_AUDIO_DRV: none
+          SONUS_ALLOW_ANDROID_EMULATOR: '1'
+          SONUS_ANDROID_RECORDING_PROBE_CONSENT: I_CONSENT_TO_A_15_SECOND_SONUS_DEVICE_LAB_RECORDING
+          SONUS_DEVICE_LAB_DIR: ${{ github.workspace }}/isolated-android-recording-evidence
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: false
+          emulator-options: -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect -allow-host-audio
+          disable-animations: true
+          script: adb emu avd hostmicon && bash scripts/device-lab/android-recording-probe.sh
+
+      - name: Redact and verify isolated Android evidence
+        id: android_evidence_policy
+        if: always()
+        env:
+          SONUS_DEVICE_LAB_DIR: ${{ github.workspace }}/isolated-android-recording-evidence
+        run: |
+          mkdir -p "$SONUS_DEVICE_LAB_DIR"
+          python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
+
+      - name: Upload sanitized isolated Android evidence
+        if: ${{ always() && steps.android_evidence_policy.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonus-isolated-android-recording-evidence
+          path: isolated-android-recording-evidence/**
+          if-no-files-found: error
           retention-days: 7

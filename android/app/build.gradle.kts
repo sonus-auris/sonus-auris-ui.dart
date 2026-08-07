@@ -18,6 +18,16 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
+// A physical-device recording probe must never share the Play Store package,
+// deep-link handlers, or app-private storage. The opt-in shell harness exports
+// this variable only while building/running the isolated debug candidate.
+val productionApplicationId = "com.ores.sonus_auris"
+val deviceLabAndroidBuild = System.getenv("SONUS_DEVICE_LAB_ANDROID") == "1"
+val resolvedApplicationId =
+    if (deviceLabAndroidBuild) "$productionApplicationId.device_lab" else productionApplicationId
+val resolvedAppLabel = if (deviceLabAndroidBuild) "Sonus Auris Device Lab" else "Sonus Auris"
+val resolvedUriScheme = if (deviceLabAndroidBuild) "sonusauris-device-lab" else "sonusauris"
+
 android {
     namespace = "com.ores.sonus_auris"
     // Pin the store contract instead of inheriting a moving Flutter default.
@@ -34,8 +44,11 @@ android {
     }
 
     defaultConfig {
-        // Permanent Play Store identity. Never change after the first upload.
-        applicationId = "com.ores.sonus_auris"
+        // Permanent Play Store identity unless the explicit device-lab build
+        // switch selects the isolated debug-only package above.
+        applicationId = resolvedApplicationId
+        manifestPlaceholders["sonusAppLabel"] = resolvedAppLabel
+        manifestPlaceholders["sonusUriScheme"] = resolvedUriScheme
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -108,24 +121,35 @@ flutter {
 // ALLOW_DEBUG_SIGNED_RELEASE=1. The store scripts never set these, so a mis-keyed
 // AAB/APK can never be produced by CI or `scripts/release/*`.
 gradle.taskGraph.whenReady {
+    val releaseTask = allTasks.firstOrNull { task ->
+        val name = task.name
+        name.contains("Release") &&
+            (name.startsWith("assemble") ||
+                name.startsWith("bundle") ||
+                name.startsWith("package") ||
+                name.startsWith("sign"))
+    }
+
+    // The device-lab identity is intentionally debug-only. Refuse any release
+    // graph even when a local developer also opts into debug-signed releases.
+    if (deviceLabAndroidBuild && releaseTask != null) {
+        throw GradleException(
+            "Refusing to build device-lab application ID '$resolvedApplicationId' " +
+                "with release task '${releaseTask.path}'. Device-lab recording probes are debug-only."
+        )
+    }
+
     val keystoreMissing = !rootProject.file("key.properties").exists()
     val allowDebugRelease =
         (project.findProperty("allow_debug_signed_release") as String?)?.toBoolean() == true ||
         System.getenv("ALLOW_DEBUG_SIGNED_RELEASE") == "1"
-    if (keystoreMissing && !allowDebugRelease) {
-        val releaseTask = allTasks.firstOrNull { t ->
-            val n = t.name
-            (n.contains("Release") && (n.startsWith("assemble") ||
-                n.startsWith("bundle") || n.startsWith("package") || n.startsWith("sign")))
-        }
-        if (releaseTask != null) {
-            throw GradleException(
-                "Refusing to build a DEBUG-SIGNED release ('${releaseTask.path}'): " +
+    if (keystoreMissing && !allowDebugRelease && releaseTask != null) {
+        throw GradleException(
+            "Refusing to build a DEBUG-SIGNED release ('${releaseTask.path}'): " +
                 "android/key.properties is missing. Create it via " +
                 "scripts/release/android-generate-keystore.sh for a real signed build, " +
                 "or, for a local non-store `flutter run --release`, pass " +
                 "-Pallow_debug_signed_release=true (or ALLOW_DEBUG_SIGNED_RELEASE=1)."
-            )
-        }
+        )
     }
 }
