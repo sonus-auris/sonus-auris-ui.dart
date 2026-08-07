@@ -8,6 +8,8 @@ UDID="${1:-${IOS_SIMULATOR_UDID:-}}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 EVIDENCE_DIR="${SONUS_DEVICE_LAB_DIR:-$ROOT/build/device-lab/ios-simulator-$STAMP}"
 CAPTURE_SCREENSHOT="${SONUS_CAPTURE_SCREENSHOT:-0}"
+LOG_EVIDENCE="$ROOT/scripts/device-lab/log-evidence.py"
+LOG_MAX_BYTES="${SONUS_SIMULATOR_LOG_MAX_BYTES:-524288}"
 CURRENT_PID=""
 
 need() {
@@ -17,6 +19,15 @@ need() {
   }
 }
 for command in xcrun flutter python3 shasum; do need "$command"; done
+
+if [[ ! -f "$LOG_EVIDENCE" ]]; then
+  echo "Required simulator log reducer is missing: $LOG_EVIDENCE" >&2
+  exit 2
+fi
+if [[ ! "$LOG_MAX_BYTES" =~ ^[0-9]+$ ]] || (( LOG_MAX_BYTES < 1024 )); then
+  echo "SONUS_SIMULATOR_LOG_MAX_BYTES must be an integer of at least 1024." >&2
+  exit 2
+fi
 
 mkdir -p "$EVIDENCE_DIR"
 exec > >(python3 "$ROOT/scripts/device-lab/evidence-policy.py" --stream \
@@ -100,6 +111,8 @@ sanitize_stream() {
 capture_logs() {
   local label="${1:?log label is required}"
   local predicate='process == "Runner" OR subsystem BEGINSWITH "app.sonusauris"'
+  local log_file="$EVIDENCE_DIR/$label-simulator.log"
+  local status_file="$EVIDENCE_DIR/$label-log-scan.json"
   if [[ "$CURRENT_PID" =~ ^[0-9]+$ ]]; then
     predicate="processIdentifier == $CURRENT_PID"
   fi
