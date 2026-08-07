@@ -125,6 +125,7 @@ run_launch_cycle() {
     label="cold-relaunch-$cycle"
   fi
   echo "== physical iPhone $label =="
+  set +e
   (
     cd "$ROOT"
     python3 scripts/device-lab/flutter-run-controller.py \

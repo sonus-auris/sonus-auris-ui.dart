@@ -76,6 +76,13 @@ jobs:
           bash tests/ci/android-permission-denial.test.sh
           python3 -m py_compile scripts/device-lab/evidence-policy.py
           python3 scripts/device-lab/evidence-policy.py --self-test
+          python3 scripts/device-lab/bounded-log-scan.py --self-test
+          python3 scripts/device-lab/flutter-run-cycle.py --self-test
+          python3 scripts/device-lab/run-with-timeout.py --self-test
+          python3 tests/ci/android-physical-device-contract.test.py
+          python3 tests/ci/ios-simulator-log-evidence.test.py
+          python3 tests/ci/ios-physical-device-contract.test.py
+          python3 tests/ci/run-with-timeout.test.py
           grep -Fq '"uuid"' scripts/device-lab/evidence-policy.py
           if grep -Fq 'SKIP_LIVE_LOGS' scripts/device-lab/evidence-policy.py; then
             echo 'All uploaded text logs, including run.log, must pass evidence policy.' >&2
@@ -90,6 +97,7 @@ jobs:
           android_recording=scripts/device-lab/android-recording-probe.sh
           ios_device=scripts/device-lab/ios-attached-smoke.sh
           ios_simulator=scripts/device-lab/ios-simulator-smoke.sh
+          ios_full_log=scripts/device-lab/ios-simulator-full-log-smoke.sh
           orchestrator=scripts/device-lab/macos-end-device-smoke.sh
           if grep -En 'adb(_)? .*uninstall|simctl erase|simctl uninstall|^[[:space:]]*adb(_)?[[:space:]].*logcat[[:space:]]+-c' \
             "$android" "$android_recording" "$ios_device" "$ios_simulator"; then
@@ -122,6 +130,10 @@ jobs:
           grep -Fq 'shared_logcat_cleared=false' "$android_recording"
           grep -Fq 'app_data_cleared=false' "$ios_device"
           grep -Fq 'launch_cycles_completed=' "$ios_device"
+          grep -Fq 'terminal_output_drained=true' "$ios_device"
+          grep -Fq 'fatal_runtime_markers_checked=true' "$ios_device"
+          grep -Fq 'python3 "$CYCLE_MONITOR"' "$ios_device"
+          grep -Fq 'python3 "$EVIDENCE_POLICY" --stream' "$ios_device"
           grep -Fq 'selected.get("emulator")' "$ios_device"
           grep -Fq 'The requested Flutter target is an emulator, not a physical iPhone' "$ios_device"
           grep -Fq 'data_container_preserved=true' "$ios_simulator"
@@ -130,6 +142,18 @@ jobs:
           grep -Fq 'test_owned_sentinel_removed=true' "$ios_simulator"
           grep -Fq 'existing_app_files_enumerated=false' "$ios_simulator"
           grep -Fq 'process_scoped_logs=true' "$ios_simulator"
+          grep -Fq 'full_log_stream_scanned=true' "$ios_full_log"
+          grep -Fq 'startup_log_context_preserved=true' "$ios_full_log"
+          grep -Fq 'terminal_log_context_preserved=true' "$ios_full_log"
+          grep -Fq 'log_collection_process_group_bounded=true' "$ios_full_log"
+          grep -Fq 'python3 "$COMMAND_TIMEOUT"' "$ios_full_log"
+          grep -Fq 'pipeline_statuses=("${PIPESTATUS[@]}")' "$ios_full_log"
+          grep -Fq 'evidence-policy.py" --stream' "$ios_full_log"
+          grep -Fq 'bounded-log-scan.py"' "$ios_full_log"
+          if grep -Fq 'tail -n 500' "$ios_full_log"; then
+            echo 'Full-session simulator evidence may not discard startup log context.' >&2
+            exit 1
+          fi
           grep -Fq 'evidence-policy.py' "$orchestrator"
           grep -Fq 'SONUS_RUN_ANDROID_PERMISSION_DENIAL_PROBE' "$orchestrator"
           grep -Fq 'SONUS_RUN_ANDROID_RECORDING_PROBE' "$orchestrator"
@@ -167,7 +191,7 @@ jobs:
           fi
 
   ios-simulator:
-    name: iOS Simulator install/update/relaunch smoke
+    name: iOS Simulator install/update/relaunch + full-log smoke
     needs: script-contract
     runs-on: macos-15
     timeout-minutes: 45
@@ -214,11 +238,13 @@ jobs:
           fi
           flutter test test/device_lab_pcm16_signal_test.dart
 
-      - name: Run non-destructive iOS Simulator smoke
+      - name: Run non-destructive iOS Simulator lifecycle and full-log smoke
         env:
           SONUS_DEVICE_LAB_DIR: ${{ runner.temp }}/sonus-ios-simulator-evidence
           SONUS_CAPTURE_SCREENSHOT: '1'
-        run: bash scripts/device-lab/ios-simulator-smoke.sh
+          SONUS_DEVICE_LAB_MAX_LOG_BYTES: '524288'
+          SONUS_DEVICE_LAB_LOG_TIMEOUT_SECONDS: '120'
+        run: bash scripts/device-lab/ios-simulator-full-log-smoke.sh
 
       - name: Redact and verify simulator evidence
         id: evidence_policy
