@@ -394,7 +394,7 @@ ISOLATION
       python3 "$ROOT/scripts/device-lab/bounded-log.py" --max-bytes 524288 \
       > "$EVIDENCE_DIR/crash-focused-logcat.txt" || true
     echo "Fatal Android evidence was observed during the isolated probe." >&2
-    exit 7
+    exit 8
   fi
 
   if ! clear_isolated_capture_state; then
@@ -421,6 +421,7 @@ probe_audio_cleanup_passed=true
 isolated_package_data_cleared_before_probe=$ISOLATED_STATE_CLEARED_BEFORE
 isolated_package_data_cleared_after_probe=$ISOLATED_STATE_CLEARED_AFTER
 device_lab_package_uninstalled=false
+package_installation_verified_after_drive=true
 RESULT
   echo "ANDROID ISOLATED RECORDING PROBE PASSED"
   echo "Evidence: $EVIDENCE_DIR"
