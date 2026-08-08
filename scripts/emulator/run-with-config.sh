@@ -51,10 +51,24 @@ die() { echo "error: $*" >&2; exit 1; }
 # .env symlink); fall back to decrypting the named environment directly so this
 # works on a clean checkout without mutating infra state.
 env_source=""
+active_env=""
 if [[ -f "$infra_dir/.env" ]]; then
-  env_source="$infra_dir/.env (active symlink)"
-  set -a; # shellcheck disable=SC1091
-  source "$infra_dir/.env"; set +a
+  # `just use <env>` points .env at env/dec/<env>.env. Report the environment
+  # that is actually being read, not the one that was asked for — they differ
+  # whenever an operator has a different env active, and silently compiling
+  # prod credentials into a build that was asked for dev is exactly the kind of
+  # mistake this script should make impossible to miss.
+  active_env="$(basename "$(readlink "$infra_dir/.env" 2>/dev/null || echo "$infra_dir/.env")" .env)"
+  env_source="$infra_dir/.env -> ${active_env}.env"
+  if [[ -n "$active_env" && "$active_env" != "$env_name" ]]; then
+    echo "warning: requested --env $env_name, but $infra_dir/.env is active and points at $active_env." >&2
+    echo "         using $active_env. Run 'just use $env_name' in the infra repo to switch." >&2
+    env_name="$active_env"
+  fi
+  set -a
+  # shellcheck disable=SC1091
+  source "$infra_dir/.env"
+  set +a
 elif [[ -f "$infra_dir/env/enc/$env_name.env.enc" ]]; then
   command -v sops >/dev/null 2>&1 || die "sops not found — run 'nix develop' in $infra_dir"
   # sops resolves its age identity from os.UserConfigDir(), which on macOS is
@@ -66,8 +80,10 @@ elif [[ -f "$infra_dir/env/enc/$env_name.env.enc" ]]; then
   env_source="$infra_dir/env/enc/$env_name.env.enc (decrypted in memory)"
   decrypted="$(sops decrypt --input-type dotenv --output-type dotenv \
     "$infra_dir/env/enc/$env_name.env.enc")" || die "could not decrypt $env_name"
-  set -a; # shellcheck disable=SC1090
-  source /dev/stdin <<<"$decrypted"; set +a
+  set -a
+  # shellcheck disable=SC1090
+  source /dev/stdin <<<"$decrypted"
+  set +a
   unset decrypted
 else
   die "no config found: neither $infra_dir/.env nor env/enc/$env_name.env.enc"
@@ -99,17 +115,42 @@ fi
 # those. The anon key is client-safe by design; a service-role or secret key
 # must never appear here — it would be extractable from the shipped binary.
 dart_defines=()
-add_define() { [[ -n "${2:-}" ]] && dart_defines+=(--dart-define="$1=$2"); }
+# Note the explicit `if`: a bare `[[ ... ]] && ...` returns non-zero when the
+# value is empty, which under `set -e` exits the script instead of skipping.
+add_define() {
+  if [[ -n "${2:-}" ]]; then
+    dart_defines+=(--dart-define="$1=$2")
+  fi
+}
+
+# Anything compiled in here is extractable from the shipped binary, so verify
+# what the value *is* rather than trusting the variable it came from. The
+# plausible mistake is not naming a define after a secret — it is pasting a
+# service-role or secret key into SONUS_SUPABASE_ANON_KEY.
+assert_client_safe() {
+  local name="$1" value="$2"
+  case "$value" in
+    sb_secret_*) die "$name holds a Supabase *secret* key. Only the anon/publishable key may be compiled into the client." ;;
+  esac
+  # A Supabase JWT carries its role in the payload; decode and check it.
+  if [[ "$value" == eyJ*.*.* ]]; then
+    local payload role
+    payload="${value#*.}"; payload="${payload%%.*}"
+    while (( ${#payload} % 4 )); do payload+="="; done
+    role="$(printf '%s' "$payload" | tr '_-' '/+' | base64 -d 2>/dev/null \
+            | sed -n 's/.*"role":"\([^"]*\)".*/\1/p')" || true
+    if [[ "$role" == "service_role" ]]; then
+      die "$name holds a service_role JWT, which bypasses row-level security. Use the anon key."
+    fi
+  fi
+  return 0
+}
+
+assert_client_safe SONUS_SUPABASE_ANON_KEY "$SONUS_SUPABASE_ANON_KEY"
+
 add_define SONUS_SUPABASE_URL "$SONUS_SUPABASE_URL"
 add_define SONUS_SUPABASE_ANON_KEY "$SONUS_SUPABASE_ANON_KEY"
 add_define SONUS_BACKEND_BASE_URL "$backend"
-
-for leaked in SONUS_SUPABASE_SERVICE_ROLE_KEY SONUS_SUPABASE_SECRET_KEY \
-              SOUND_RECORDER_SUPABASE_SERVICE_ROLE_KEY SOUND_RECORDER_SUPABASE_SECRET_KEY; do
-  for d in "${dart_defines[@]}"; do
-    [[ "$d" == *"$leaked"* ]] && die "refusing to compile a server-only key into the client: $leaked"
-  done
-done
 
 redact() { local v="$1"; (( ${#v} > 12 )) && echo "${v:0:6}…${v: -4} (${#v} chars)" || echo "set"; }
 echo "config source : $env_source"

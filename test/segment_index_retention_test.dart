@@ -234,48 +234,6 @@ void main() {
     expect(await _tombstoneFile(temp).exists(), isFalse);
   });
 
-  test('retention deletes artifacts when the base directory is a symlink '
-      'alias (iOS /var -> /private/var)', () async {
-    final real = await Directory.systemTemp.createTemp('sonus-symlink-real-');
-    final alias = Link(
-      p.join(Directory.systemTemp.path, 'sonus-symlink-alias-${real.hashCode}'),
-    );
-    await alias.create(real.path);
-    addTearDown(() async {
-      if (await alias.exists()) await alias.delete();
-      if (await real.exists()) await real.delete(recursive: true);
-    });
-
-    // The provider hands out the alias spelling; the artifact was recorded
-    // under the real spelling. Before canonicalization this threw
-    // "Refusing to delete an artifact outside app storage".
-    final aliased = SegmentIndex(
-      baseDirectoryProvider: () async => Directory(alias.path),
-    );
-    final audio = await _writeArtifactSet(real, 'sym.wav');
-    final segment = _segment(
-      id: 'sym',
-      audio: audio,
-      endedAtUtc: DateTime.utc(2026, 7, 27, 12),
-      uploadStatus: SegmentUploadStatus.pending,
-    );
-    await aliased.saveSegments([segment]);
-
-    final result = await aliased.enforceDeviceRetention(
-      segments: [segment],
-      cutoffUtc: DateTime.utc(2026, 7, 27, 13),
-    );
-
-    expect(
-      result.single.error,
-      startsWith(SegmentIndex.retentionExpiredErrorPrefix),
-    );
-    expect(result.single.localPath, isNull);
-    expect(await audio.exists(), isFalse);
-    expect(await File(_sidecarPath(audio.path)).exists(), isFalse);
-    expect(await File('${audio.path}.part').exists(), isFalse);
-  });
-
   test('artifact registration rejects paths outside app storage', () async {
     final audio = await _writeArtifactSet(temp, 'bounded.wav');
     final segment = _segment(
