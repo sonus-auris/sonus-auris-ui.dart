@@ -44,6 +44,23 @@ signing access.
   PKCE-bound link only if a fallback is desired. Apply
   `20260729010000_mandatory_mfa.sql`, enable TOTP and/or phone MFA, then prove
   that AAL1 is denied and AAL2 succeeds against the hosted project.
+  - **Required invariant: Auth → Email OTP length must be `6`.** The client
+    rejects any other length: `supabase_auth_form.dart` requires
+    `code.length == 6` and the input field caps at six characters. The project
+    was configured for 8 on August 8, 2026, which silently blocked *every*
+    sign-in — the emailed code simply never validated, with no server-side
+    error to notice. Corrected to 6 the same day via the Management API
+    (`PATCH /v1/projects/<ref>/config/auth {"mailer_otp_length":6}`); note that
+    only an account-scoped Management PAT (`sbp_…`) can read or set this, so the
+    service-role and publishable keys give no visibility into it. Re-check this
+    value after any project restore or auth reconfiguration, or change the app
+    to accept the configured length instead (DEN-3126).
+  - AAL2 was proven end to end against the hosted project on August 8, 2026:
+    six-digit email OTP → MFA gate → TOTP enrollment → verification →
+    `aal2` with `amr` `[totp, otp]`, confirmed in-app and server-side
+    (`admin/users/<id>/factors` reported `totp` `verified`). A password-grant
+    token (`aal1`, `amr` `[password]`) is correctly refused by the backend, as
+    is an unauthenticated device registration.
 - [ ] Apply `20260729020000_lifetime_entitlements.sql` and deploy the trusted
   Play-license/account-cohort grant before the first paid production release.
   Every verified paid-app purchaser must receive a non-expiring `lifetime`

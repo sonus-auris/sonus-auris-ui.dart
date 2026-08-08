@@ -397,12 +397,38 @@ class SegmentIndex {
         'must not be empty',
       );
     }
-    final base = p.normalize((await _baseDirectoryProvider()).absolute.path);
-    final normalized = p.normalize(File(raw).absolute.path);
+    final base = await _canonicalizedPath(
+      (await _baseDirectoryProvider()).absolute.path,
+    );
+    final normalized = await _canonicalizedPath(File(raw).absolute.path);
     if (!p.equals(base, normalized) && !p.isWithin(base, normalized)) {
       throw StateError('Refusing to delete an artifact outside app storage');
     }
     return normalized;
+  }
+
+  /// Containment must compare canonical paths, not spellings: iOS app storage
+  /// sits under the `/var` -> `/private/var` alias, so the base directory and
+  /// an artifact path can name the same location two different ways depending
+  /// on which platform API produced them. A path whose entity does not exist
+  /// yet (already-deleted artifact) is canonicalized through its nearest
+  /// existing ancestor so retention retries still validate.
+  Future<String> _canonicalizedPath(String absolutePath) async {
+    var existing = p.normalize(absolutePath);
+    final remainder = <String>[];
+    while (true) {
+      try {
+        final resolved = await File(existing).resolveSymbolicLinks();
+        return p.normalize(p.joinAll([resolved, ...remainder.reversed]));
+      } on FileSystemException {
+        final parent = p.dirname(existing);
+        if (parent == existing) {
+          return p.normalize(absolutePath);
+        }
+        remainder.add(p.basename(existing));
+        existing = parent;
+      }
+    }
   }
 
   Future<void> _deleteArtifactPaths(List<String> artifactPaths) async {
