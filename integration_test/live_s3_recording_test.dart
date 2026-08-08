@@ -58,6 +58,7 @@ void main() {
         s3Bucket: _bucket,
         s3Region: _region,
         s3Prefix: 'codex-smoke/sonus-auris',
+        s3Endpoint: _endpoint,
       );
       const secrets = CloudSecrets(
         s3AccessKeyId: _accessKeyId,
