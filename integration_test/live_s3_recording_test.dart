@@ -26,6 +26,9 @@ const _secretAccessKey = String.fromEnvironment(
   'SONUS_LIVE_S3_SECRET_ACCESS_KEY',
 );
 const _sessionToken = String.fromEnvironment('SONUS_LIVE_S3_SESSION_TOKEN');
+// Optional S3-compatible endpoint (e.g. Cloudflare R2:
+// https://<account>.r2.cloudflarestorage.com). Empty targets AWS S3.
+const _endpoint = String.fromEnvironment('SONUS_LIVE_S3_ENDPOINT');
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -55,6 +58,7 @@ void main() {
         s3Bucket: _bucket,
         s3Region: _region,
         s3Prefix: 'codex-smoke/sonus-auris',
+        s3Endpoint: _endpoint,
       );
       const secrets = CloudSecrets(
         s3AccessKeyId: _accessKeyId,
