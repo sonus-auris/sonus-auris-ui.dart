@@ -67,9 +67,18 @@ signing access.
   entitlement; subscription cancellation or expiration processing must never
   overwrite it. Prove reinstall, account recovery, and device replacement with
   a grandfathered test account before any future subscription transition.
-- [ ] Set up a Cloudflare R2 bucket for Sonus Auris, configure its S3-compatible
-  endpoint and scoped credentials in the backend secret store, and define the
-  production retention/lifecycle policy.
+- [x] Cloudflare R2 buckets created and the upload path proven on August 8, 2026:
+  `sonus-auris-segments-{prod,staging,dev}`,
+  `sonus-auris-segments-mirror-prod`, `sonus-auris-downloads-prod`. Credentials
+  live in the backend secret store as sops ciphertext
+  (`sonus-auris.infra` `env/enc/*.env.enc`); the backend reports
+  `storageBackend: cloudflare_r2` and ready. A recording captured on device was
+  streamed **directly** to R2 through a presigned URL and read back
+  byte-identical (sha256), including through the public
+  `https://api.sonusauris.app` origin with an AAL2 session. Anonymous read and
+  write against the buckets are refused and no `r2.dev` public URL is enabled.
+  - Still open: the production **retention/lifecycle policy** is not yet defined
+    on the buckets, and the mirror bucket has not been exercised.
 - [ ] Register production OAuth apps for Google Drive (`drive.file`), Microsoft
   OneDrive (AppFolder), and Dropbox (App Folder plus
   `files.content.write`). Register both exact hosted callback URLs
