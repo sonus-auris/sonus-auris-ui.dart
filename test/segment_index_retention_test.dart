@@ -266,7 +266,10 @@ void main() {
       cutoffUtc: DateTime.utc(2026, 7, 27, 13),
     );
 
-    expect(result.single.error, isNull);
+    expect(
+      result.single.error,
+      startsWith(SegmentIndex.retentionExpiredErrorPrefix),
+    );
     expect(result.single.localPath, isNull);
     expect(await audio.exists(), isFalse);
     expect(await File(_sidecarPath(audio.path)).exists(), isFalse);
