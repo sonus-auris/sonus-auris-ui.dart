@@ -116,6 +116,7 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
                 Expanded(
                   child: SelectableText(
                     totp.secret,
+                    key: const ValueKey('mandatory-mfa-totp-secret'),
                     style: const TextStyle(fontFamily: 'monospace'),
                   ),
                 ),
@@ -166,6 +167,7 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
         ),
         const SizedBox(height: 16),
         FilledButton.icon(
+          key: const ValueKey('mandatory-mfa-totp-button'),
           onPressed: _busy ? null : _startTotpEnrollment,
           icon: const Icon(Icons.qr_code_2),
           label: const Text('Use an authenticator app'),
@@ -244,6 +246,7 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
 
   Widget _verificationField() {
     return TextField(
+      key: const ValueKey('mandatory-mfa-code-field'),
       controller: _code,
       enabled: !_busy,
       keyboardType: TextInputType.number,
@@ -260,6 +263,7 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: FilledButton.icon(
+        key: const ValueKey('mandatory-mfa-enrollment-verify-button'),
         onPressed: _busy ? null : () => _verify(factorId),
         icon: _busy
             ? const SizedBox.square(
