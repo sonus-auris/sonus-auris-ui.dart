@@ -78,11 +78,18 @@ async function waitForOtp(mailpitUrl, email) {
 
 async function main() {
   const status = localStatus();
-  const apiUrl = status.API_URL;
+  const localApiUrl = status.API_URL;
+  const apiUrl = process.env.SONUS_E2E_SUPABASE_URL || localApiUrl;
   const publishableKey = status.PUBLISHABLE_KEY || status.ANON_KEY;
   const mailpitUrl = status.MAILPIT_URL || status.INBUCKET_URL;
-  if (!apiUrl || !publishableKey || !mailpitUrl) {
+  if (!localApiUrl || !apiUrl || !publishableKey || !mailpitUrl) {
     throw new Error('Local Supabase status omitted API, client key, or Mailpit.');
+  }
+  if (
+    process.env.SONUS_E2E_SUPABASE_URL &&
+    new URL(apiUrl).protocol !== 'https:'
+  ) {
+    throw new Error('SONUS_E2E_SUPABASE_URL must use HTTPS.');
   }
 
   const suffix = `${Date.now()}-${process.pid}`;

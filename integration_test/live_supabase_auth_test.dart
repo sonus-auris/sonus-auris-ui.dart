@@ -46,17 +46,17 @@ void main() {
       await tester.tap(find.text('Continue'));
 
       final emailField = find.byKey(const ValueKey('supabase-email-field'));
-      final sendLinkButton = find.byKey(
-        const ValueKey('supabase-send-link-button'),
+      final requestCodeButton = find.byKey(
+        const ValueKey('supabase-request-button'),
       );
-      await _pumpUntilEnabled(tester, sendLinkButton);
+      await _pumpUntilEnabled(tester, requestCodeButton);
 
       await tester.enterText(emailField, _uiEmail);
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pump();
-      await tester.ensureVisible(sendLinkButton);
+      await tester.ensureVisible(requestCodeButton);
       await tester.pump();
-      await tester.tap(sendLinkButton);
+      await tester.tap(requestCodeButton);
       await _pumpUntil(
         tester,
         find.byKey(const ValueKey('supabase-code-field')),
@@ -66,9 +66,7 @@ void main() {
         find.byKey(const ValueKey('supabase-code-field')),
         uiOtp,
       );
-      final verifyButton = find.byKey(
-        const ValueKey('supabase-verify-code-button'),
-      );
+      final verifyButton = find.byKey(const ValueKey('supabase-verify-button'));
       await tester.ensureVisible(verifyButton);
       await tester.pump();
       await tester.tap(verifyButton);
@@ -92,8 +90,10 @@ void main() {
       final mfaVerify = find.byKey(
         const ValueKey('mandatory-mfa-enrollment-verify-button'),
       );
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
       await tester.ensureVisible(mfaVerify);
-      await tester.pump();
+      await tester.pumpAndSettle();
       await tester.tap(mfaVerify);
 
       await _pumpUntil(
