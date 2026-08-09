@@ -251,6 +251,18 @@ app itself requests it:
 scripts/e2e/local-supabase-auth.mjs
 ```
 
+To prove the same local Auth and RLS path through a real HTTPS reverse proxy or
+Cloudflare Tunnel, override only the public API origin; Mailpit and the public
+client key still come from the local stack:
+
+```sh
+SONUS_E2E_SUPABASE_URL=https://your-tunnel.example \
+  scripts/e2e/local-supabase-auth.mjs
+```
+
+Set `SONUS_E2E_DEVICE=emulator-5554` (or another Flutter device ID) to run the
+rendered leg on that emulator or device.
+
 Run on a configured device:
 
 ```sh
