@@ -8,10 +8,15 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="${SONUS_DEVICE_LAB_DIR:-$ROOT/build/device-lab/run-$STAMP}"
 RUN_IOS_SIMULATOR="${SONUS_RUN_IOS_SIMULATOR:-1}"
+RUN_IOS_PERMISSION_DENIAL_PROBE="${SONUS_RUN_IOS_PERMISSION_DENIAL_PROBE:-0}"
 RUN_IOS_DEVICE="${SONUS_RUN_IOS_DEVICE:-auto}"
 RUN_ANDROID_DEVICE="${SONUS_RUN_ANDROID_DEVICE:-auto}"
+RUN_ANDROID_PERMISSION_DENIAL_PROBE="${SONUS_RUN_ANDROID_PERMISSION_DENIAL_PROBE:-0}"
+RUN_ANDROID_RECORDING_PROBE="${SONUS_RUN_ANDROID_RECORDING_PROBE:-0}"
 RUN_FLUTTER_MACOS="${SONUS_RUN_FLUTTER_MACOS:-1}"
 EVIDENCE_POLICY="$ROOT/scripts/device-lab/evidence-policy.py"
+IOS_RESOLVER="$ROOT/scripts/device-lab/resolve-physical-ios.py"
+ANDROID_RESOLVER="$ROOT/scripts/device-lab/resolve-physical-android.py"
 mkdir -p "$RUN_DIR"
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -46,6 +51,14 @@ if [[ ! -f "$EVIDENCE_POLICY" ]]; then
   echo "Device-lab evidence policy is missing: $EVIDENCE_POLICY" >&2
   exit 2
 fi
+if [[ ! -f "$IOS_RESOLVER" ]]; then
+  echo "Physical iOS target resolver is missing: $IOS_RESOLVER" >&2
+  exit 2
+fi
+if [[ ! -f "$ANDROID_RESOLVER" ]]; then
+  echo "Physical Android target resolver is missing: $ANDROID_RESOLVER" >&2
+  exit 2
+fi
 
 failures=0
 passes=0
@@ -66,6 +79,7 @@ run_target() {
   name="$1"
   shift
   evidence="$RUN_DIR/$name"
+  required="${SONUS_TARGET_REQUIRED:-0}"
   mkdir -p "$evidence"
   echo
   echo "===== $name ====="
@@ -78,11 +92,13 @@ run_target() {
 
   if [[ "$status" == "0" && "$policy_status" == "0" ]]; then
     record_status "$name" passed
-  elif [[ "$status" == "78" && "$policy_status" == "0" ]]; then
+  elif [[ "$status" == "78" && "$policy_status" == "0" && "$required" != "1" ]]; then
     echo "$name skipped because no eligible target was detected."
     record_status "$name" skipped
   else
-    if [[ "$status" != "0" && "$status" != "78" ]]; then
+    if [[ "$status" == "78" && "$required" == "1" ]]; then
+      echo "$name was required, but its selected target disappeared or became ineligible." >&2
+    elif [[ "$status" != "0" && "$status" != "78" ]]; then
       echo "$name failed with exit status $status" >&2
     fi
     if [[ "$policy_status" != "0" ]]; then
@@ -93,51 +109,33 @@ run_target() {
   return 0
 }
 
-physical_android_targets() {
-  if ! command -v adb >/dev/null 2>&1; then
-    return 1
-  fi
-  adb devices | awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { print $1 }'
-}
-
 select_physical_android() {
+  if ! command -v adb >/dev/null 2>&1; then
+    echo "ADB is required to resolve an authorized physical Android target." >&2
+    return 79
+  fi
+  local resolver_args=()
   if [[ -n "${ANDROID_SERIAL:-}" ]]; then
-    printf '%s\n' "$ANDROID_SERIAL"
-    return 0
+    resolver_args+=(--serial "$ANDROID_SERIAL")
   fi
-  local targets
-  local count
-  targets="$(physical_android_targets || true)"
-  count="$(printf '%s\n' "$targets" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
-  if [[ "$count" == "1" ]]; then
-    printf '%s\n' "$targets"
-    return 0
-  fi
-  if [[ "$count" -gt 1 ]]; then
-    echo "Multiple authorized physical Android targets are attached. Set ANDROID_SERIAL explicitly." >&2
-    return 2
-  fi
-  return 1
+  python3 "$ANDROID_RESOLVER" "${resolver_args[@]}"
 }
 
-physical_ios_visible() {
+select_physical_ios() {
   if ! command -v flutter >/dev/null 2>&1; then
-    return 1
+    echo "Flutter is required to resolve a paired physical iOS target." >&2
+    return 79
   fi
-  flutter devices --machine 2>/dev/null | python3 -c '
-import json
-import sys
-try:
-    devices = json.load(sys.stdin)
-except Exception:
-    devices = []
-for device in devices:
-    target = str(device.get("targetPlatform", "")).lower()
-    platform = str(device.get("platform", "")).lower()
-    if not device.get("emulator") and (target.startswith("ios") or platform.startswith("ios")):
-        raise SystemExit(0)
-raise SystemExit(1)
-' >/dev/null 2>&1
+  local devices_json
+  local resolver_args=()
+  if ! devices_json="$(flutter devices --machine 2>/dev/null)"; then
+    echo "Flutter device discovery failed." >&2
+    return 79
+  fi
+  if [[ -n "${IOS_DEVICE_ID:-}" ]]; then
+    resolver_args+=(--device-id "$IOS_DEVICE_ID")
+  fi
+  printf '%s' "$devices_json" | python3 "$IOS_RESOLVER" "${resolver_args[@]}"
 }
 
 : > "$RUN_DIR/results.txt"
@@ -148,16 +146,39 @@ else
   record_status ios-simulator skipped
 fi
 
+# The permission-denial target creates and deletes a disposable Simulator of its
+# own. It never reuses or changes the normal iOS Simulator selected above.
+case "$RUN_IOS_PERMISSION_DENIAL_PROBE" in
+  1|true|yes)
+    run_target ios-permission-denial-probe \
+      "$ROOT/scripts/device-lab/ios-permission-denial-probe.sh"
+    ;;
+  *) record_status ios-permission-denial-probe skipped ;;
+esac
+
 case "$RUN_IOS_DEVICE" in
   1|true|yes)
-    run_target ios-device "$ROOT/scripts/device-lab/ios-attached-smoke.sh"
+    ios_device_id="$(select_physical_ios)"
+    selection_status=$?
+    if [[ "$selection_status" != "0" || -z "$ios_device_id" ]]; then
+      echo "Physical iOS was required but one unambiguous eligible target was not found." >&2
+      record_status ios-device failed
+    else
+      SONUS_TARGET_REQUIRED=1 run_target ios-device \
+        "$ROOT/scripts/device-lab/ios-attached-smoke.sh" "$ios_device_id"
+    fi
     ;;
   auto)
-    if physical_ios_visible; then
-      run_target ios-device "$ROOT/scripts/device-lab/ios-attached-smoke.sh"
-    else
+    ios_device_id="$(select_physical_ios)"
+    selection_status=$?
+    if [[ "$selection_status" == "0" && -n "$ios_device_id" ]]; then
+      run_target ios-device "$ROOT/scripts/device-lab/ios-attached-smoke.sh" "$ios_device_id"
+    elif [[ "$selection_status" == "78" ]]; then
       echo "No paired physical iPhone detected; skipping physical iOS smoke."
       record_status ios-device skipped
+    else
+      echo "Physical iOS target selection was ambiguous or unsafe." >&2
+      record_status ios-device failed
     fi
     ;;
   *) record_status ios-device skipped ;;
@@ -168,10 +189,11 @@ case "$RUN_ANDROID_DEVICE" in
     android_serial="$(select_physical_android)"
     selection_status=$?
     if [[ "$selection_status" != "0" || -z "$android_serial" ]]; then
-      echo "Physical Android was required but one unambiguous authorized USB target was not found." >&2
+      echo "Physical Android was required but one unambiguous authorized target was not found." >&2
       record_status android-device failed
     else
-      run_target android-device "$ROOT/scripts/device-lab/android-attached-smoke.sh" \
+      SONUS_TARGET_REQUIRED=1 run_target android-device \
+        "$ROOT/scripts/device-lab/android-attached-smoke.sh" \
         "$ROOT/build/app/outputs/flutter-apk/app-debug.apk" "$android_serial"
     fi
     ;;
@@ -181,14 +203,53 @@ case "$RUN_ANDROID_DEVICE" in
     if [[ "$selection_status" == "0" && -n "$android_serial" ]]; then
       run_target android-device "$ROOT/scripts/device-lab/android-attached-smoke.sh" \
         "$ROOT/build/app/outputs/flutter-apk/app-debug.apk" "$android_serial"
-    elif [[ "$selection_status" == "2" ]]; then
-      record_status android-device failed
-    else
+    elif [[ "$selection_status" == "78" ]]; then
       echo "No authorized physical Android target detected; skipping Android smoke."
       record_status android-device skipped
+    else
+      echo "Physical Android target selection was ambiguous or unsafe." >&2
+      record_status android-device failed
     fi
     ;;
   *) record_status android-device skipped ;;
+esac
+
+# Permission denial is isolated from both production and the recording lab. It
+# opens no microphone and requires no recording consent, but remains opt-in
+# because it deliberately exercises a user-fixed runtime permission state.
+case "$RUN_ANDROID_PERMISSION_DENIAL_PROBE" in
+  1|true|yes)
+    android_permission_serial="$(select_physical_android)"
+    selection_status=$?
+    if [[ "$selection_status" != "0" || -z "$android_permission_serial" ]]; then
+      echo "Android permission-denial probe was requested but no unambiguous authorized physical target was found." >&2
+      record_status android-permission-denial-probe failed
+    else
+      run_target android-permission-denial-probe \
+        "$ROOT/scripts/device-lab/android-permission-denial-probe.sh" \
+        "$android_permission_serial"
+    fi
+    ;;
+  *) record_status android-permission-denial-probe skipped ;;
+esac
+
+# Real microphone automation is intentionally separate from the default Android
+# lifecycle smoke. It requires both an explicit opt-in target flag and the exact
+# consent phrase enforced by android-recording-probe.sh.
+case "$RUN_ANDROID_RECORDING_PROBE" in
+  1|true|yes)
+    android_recording_serial="$(select_physical_android)"
+    selection_status=$?
+    if [[ "$selection_status" != "0" || -z "$android_recording_serial" ]]; then
+      echo "Android recording probe was requested but no unambiguous authorized physical target was found." >&2
+      record_status android-recording-probe failed
+    else
+      run_target android-recording-probe \
+        "$ROOT/scripts/device-lab/android-recording-probe.sh" \
+        "$android_recording_serial"
+    fi
+    ;;
+  *) record_status android-recording-probe skipped ;;
 esac
 
 if [[ "$RUN_FLUTTER_MACOS" == "1" ]]; then
@@ -203,6 +264,9 @@ skips=$skips
 failures=$failures
 evidence_policy=required
 physical_device_claims_require_this_run=true
+ios_permission_denial_probe_opt_in=$RUN_IOS_PERMISSION_DENIAL_PROBE
+android_permission_denial_probe_opt_in=$RUN_ANDROID_PERMISSION_DENIAL_PROBE
+android_recording_probe_opt_in=$RUN_ANDROID_RECORDING_PROBE
 SUMMARY
 cat "$RUN_DIR/results.txt"
 echo "Evidence root: $RUN_DIR"

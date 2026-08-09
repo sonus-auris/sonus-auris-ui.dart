@@ -35,7 +35,7 @@
         android:usesPermissionFlags="neverForLocation" />
 
     <application
-        android:label="Sonus Auris"
+        android:label="${sonusAppLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
@@ -63,13 +63,14 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
             <!-- Supabase passwordless sign-up/sign-in callback. Keep this on the
-                 main activity so app_links can adopt the returned session. -->
+                 main activity so app_links can adopt the returned session. The
+                 device-lab build substitutes an isolated scheme. -->
             <intent-filter android:label="supabase_magic_link">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="sonusauris"
+                    android:scheme="${sonusUriScheme}"
                     android:host="auth"
                     android:path="/callback" />
             </intent-filter>
@@ -80,7 +81,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="sonusauris"
+                    android:scheme="${sonusUriScheme}"
                     android:host="invite"
                     android:path="/join" />
             </intent-filter>
@@ -111,7 +112,7 @@
             </intent-filter>
         </receiver>
         <!-- OAuth redirect handler for flutter_web_auth_2 (Spotify/SoundCloud
-             account linking). The app opens sonusauris://oauth/callback in a
+             account linking). The app opens the configured callback scheme in a
              browser tab; this activity catches the redirect back into the app.
              Without it the linking flow cannot complete on Android. PKCE + a
              validated state param protect the flow (see oauth_browser.dart). -->
@@ -123,7 +124,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="sonusauris"
+                    android:scheme="${sonusUriScheme}"
                     android:host="oauth"
                     android:path="/callback" />
             </intent-filter>

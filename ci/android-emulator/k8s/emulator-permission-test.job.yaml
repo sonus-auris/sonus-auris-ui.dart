@@ -1,23 +1,14 @@
 # Headless Android emulator permission test as a Kubernetes Job.
 #
-# Runs the Sonus Auris permission smoke-test on a real Android emulator inside
-# the cluster (Hetzner / AWS EC2). The emulator REQUIRES hardware virtualization
-# (/dev/kvm), which only exists on KVM-capable nodes:
-#   - AWS: *.metal instances (e.g. c5.metal, m5.metal) — regular EC2 vCPUs do
-#     NOT expose nested virt.
-#   - Hetzner: dedicated / root servers (Hetzner Cloud shared vCPUs cannot do it).
-# Label such a node `sonus-auris.dev/kvm=true` and schedule this Job onto it.
+# This file is a template. Render it with scripts/emulator/render-k8s-job.sh and
+# the exact GHCR digest emitted by .github/workflows/build-emulator-image.yml.
+# Mutable tags are intentionally rejected.
 #
-# Exposing /dev/kvm — two options:
-#   (A) KVM device plugin (preferred, unprivileged): install e.g.
-#       smarter-device-manager or kubevirt's kvm device plugin so the node
-#       advertises `devices.kubevirt.io/kvm`, then request it (shown below).
-#   (B) Privileged + hostPath /dev/kvm (simpler, less safe): comment out the
-#       resources.limits kvm line and uncomment the hostPath volume + the
-#       securityContext.privileged block.
-#
-# The APK under test is pulled from an initContainer or baked into the image.
-# Here we expect it baked in at $APK_PATH; for a bind approach mount a volume.
+# The emulator requires hardware virtualization (/dev/kvm), which is available
+# only on KVM-capable nodes such as AWS metal instances or dedicated/root
+# servers. Label such a node `sonus-auris.dev/kvm=true` and expose KVM through a
+# device plugin. The commented privileged hostPath fallback remains an explicit
+# operator decision and is not enabled by CI.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -35,21 +26,15 @@ spec:
         app.kubernetes.io/name: sonus-emulator-permission-test
     spec:
       restartPolicy: Never
-      # This pod drives browsers/emulators and runs `npm install`, so it
-      # executes third-party code; it never calls the Kubernetes API. Without
-      # this, it would still get a mounted ServiceAccount token that a
-      # compromised dependency could use against the cluster.
+      terminationGracePeriodSeconds: 30
       automountServiceAccountToken: false
       nodeSelector:
         sonus-auris.dev/kvm: "true"
       containers:
         - name: emulator
-          # Build & push from ci/android-emulator/Dockerfile; pin by digest in prod.
-          image: ghcr.io/sonus-auris/android-emulator:latest
+          image: ${SONUS_ANDROID_EMULATOR_IMAGE}
           imagePullPolicy: IfNotPresent
           env:
-            - name: APK_PATH
-              value: /work/app-release.apk
             - name: SMOKE_SCREENSHOT
               value: /work/permission-smoke.png
           resources:
@@ -57,11 +42,10 @@ spec:
               cpu: "4"
               memory: 6Gi
             limits:
-              # (A) KVM device plugin — advertises one kvm device per node.
               devices.kubevirt.io/kvm: "1"
               cpu: "6"
               memory: 8Gi
-          # (B) Privileged fallback — uncomment if not using the device plugin:
+          # Privileged fallback when no KVM device plugin is installed:
           # securityContext:
           #   privileged: true
           # volumeMounts:

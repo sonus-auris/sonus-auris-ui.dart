@@ -1,0 +1,72 @@
+name: opto-sync real Flutter application
+
+on:
+  pull_request:
+    paths:
+      - 'lib/**'
+      - 'test/opto_sync_real_app_test.dart'
+      - 'integration_test/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/opto-sync-real-flutter.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.44.3
+
+jobs:
+  real-flutter-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout application branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: app
+          persist-credentials: false
+
+      - name: Install exact Flutter archive and verify its official SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > "$RUNNER_TEMP/flutter-release.env"
+          import json, os, urllib.request
+          version = os.environ['FLUTTER_VERSION']
+          with urllib.request.urlopen('https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json', timeout=60) as response:
+              metadata = json.load(response)
+          release = next(item for item in metadata['releases'] if item['version'] == version and item['channel'] == 'stable')
+          print('FLUTTER_ARCHIVE=' + release['archive'])
+          print('FLUTTER_SHA256=' + release['sha256'])
+          print('FLUTTER_BASE_URL=' + metadata['base_url'])
+          PY
+          source "$RUNNER_TEMP/flutter-release.env"
+          curl --fail --location --retry 3 "$FLUTTER_BASE_URL/$FLUTTER_ARCHIVE" --output "$RUNNER_TEMP/flutter.tar.xz"
+          echo "$FLUTTER_SHA256  $RUNNER_TEMP/flutter.tar.xz" | sha256sum --check --strict
+          tar -xJf "$RUNNER_TEMP/flutter.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Analyze and execute the real recorder application tests
+        working-directory: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter config --no-analytics
+          flutter pub get
+          dart format --output=none test/opto_sync_real_app_test.dart
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+          flutter test test/opto_sync_real_app_test.dart --reporter expanded
+          flutter test --reporter expanded
+          if [[ -d integration_test ]] && find integration_test -name '*_test.dart' -print -quit | grep -q .; then
+            echo 'Device integration tests remain available for Android/iOS runners and physical devices; the hosted gate builds the Android application.'
+          fi
+
+      - name: Build the real Android recorder application
+        working-directory: app
+        run: flutter build apk --debug
