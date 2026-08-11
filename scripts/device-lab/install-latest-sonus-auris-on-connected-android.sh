@@ -99,9 +99,13 @@ git_auth() {
 
 refresh_cache_repo() {
   local slug="$1" dir="$2" branch="$3"
+  local canonical_remote
+  canonical_remote="$(git_remote "$slug")"
   mkdir -p "$(dirname "$dir")"
+  [[ ! -L "$dir" ]] || fail "Refusing a symlinked installer cache: $dir"
   if [[ -d "$dir/.git" ]]; then
     note "Refreshing $slug:$branch"
+    git -C "$dir" remote set-url origin "$canonical_remote"
     git_auth -C "$dir" fetch --prune --depth=1 origin "$branch"
     git -C "$dir" checkout -B installer-main FETCH_HEAD >/dev/null
     git -C "$dir" reset --hard FETCH_HEAD >/dev/null
@@ -109,7 +113,7 @@ refresh_cache_repo() {
   else
     rm -rf "$dir"
     note "Cloning $slug:$branch into the isolated installer cache"
-    git_auth clone --depth=1 --branch "$branch" "$(git_remote "$slug")" "$dir"
+    git_auth clone --depth=1 --branch "$branch" "$canonical_remote" "$dir"
   fi
   git_auth -C "$dir" submodule update --init --recursive --depth=1
 }
@@ -159,16 +163,49 @@ load_public_client_config() {
   done
   (( ${#missing[@]} == 0 )) || fail "Missing public client config in $CONFIG_SOURCE: ${missing[*]}"
 
-  case "$SONUS_SUPABASE_ANON_KEY" in
-    sb_secret_*) fail "SONUS_SUPABASE_ANON_KEY contains a secret key; only an anon/publishable key may enter the app." ;;
-  esac
-  [[ "$SONUS_SUPABASE_URL" == https://* ]] || fail "SONUS_SUPABASE_URL must use HTTPS."
-  [[ "$SONUS_BACKEND_BASE_URL" == https://* ]] || fail "SONUS_BACKEND_BASE_URL must use HTTPS for a physical handset."
-  case "$SONUS_BACKEND_BASE_URL" in
-    *localhost*|*127.0.0.1*|*10.0.2.2*)
-      fail "The backend URL points at loopback/emulator networking and is not suitable for a physical handset. Activate the public/tunnel environment."
-      ;;
-  esac
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required to validate the public client configuration."
+  python3 - <<'PY_CONFIG' || fail "The selected public client configuration is unsafe."
+import base64
+import json
+import os
+from urllib.parse import urlparse
+
+forbidden_hosts = {
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "10.0.2.2",
+    "host.docker.internal",
+}
+for name in ("SONUS_BACKEND_BASE_URL", "SONUS_SUPABASE_URL"):
+    value = os.environ[name]
+    parsed = urlparse(value)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or not host or parsed.username or parsed.password:
+        raise SystemExit(f"{name} must be an absolute HTTPS URL without embedded credentials")
+    if host in forbidden_hosts or host.endswith(".localhost") or host.endswith(".local"):
+        raise SystemExit(f"{name} points at a local or emulator-only host")
+
+key = os.environ["SONUS_SUPABASE_ANON_KEY"].strip()
+lowered = key.lower()
+if len(key) < 20:
+    raise SystemExit("SONUS_SUPABASE_ANON_KEY is implausibly short")
+if lowered.startswith("sb_secret_") or "service_role" in lowered:
+    raise SystemExit("SONUS_SUPABASE_ANON_KEY contains a secret/server key")
+
+# Legacy Supabase client keys are JWTs. Decode the role claim so a service-role
+# JWT cannot be compiled into the APK merely because its plaintext is encoded.
+parts = key.split(".")
+if len(parts) == 3:
+    try:
+        payload_segment = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_segment))
+    except (ValueError, json.JSONDecodeError) as error:
+        raise SystemExit("SONUS_SUPABASE_ANON_KEY is a malformed JWT") from error
+    role = str(payload.get("role", "")).lower()
+    if role in {"service_role", "supabase_admin"}:
+        raise SystemExit("SONUS_SUPABASE_ANON_KEY JWT has a privileged role")
+PY_CONFIG
 }
 
 select_device() {
@@ -198,6 +235,16 @@ select_device() {
     fail "More than one device is connected. Re-run with ANDROID_SERIAL=<serial>."
   fi
   DEVICE_SERIAL="${devices[0]}"
+}
+
+require_physical_device() {
+  local adb="$1" serial="$2" qemu boot_qemu manufacturer
+  qemu="$("$adb" -s "$serial" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r' || true)"
+  boot_qemu="$("$adb" -s "$serial" shell getprop ro.boot.qemu 2>/dev/null | tr -d '\r' || true)"
+  manufacturer="$("$adb" -s "$serial" shell getprop ro.product.manufacturer 2>/dev/null | tr -d '\r' || true)"
+  if [[ "$serial" == emulator-* || "$qemu" == "1" || "$boot_qemu" == "1" || "$manufacturer" == "Genymotion" ]]; then
+    fail "The selected target is an emulator. This installer is restricted to an authorized physical Android handset."
+  fi
 }
 
 safe_install() {
@@ -290,10 +337,9 @@ PY_PARSE
   mutation_payload="$(LINEAR_ISSUE_ID="$issue_uuid" LINEAR_COMMENT_BODY="$comment_body" python3 - <<'PY_MUTATION'
 import json, os
 print(json.dumps({
-    "query": "mutation($issueId: String!, $stateId: String!, $body: String!) { issueUpdate(id: $issueId, input: {stateId: $stateId}) { success } commentCreate(input: {issueId: $issueId, body: $body}) { success } }",
+    "query": "mutation($issueId: String!, $body: String!) { commentCreate(input: {issueId: $issueId, body: $body}) { success } }",
     "variables": {
         "issueId": os.environ["LINEAR_ISSUE_ID"],
-        "stateId": "afb7ed8a-ca77-4a74-b401-b4a7dda32e21",
         "body": os.environ["LINEAR_COMMENT_BODY"],
     },
 }))
@@ -309,15 +355,14 @@ PY_MUTATION
 import json, os, sys
 try:
     obj=json.loads(os.environ.get('LINEAR_RESPONSE',''))
-    ok=(obj.get('data',{}).get('issueUpdate',{}).get('success') is True and
-        obj.get('data',{}).get('commentCreate',{}).get('success') is True and
+    ok=(obj.get('data',{}).get('commentCreate',{}).get('success') is True and
         not obj.get('errors'))
 except Exception:
     ok=False
 sys.exit(0 if ok else 1)
 PY_CHECK
   then
-    printf 'Updated Linear DEN-836 to In Progress with a sanitized install note.\n'
+    printf 'Added a sanitized physical-install note to Linear DEN-836.\n'
   else
     printf 'warning: Linear returned an error; install remains successful.\n' >&2
   fi
@@ -339,6 +384,7 @@ fi
 
 load_public_client_config "$INFRA_REPO"
 select_device "$ADB"
+require_physical_device "$ADB" "$DEVICE_SERIAL"
 
 SOURCE_SHA="$(git -C "$APP_REPO" rev-parse HEAD)"
 SOURCE_SHORT="$(git -C "$APP_REPO" rev-parse --short=12 HEAD)"
