@@ -1,0 +1,242 @@
+name: DEN-836 signed Android acceptance APK once
+run-name: Build latest Sonus Auris production APK from ${{ github.sha }}
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/den-836-production-apk-once.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: den-836-production-apk-once
+  cancel-in-progress: false
+
+jobs:
+  build-production-apk:
+    if: github.actor == 'ORESoftware'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    environment:
+      name: mobile-production
+    env:
+      SONUS_BACKEND_BASE_URL: ${{ secrets.SONUS_BACKEND_BASE_URL }}
+      SONUS_SUPABASE_URL: ${{ secrets.SONUS_SUPABASE_URL }}
+      SONUS_SUPABASE_ANON_KEY: ${{ secrets.SONUS_SUPABASE_ANON_KEY }}
+      KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+      STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+
+    steps:
+      - name: Check out exact trusted main revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          clean: true
+          show-progress: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up pinned Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.2
+          cache: true
+
+      - name: Validate production public configuration and signing inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY KEYSTORE_B64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::mobile-production is missing: ${missing[*]}"
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlparse
+
+          forbidden_hosts = {
+              "localhost",
+              "127.0.0.1",
+              "0.0.0.0",
+              "10.0.2.2",
+              "host.docker.internal",
+          }
+          for name in ("SONUS_BACKEND_BASE_URL", "SONUS_SUPABASE_URL"):
+              value = os.environ[name]
+              parsed = urlparse(value)
+              host = (parsed.hostname or "").lower()
+              if parsed.scheme != "https" or not host:
+                  raise SystemExit(f"{name} must be an absolute HTTPS URL")
+              if host in forbidden_hosts or host.endswith(".localhost") or host.endswith(".local"):
+                  raise SystemExit(f"{name} points at a local or emulator host")
+
+          key = os.environ["SONUS_SUPABASE_ANON_KEY"]
+          lowered = key.lower()
+          if key.startswith("sb_secret_") or "service_role" in lowered:
+              raise SystemExit("SONUS_SUPABASE_ANON_KEY is a secret/server key; refusing to embed it")
+          if len(key) < 20:
+              raise SystemExit("SONUS_SUPABASE_ANON_KEY is implausibly short")
+          PY
+
+      - name: Install ephemeral Android upload key
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > android/app/upload-keystore.jks
+          {
+            printf 'storeFile=upload-keystore.jks\n'
+            printf 'storePassword=%s\n' "$STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: Assign monotonic acceptance version code
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_number="$(date -u +%y%m%d%H)"
+          [[ "$build_number" =~ ^[1-9][0-9]*$ ]]
+          echo "SONUS_BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+          echo "acceptance_build_number=$build_number"
+
+      - name: Analyze and test release candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter analyze --no-fatal-infos
+          flutter test
+
+      - name: Build and signature-verify production APK
+        shell: bash
+        run: bash scripts/release/android-build-apk.sh
+
+      - name: Verify package identity and reject local endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk='build/app/outputs/flutter-apk/app-release.apk'
+          [[ -f "$apk" ]]
+
+          aapt_bin="$(command -v aapt || true)"
+          if [[ -z "$aapt_bin" && -n "${ANDROID_HOME:-}" ]]; then
+            aapt_bin="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print 2>/dev/null | sort -V | tail -n1)"
+          fi
+          [[ -n "$aapt_bin" ]] || { echo '::error::aapt not found'; exit 1; }
+          badging="$($aapt_bin dump badging "$apk" | head -n1)"
+          grep -q "name='com.ores.sonus_auris'" <<<"$badging" || {
+            echo "::error::unexpected Android application ID"
+            exit 1
+          }
+          grep -q "versionCode='${SONUS_BUILD_NUMBER}'" <<<"$badging" || {
+            echo "::error::APK versionCode does not match SONUS_BUILD_NUMBER"
+            exit 1
+          }
+
+          APK_PATH="$apk" python3 - <<'PY'
+          import os
+          import zipfile
+
+          forbidden = (
+              b"localhost",
+              b"127.0.0.1",
+              b"0.0.0.0",
+              b"10.0.2.2",
+              b"host.docker.internal",
+          )
+          apk = os.environ["APK_PATH"]
+          hits = set()
+          with zipfile.ZipFile(apk) as archive:
+              for member in archive.infolist():
+                  if member.file_size > 64 * 1024 * 1024:
+                      continue
+                  try:
+                      data = archive.read(member)
+                  except (OSError, RuntimeError, zipfile.BadZipFile):
+                      continue
+                  lowered = data.lower()
+                  for needle in forbidden:
+                      if needle in lowered:
+                          hits.add(needle.decode())
+          if hits:
+              raise SystemExit("APK contains forbidden local/emulator endpoint markers: " + ", ".join(sorted(hits)))
+          PY
+
+      - name: Create checksums and non-secret build evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk='build/app/outputs/flutter-apk/app-release.apk'
+          mkdir -p build/den-836
+          sha256sum "$apk" > build/den-836/SHA256SUMS
+
+          apksigner_bin="$(command -v apksigner || true)"
+          if [[ -z "$apksigner_bin" && -n "${ANDROID_HOME:-}" ]]; then
+            apksigner_bin="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print 2>/dev/null | sort -V | tail -n1)"
+          fi
+          signer_sha256="$($apksigner_bin verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n1)"
+
+          BACKEND_HOST="$(python3 -c 'import os; from urllib.parse import urlparse; print(urlparse(os.environ["SONUS_BACKEND_BASE_URL"]).hostname)')"
+          SUPABASE_HOST="$(python3 -c 'import os; from urllib.parse import urlparse; print(urlparse(os.environ["SONUS_SUPABASE_URL"]).hostname)')"
+          apk_sha256="$(sha256sum "$apk" | awk '{print $1}')"
+          {
+            echo 'Sonus Auris Android physical-device acceptance build'
+            echo "source_commit=${GITHUB_SHA}"
+            echo "package_name=com.ores.sonus_auris"
+            echo "version_name=$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' pubspec.yaml | head -n1)"
+            echo "version_code=${SONUS_BUILD_NUMBER}"
+            echo "apk_sha256=${apk_sha256}"
+            echo "signer_certificate_sha256=${signer_sha256}"
+            echo "backend_host=${BACKEND_HOST}"
+            echo "supabase_host=${SUPABASE_HOST}"
+            echo 'configuration=mobile-production environment'
+            echo 'tests=flutter analyze and flutter test passed before build'
+          } > build/den-836/BUILD-EVIDENCE.txt
+
+          cat > build/den-836/INSTALL.txt <<'EOF'
+          Install app-release.apk on the connected Android with:
+
+            adb install -r app-release.apk
+
+          This preserves application data when the installed package has the same
+          signing certificate. Android will reject an in-place update signed by a
+          different certificate; do not uninstall automatically because that would
+          delete this installation's app-private data.
+          EOF
+
+      - name: Upload signed production APK and evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: sonus-auris-den-836-production-apk-${{ env.SONUS_BUILD_NUMBER }}
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/den-836/SHA256SUMS
+            build/den-836/BUILD-EVIDENCE.txt
+            build/den-836/INSTALL.txt
+            build/symbols/**
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove ephemeral signing material
+        if: always()
+        shell: bash
+        run: rm -f android/key.properties android/app/upload-keystore.jks
