@@ -1,9 +1,10 @@
 // Passwordless + MFA GoTrue (Supabase Auth) REST client for the console.
 //
-// There is no password anywhere: sign-in and sign-up are the same email
-// one-time-code / magic-link flow. Only the anon/publishable key is ever sent
-// (enforced by [requireSafeSupabaseClientKey]); the server revalidates every
-// token, so nothing here is a trust boundary.
+// There is no password anywhere: sign-in and sign-up use the same email-code
+// flow, with legacy callback validation retained during migration. Only the
+// anon/publishable key is ever sent (enforced by
+// [requireSafeSupabaseClientKey]); the server revalidates every token, so
+// nothing here is a trust boundary.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -42,8 +43,9 @@ class AuthClient {
     ).replaceAll('=', '');
   }
 
-  /// Emails a six-digit sign-in code plus a PKCE-bound link fallback. Same
-  /// call for sign-in and sign-up; unknown users are created on verification.
+  /// Emails a six-digit sign-in code. Hosted templates render the numeric token
+  /// only. PKCE fields remain temporarily for safe validation of already-issued
+  /// legacy callbacks. The same call handles sign-in and sign-up.
   Future<void> sendEmailOtp(
     String email, {
     required String codeVerifier,
@@ -52,7 +54,7 @@ class AuthClient {
     final redirect = _magicLinkRedirect();
     if (redirect == null) {
       throw const FormatException(
-        'Configure an HTTPS magic-link callback before signing in.',
+        'Secure sign-in callback configuration is missing.',
       );
     }
     await _post(
@@ -154,27 +156,28 @@ class AuthClient {
   String authorizationCodeFromCallback(Uri callback) {
     if (!isExpectedMagicLinkCallback(callback)) {
       throw const FormatException(
-        'The sign-in link was sent to an unexpected callback.',
+        'The legacy sign-in callback targeted an unexpected endpoint.',
       );
     }
     if (callback.fragment.isNotEmpty ||
         callback.queryParameters.containsKey('access_token') ||
         callback.queryParameters.containsKey('refresh_token')) {
       throw const FormatException(
-        'This older sign-in link is not accepted. Request a fresh magic link.',
+        'This older sign-in link is not accepted. Request a fresh email code.',
       );
     }
     if (callback.queryParameters.containsKey('error') ||
         callback.queryParameters.containsKey('error_code') ||
         callback.queryParameters.containsKey('error_description')) {
       throw StateError(
-        'This sign-in link is invalid or expired. Request a fresh one.',
+        'This legacy sign-in link is invalid or expired. Request a fresh '
+        'email code.',
       );
     }
     final codes = callback.queryParametersAll['code'] ?? const <String>[];
     if (codes.length != 1) {
       throw const FormatException(
-        'The sign-in link did not contain one authorization code.',
+        'The legacy sign-in callback did not contain one authorization code.',
       );
     }
     final code = codes.single.trim();
@@ -182,7 +185,7 @@ class AuthClient {
         code.length > 2048 ||
         code.runes.any((rune) => rune <= 0x20 || rune == 0x7f)) {
       throw const FormatException(
-        'The sign-in link contained an invalid authorization code.',
+        'The legacy sign-in callback contained an invalid authorization code.',
       );
     }
     return code;
@@ -195,14 +198,15 @@ class AuthClient {
     final code = authorizationCode.trim();
     if (code.isEmpty || code.length > 2048) {
       throw const FormatException(
-        'The magic link authorization code is invalid.',
+        'The legacy callback authorization code is invalid.',
       );
     }
     _validatePkceVerifier(codeVerifier);
     final json = await _post(
       'token',
       {'auth_code': code, 'code_verifier': codeVerifier},
-      'This sign-in link is invalid or expired. Request a fresh one.',
+      'This legacy sign-in link is invalid or expired. Request a fresh email '
+      'code.',
       query: {'grant_type': 'pkce'},
       exposeServerError: false,
     );
@@ -225,7 +229,7 @@ class AuthClient {
     return SupabaseSession.fromJson(json);
   }
 
-  /// Adopts a Supabase magic-link callback after verifying that it targets the
+  /// Adopts a legacy Supabase callback after verifying that it targets the
   /// exact application URI configured for this build.
   ///
   /// Only the server-verified `token_hash` form is accepted. Implicit-flow
@@ -240,7 +244,7 @@ class AuthClient {
     final expected = magicLinkRedirectUri;
     if (expected == null) {
       throw const FormatException(
-        'Configure an HTTPS magic-link callback before signing in.',
+        'Secure sign-in callback configuration is missing.',
       );
     }
     if (callback.scheme != expected.scheme ||
@@ -248,7 +252,9 @@ class AuthClient {
         callback.userInfo.isNotEmpty ||
         !_samePort(callback, expected) ||
         callback.path != expected.path) {
-      throw const FormatException('That sign-in link targets another app.');
+      throw const FormatException(
+        'That legacy sign-in callback targets another app.',
+      );
     }
 
     final parameters = <String, String>{
@@ -267,7 +273,7 @@ class AuthClient {
     if ((parameters['access_token'] ?? '').trim().isNotEmpty ||
         (parameters['refresh_token'] ?? '').trim().isNotEmpty) {
       throw const FormatException(
-        'This older sign-in link is not accepted. Request a fresh magic link.',
+        'This older sign-in link is not accepted. Request a fresh email code.',
       );
     }
 
@@ -276,12 +282,13 @@ class AuthClient {
       final json = await _post(
         'verify',
         {'type': 'magiclink', 'token_hash': tokenHash},
-        'That magic link was not accepted. Request a fresh one and try again.',
+        'That legacy sign-in link was not accepted. Request a fresh email code '
+        'and try again.',
       );
       return SupabaseSession.fromJson(json);
     }
     throw const FormatException(
-      'The sign-in link contained no usable Supabase session.',
+      'The legacy sign-in callback contained no usable Supabase session.',
     );
   }
 
