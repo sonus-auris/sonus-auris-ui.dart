@@ -184,7 +184,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     ).toString();
   }
 
-  Future<bool> _sendMagicLink(String email) async {
+  Future<bool> _sendEmailCode(String email) async {
     final config = _currentConfig();
     final codeVerifier = SupabaseAuthClient.createPkceVerifier();
     final pending = PendingSupabaseAuth(
@@ -208,7 +208,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     if (mounted) {
       setState(() {
         _config = config;
-        _status = 'We emailed you a sign-in link and a 6-digit code.';
+        _status = 'We emailed you a 6-digit sign-in code.';
       });
     }
     return true;
@@ -250,7 +250,8 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
       final pending = await _loadPendingAuth();
       if (pending == null) {
         throw StateError(
-          'This magic link was not requested in this browser. Request a fresh one.',
+          'This legacy sign-in link was not requested in this browser. '
+          'Request a fresh email code.',
         );
       }
       if (pending.isExpired() ||
@@ -258,7 +259,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
           pending.redirectUrl != _effectiveAuthRedirectUrl) {
         await _clearPendingAuth();
         throw StateError(
-          'This sign-in request expired. Request a fresh magic link.',
+          'This sign-in request expired. Request a fresh email code.',
         );
       }
       final session = await _auth.exchangePkceCode(
@@ -271,7 +272,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
       await _adoptSession(
         config,
         session,
-        status: 'Signed in with your magic link.',
+        status: 'Signed in from a legacy callback.',
       );
     } catch (error) {
       if (mounted) {
@@ -353,9 +354,9 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     if (!mounted) {
       return;
     }
-    // An email code or magic link establishes only AAL1. Mobile and desktop
-    // hold that behind SupabaseMfaGate; the browser must not be the one
-    // surface where a first factor alone opens the account.
+    // An email code or legacy callback establishes only AAL1. Mobile and
+    // desktop hold that behind SupabaseMfaGate; the browser must not be the
+    // one surface where a first factor alone opens the account.
     if (!session.isPasswordlessAal2) {
       setState(() {
         _config = config;
@@ -624,7 +625,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
                     supabaseUrlController: _supabaseUrl,
                     supabaseAnonKeyController: _supabaseKey,
                     showProjectConfiguration: true,
-                    onRequestCode: _sendMagicLink,
+                    onRequestCode: _sendEmailCode,
                     onSubmitCode: _verifyEmailCode,
                   )
                 else if (!signedIn)

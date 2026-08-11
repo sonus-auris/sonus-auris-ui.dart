@@ -101,8 +101,8 @@ const String kConsentVersion = 'audio-dashcam-consent-v2';
 const String kDefaultSupabaseUrl = AppConfig.defaultSupabaseUrl;
 const String kDefaultSupabaseAnonKey = AppConfig.defaultSupabaseAnonKey;
 
-/// Return URL for Supabase magic links. Add this URL (or the build-time
-/// override) to the project's Supabase Auth redirect allow-list.
+/// Return URL retained for legacy Supabase PKCE callbacks. Add this URL (or the
+/// build-time override) to the project's Supabase Auth redirect allow-list.
 const String kSupabaseAuthRedirectUrl = String.fromEnvironment(
   'SONUS_SUPABASE_AUTH_REDIRECT_URL',
   defaultValue: 'sonusauris://auth/callback',
@@ -285,7 +285,7 @@ class AppController {
               (isUploading: isUploading, transfer: transfer),
         );
     // Fold account security into this slot too so an AAL1 token can never make
-    // the UI look fully signed in between the magic-link and mandatory MFA.
+    // the UI look fully signed in between the first factor and mandatory MFA.
     // (combineLatest is at its max arity of 9 below).
     final messageAndDetections =
         Rx.combineLatest4<
@@ -1349,11 +1349,11 @@ class AppController {
     _message.add(message);
   }
 
-  // --- Passwordless sign-in (email code with magic-link fallback) -----------
+  // --- Passwordless sign-in (email code) ------------------------------------
 
-  /// Emails a six-digit sign-in code (plus a magic-link fallback). Same call
-  /// for sign-in and sign-up — an unknown address is created when its first
-  /// code is verified, so there is no separate sign-up path or password.
+  /// Emails a six-digit sign-in code. Same call for sign-in and sign-up — an
+  /// unknown address is created when its first code is verified, so there is
+  /// no separate sign-up path or password.
   Future<bool> requestSupabaseEmailOtp({required String email}) async {
     if (!_config.hasValue) {
       return false;
@@ -1364,6 +1364,9 @@ class AppController {
     }
     try {
       final codeVerifier = SupabaseAuthClient.createPkceVerifier();
+      // Current hosted templates render only the numeric token. Retain this
+      // short-lived verifier so an already-issued legacy PKCE callback can be
+      // handled safely while old emails drain.
       await _settingsStore.savePendingSupabaseAuth(
         PendingSupabaseAuth(
           codeVerifier: codeVerifier,
@@ -1419,8 +1422,9 @@ class AppController {
     }
   }
 
-  /// Completes passwordless sign-in from a verified operating-system deep link.
-  /// The callback is never logged or persisted; only the resulting session is.
+  /// Completes legacy passwordless sign-in from a verified operating-system
+  /// deep link. The callback is never logged or persisted; only the resulting
+  /// session is.
   Future<bool> consumeSupabaseMagicLink(Uri callback) async {
     if (!_config.hasValue || !_config.value.hasSupabaseAuthConfig) {
       _message.add('Set the Supabase URL and anon key before signing in.');
@@ -1453,7 +1457,8 @@ class AppController {
       final secrets = _secrets.valueOrNull;
       if (secrets == null || !secrets.hasSupabaseToken) {
         _message.add(
-          'Sign in with your magic link to accept the account invitation.',
+          'Sign in with your 6-digit email code to accept the account '
+          'invitation.',
         );
         return true;
       }
@@ -1594,9 +1599,9 @@ class AppController {
     }
   }
 
-  /// Completes a magic-link sign-in delivered through the registered app link.
-  /// Unknown addresses are created by the original OTP request, so this single
-  /// callback handles both sign-up and returning-user sign-in.
+  /// Completes a legacy PKCE sign-in delivered through the registered app link.
+  /// Current hosted templates are token-only; this compatibility path remains
+  /// for already-issued callbacks and keeps their verifier bound to the device.
   Future<bool> handleSupabaseAuthCallback(Uri uri) async {
     if (!_config.hasValue || !_config.value.hasSupabaseAuthConfig) {
       return false;
@@ -1622,7 +1627,8 @@ class AppController {
       final pending = await _settingsStore.loadPendingSupabaseAuth();
       if (pending == null) {
         _message.add(
-          'This magic link was not requested on this device. Request a fresh one.',
+          'This legacy sign-in link was not requested on this device. '
+          'Request a fresh email code.',
         );
         return true;
       }
@@ -1631,7 +1637,7 @@ class AppController {
           pending.redirectUrl != kSupabaseAuthRedirectUrl.trim()) {
         await _settingsStore.clearPendingSupabaseAuth();
         _message.add(
-          'This sign-in request expired. Request a fresh magic link.',
+          'This sign-in request expired. Request a fresh email code.',
         );
         return true;
       }

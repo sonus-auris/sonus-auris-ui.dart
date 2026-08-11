@@ -264,7 +264,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
                   ? SettingsPage(controller: controller)
                   : OnboardingFlow(
                       controller: controller,
-                      // A magic-link/OTP return relaunches the app with a
+                      // A legacy callback/OTP return relaunches the app with a
                       // session (first factor or full AAL2). Resume at the
                       // account step — where the mandatory MFA gate lives —
                       // instead of throwing the user back to the welcome
@@ -547,7 +547,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         const SizedBox(height: 8),
         const Text(
           'Use one 6-digit email code to sign up or sign in and securely store '
-          'your settings and consent. The email link is a fallback.',
+          'your settings and consent. No password is required.',
           style: TextStyle(color: SonusColors.inkSoft),
         ),
         const SizedBox(height: 16),
