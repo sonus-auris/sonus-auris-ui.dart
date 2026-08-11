@@ -66,9 +66,8 @@ test('[playwright] the passwordless sign-in screen renders', async () => {
   );
   assert.match(text, /Sign in/i);
   assert.match(text, /Email me a code/i);
-  // The email-link fallback is advertised on this first step as "The email
-  // link is a fallback"; the words "magic link" only appear on the code step.
-  assert.match(text, /email link is a fallback/i);
+  assert.match(text, /6-digit one-time code/i);
+  assert.doesNotMatch(text, /email link|magic link|fallback/i);
   assert.match(text, /new accounts are created automatically/i);
 });
 

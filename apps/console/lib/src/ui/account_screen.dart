@@ -25,7 +25,7 @@ class MfaEnrollmentStep extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         const Text(
-          'Magic links replace passwords, so a verified second factor is '
+          'Email codes replace passwords, so a verified second factor is '
           'required before Sonus Auris data can be opened.',
         ),
         const SizedBox(height: 20),

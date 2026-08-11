@@ -5,6 +5,37 @@ import 'package:sonus_auris_console/src/config/console_config.dart';
 import 'package:sonus_auris_console/src/services/auth_client.dart';
 
 void main() {
+  test('current console email UX is strictly six-digit OTP-only', () {
+    final signIn = File(
+      'lib/src/ui/sign_in_screen.dart',
+    ).readAsStringSync();
+    final account = File(
+      'lib/src/ui/account_screen.dart',
+    ).readAsStringSync();
+    final controller = File(
+      'lib/src/services/console_controller.dart',
+    ).readAsStringSync();
+    final authClient = File(
+      'lib/src/services/auth_client.dart',
+    ).readAsStringSync();
+
+    expect(signIn, contains('6-digit one-time code'));
+    expect(signIn, contains('maxLength: 6'));
+    expect(signIn, contains('length == 6'));
+    expect(signIn, isNot(contains('email link')));
+    expect(signIn, isNot(contains('magic link')));
+    expect(signIn, isNot(contains('fallback')));
+    expect(account, contains('Email codes replace passwords'));
+    expect(account, isNot(contains('Magic links replace passwords')));
+    expect(controller, contains('Request a fresh email code.'));
+    expect(authClient, contains('Hosted templates render the numeric token'));
+
+    // Keep the bounded validation path while already-issued links drain; it is
+    // not advertised as part of the current email delivery contract.
+    expect(controller, contains('acceptMagicLink'));
+    expect(authClient, contains('exchangePkceCode'));
+  });
+
   test('native console uses a dedicated exact magic-link callback', () {
     final client = AuthClient(
       config: const ConsoleConfig(
