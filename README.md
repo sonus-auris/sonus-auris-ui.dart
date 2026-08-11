@@ -185,14 +185,20 @@ selected phrase window.
 Every native/mobile sign-up and sign-in surface is code-first: it sends a
 six-digit Supabase email OTP, and unknown email addresses are created on first
 verification. The app has no account password field or password-reset flow.
-The same email retains a magic-link fallback using S256 PKCE: the callback
-contains only a one-time authorization code, while the matching verifier stays
-in Keychain/Keystore and expires with the request. Release clients reject
-access or refresh tokens delivered in a callback URL. Add
-`sonusauris://auth/callback` (or the
-`SONUS_SUPABASE_AUTH_REDIRECT_URL` build-time override) to the Supabase Auth
-redirect allow-list as an exact URL. The hosted Magic Link template must retain
-both `{{ .ConfirmationURL }}` and the six-digit `{{ .Token }}` fallback.
+Both the hosted **Confirm signup** and **Magic Link** templates must render only
+the six-digit `{{ .Token }}` and must not render `{{ .ConfirmationURL }}` or
+another clickable authentication URL. Supabase can select either template
+based on account state, so configuring only one does not satisfy this contract.
+
+Legacy S256 PKCE callback validation remains in the clients only so
+already-issued links can drain safely during migration. The matching verifier
+stays in Keychain/Keystore and expires with the request, and release clients
+reject access or refresh tokens delivered in a callback URL. This compatibility
+path is not advertised and is not part of the current sign-in email contract.
+While that compatibility path remains, keep `sonusauris://auth/callback` (or
+the `SONUS_SUPABASE_AUTH_REDIRECT_URL` build-time override) in the Supabase Auth
+redirect allow-list as an exact URL; current hosted email templates must not
+reference it.
 
 For local development while Supabase is unavailable, a debug build can expose
 the explicit offline option with

@@ -96,7 +96,7 @@ void main() {
     }
   });
 
-  test('account authentication UI advertises the code, not a magic link', () {
+  test('account authentication UI advertises OTP-only email delivery', () {
     // Both surfaces are 6-digit OTP flows: the request button reveals a code
     // field, and the emulator permission gate greps for the code wording. A
     // button offering a "sign-in link" therefore contradicts the screen it
@@ -107,11 +107,42 @@ void main() {
     final panel = File(
       'lib/src/widgets/supabase_auth_panel.dart',
     ).readAsStringSync();
+    final mobile = File('lib/main.dart').readAsStringSync();
+    final web = File('lib/main_web.dart').readAsStringSync();
+    final controller = File(
+      'lib/src/app/app_controller.dart',
+    ).readAsStringSync();
+    final authClient = File(
+      'lib/src/services/supabase_auth_client.dart',
+    ).readAsStringSync();
 
     for (final source in [form, panel]) {
       expect(source, contains("'Email me a 6-digit code'"));
       expect(source, isNot(contains('Email me a sign-in link')));
     }
+    for (final source in [form, mobile, web, controller, authClient]) {
+      expect(source, isNot(contains('link is available as a fallback')));
+      expect(source, isNot(contains('email link is a fallback')));
+      expect(source, isNot(contains('sign-in link and a 6-digit code')));
+      expect(source, isNot(contains('plus a magic-link fallback')));
+      expect(source, isNot(contains('fresh magic link')));
+    }
+    expect(web, contains('We emailed you a 6-digit sign-in code.'));
+    expect(controller, contains('Sign in with your 6-digit email code'));
+  });
+
+  test('documentation requires token-only hosted email templates', () {
+    final readme = File('README.md').readAsStringSync();
+    final publishing = File('docs/publishing-todos.md').readAsStringSync();
+
+    for (final source in [readme, publishing]) {
+      expect(source, contains('{{ .Token }}'));
+      expect(source, contains('{{ .ConfirmationURL }}'));
+      expect(source, isNot(contains('Retain the PKCE-bound link')));
+      expect(source, isNot(contains('must retain both')));
+    }
+    expect(readme, contains('must not render `{{ .ConfirmationURL }}`'));
+    expect(publishing, contains('Neither template may render'));
   });
 
   test('offline escape hatch is structurally release-gated', () {

@@ -1,4 +1,5 @@
-// Thin passwordless Supabase GoTrue client (anon key only): magic links, OTP verification, and token refresh.
+// Thin passwordless Supabase GoTrue client (anon key only): email OTP,
+// legacy PKCE callback verification, and token refresh.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -46,9 +47,10 @@ class SupabaseAuthClient {
     ).replaceAll('=', '');
   }
 
-  /// Emails a one-time sign-in code (and, with the default template, a magic
-  /// link). `create_user: true` makes this the sign-up path too: an unknown
-  /// address gets an account the moment its first code is verified.
+  /// Emails a one-time sign-in code. The hosted templates render the numeric
+  /// token only. PKCE request fields remain for safe handling of already-issued
+  /// legacy callbacks. `create_user: true` makes this the sign-up path too: an
+  /// unknown address gets an account when its first code is verified.
   Future<void> sendEmailOtp({
     required AppConfig config,
     required String email,
@@ -59,7 +61,7 @@ class SupabaseAuthClient {
     final normalizedRedirect = _validateAuthRedirect(redirectTo);
     if (normalizedRedirect.isEmpty) {
       throw const FormatException(
-        'A magic-link callback URL is required for secure sign-in.',
+        'A valid legacy callback URL is required by this client build.',
       );
     }
     final codeChallenge = pkceChallengeForVerifier(codeVerifier);
@@ -137,27 +139,28 @@ class SupabaseAuthClient {
       expectedRedirectUri: expectedRedirectUri,
     )) {
       throw const FormatException(
-        'The sign-in link was sent to an unexpected callback.',
+        'The legacy sign-in callback targeted an unexpected endpoint.',
       );
     }
     if (callbackUri.fragment.isNotEmpty ||
         callbackUri.queryParameters.containsKey('access_token') ||
         callbackUri.queryParameters.containsKey('refresh_token')) {
       throw const FormatException(
-        'This older sign-in link is not accepted. Request a fresh magic link.',
+        'This older sign-in link is not accepted. Request a fresh email code.',
       );
     }
     if (callbackUri.queryParameters.containsKey('error') ||
         callbackUri.queryParameters.containsKey('error_code') ||
         callbackUri.queryParameters.containsKey('error_description')) {
       throw StateError(
-        'This sign-in link is invalid or expired. Request a fresh one.',
+        'This legacy sign-in link is invalid or expired. Request a fresh '
+        'email code.',
       );
     }
     final codes = callbackUri.queryParametersAll['code'] ?? const <String>[];
     if (codes.length != 1) {
       throw const FormatException(
-        'The sign-in link did not contain one authorization code.',
+        'The legacy sign-in callback did not contain one authorization code.',
       );
     }
     final code = codes.single.trim();
@@ -165,7 +168,7 @@ class SupabaseAuthClient {
         code.length > 2048 ||
         code.runes.any((rune) => rune <= 0x20 || rune == 0x7f)) {
       throw const FormatException(
-        'The sign-in link contained an invalid authorization code.',
+        'The legacy sign-in callback contained an invalid authorization code.',
       );
     }
     return code;
@@ -181,7 +184,7 @@ class SupabaseAuthClient {
     final code = authorizationCode.trim();
     if (code.isEmpty || code.length > 2048) {
       throw const FormatException(
-        'The magic link authorization code is invalid.',
+        'The legacy callback authorization code is invalid.',
       );
     }
     _validatePkceVerifier(codeVerifier);
@@ -189,13 +192,14 @@ class SupabaseAuthClient {
       config,
       _authUri(config, 'token', query: {'grant_type': 'pkce'}),
       {'auth_code': code, 'code_verifier': codeVerifier},
-      'This sign-in link is invalid or expired. Request a fresh one.',
+      'This legacy sign-in link is invalid or expired. Request a fresh email '
+      'code.',
       exposeServerError: false,
     );
   }
 
-  /// Adopts a Supabase magic-link callback only when it targets this build's
-  /// exact application URI. The callback itself must never be logged or stored.
+  /// Adopts a legacy Supabase callback only when it targets this build's exact
+  /// application URI. The callback itself must never be logged or stored.
   Future<SupabaseSession> consumeMagicLink({
     required AppConfig config,
     required Uri callback,
@@ -205,7 +209,9 @@ class SupabaseAuthClient {
         callback.host != expected.host ||
         callback.port != expected.port ||
         callback.path != expected.path) {
-      throw const FormatException('That sign-in link targets another app.');
+      throw const FormatException(
+        'That legacy sign-in callback targets another app.',
+      );
     }
 
     final parameters = <String, String>{
@@ -249,11 +255,12 @@ class SupabaseAuthClient {
         config,
         uri,
         {'type': 'magiclink', 'token_hash': tokenHash},
-        'That magic link was not accepted. Request a fresh one and try again.',
+        'That legacy sign-in callback was not accepted. Request a fresh email '
+        'code and try again.',
       );
     }
     throw const FormatException(
-      'The sign-in link contained no usable Supabase session.',
+      'The legacy sign-in callback contained no usable Supabase session.',
     );
   }
 
@@ -673,7 +680,7 @@ class SupabaseAuthClient {
         uri.userInfo.isNotEmpty ||
         uri.query.isNotEmpty ||
         uri.fragment.isNotEmpty) {
-      throw const FormatException('Magic-link redirect URL is invalid.');
+      throw const FormatException('Legacy callback redirect URL is invalid.');
     }
     final isLocalWeb =
         uri.scheme == 'http' &&
@@ -684,7 +691,8 @@ class SupabaseAuthClient {
         uri.path == '/callback';
     if (uri.scheme != 'https' && !isLocalWeb && !isNativeCallback) {
       throw const FormatException(
-        'Magic-link redirect URL must use HTTPS or the Sonus Auris app callback.',
+        'Legacy callback redirect URL must use HTTPS or the Sonus Auris app '
+        'callback.',
       );
     }
     return uri.toString();
