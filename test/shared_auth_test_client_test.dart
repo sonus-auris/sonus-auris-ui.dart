@@ -25,10 +25,7 @@ void main() {
       expect(request.url, Uri.parse('https://bridge.automation.test/session'));
       expect(request.headers['authorization'], isNull);
       expect(request.headers['content-type'], 'application/json');
-      expect(
-        jsonDecode(request.body),
-        {'email': _email, 'code': '424242'},
-      );
+      expect(jsonDecode(request.body), {'email': _email, 'code': '424242'});
       return http.Response(
         jsonEncode(_sessionPayload()),
         200,
@@ -93,11 +90,7 @@ void main() {
       throwsFormatException,
     );
     await expectLater(
-      client.verifyEmailOtp(
-        config: _config,
-        email: _email,
-        code: '42424x',
-      ),
+      client.verifyEmailOtp(config: _config, email: _email, code: '42424x'),
       throwsFormatException,
     );
   });
@@ -112,11 +105,7 @@ void main() {
       );
       try {
         await expectLater(
-          client.verifyEmailOtp(
-            config: _config,
-            email: _email,
-            code: '424242',
-          ),
+          client.verifyEmailOtp(config: _config, email: _email, code: '424242'),
           throwsFormatException,
         );
       } finally {
@@ -142,11 +131,7 @@ void main() {
     );
     addTearDown(rejected.close);
     await expectLater(
-      rejected.verifyEmailOtp(
-        config: _config,
-        email: _email,
-        code: '424242',
-      ),
+      rejected.verifyEmailOtp(config: _config, email: _email, code: '424242'),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
@@ -164,11 +149,7 @@ void main() {
     );
     addTearDown(oversized.close);
     await expectLater(
-      oversized.verifyEmailOtp(
-        config: _config,
-        email: _email,
-        code: '424242',
-      ),
+      oversized.verifyEmailOtp(config: _config, email: _email, code: '424242'),
       throwsA(isA<StateError>()),
     );
   });
@@ -192,7 +173,10 @@ Map<String, Object?> _sessionPayload({
     'role': 'authenticated',
     'aal': aal,
     'amr': [
-      {'method': method, 'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000},
+      {
+        'method': method,
+        'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      },
     ],
   });
   return {
@@ -206,6 +190,5 @@ Map<String, Object?> _sessionPayload({
 String _jwt(Map<String, Object?> claims) =>
     '${_segment({'alg': 'RS256', 'typ': 'JWT'})}.${_segment(claims)}.signature';
 
-String _segment(Object value) => base64UrlEncode(
-  utf8.encode(jsonEncode(value)),
-).replaceAll('=', '');
+String _segment(Object value) =>
+    base64UrlEncode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
