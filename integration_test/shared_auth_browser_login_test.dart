@@ -31,9 +31,7 @@ void main() {
         find.byKey(const ValueKey('supabase-email-field')),
         _email,
       );
-      await tester.tap(
-        find.byKey(const ValueKey('supabase-request-button')),
-      );
+      await tester.tap(find.byKey(const ValueKey('supabase-request-button')));
       await _pumpUntil(
         tester,
         find.byKey(const ValueKey('supabase-code-field')),
@@ -50,10 +48,7 @@ void main() {
         timeout: const Duration(seconds: 60),
       );
       expect(find.textContaining(_email), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('browser-account-data')),
-        findsNothing,
-      );
+      expect(find.byKey(const ValueKey('browser-account-data')), findsNothing);
     },
     skip:
         _email.isEmpty ||
@@ -124,10 +119,7 @@ final class _BrowserAuthHarnessState extends State<_BrowserAuthHarness> {
                 key: const ValueKey('browser-aal1-locked'),
               ),
             if (session?.isPasswordlessAal2 ?? false)
-              const Text(
-                'Account data',
-                key: ValueKey('browser-account-data'),
-              ),
+              const Text('Account data', key: ValueKey('browser-account-data')),
           ],
         ),
       ),
@@ -153,7 +145,9 @@ final class _BrowserAuthHarnessState extends State<_BrowserAuthHarness> {
       code: code,
     );
     if (session.aal != 'aal1' || !session.hasPasswordlessFirstFactor) {
-      throw StateError('The browser test realm did not return passwordless AAL1.');
+      throw StateError(
+        'The browser test realm did not return passwordless AAL1.',
+      );
     }
     if (mounted) {
       setState(() {
