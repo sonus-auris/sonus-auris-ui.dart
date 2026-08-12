@@ -61,9 +61,7 @@ void main() {
       final codeField = find.byKey(const ValueKey('supabase-code-field'));
       await _pumpUntil(tester, codeField);
       await tester.enterText(codeField, _testCode);
-      final verifyButton = find.byKey(
-        const ValueKey('supabase-verify-button'),
-      );
+      final verifyButton = find.byKey(const ValueKey('supabase-verify-button'));
       await tester.ensureVisible(verifyButton);
       await tester.tap(verifyButton);
 
