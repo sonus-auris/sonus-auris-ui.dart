@@ -88,7 +88,9 @@ final class SharedAuthTestClient extends SupabaseAuthClient {
     }
 
     if (response.bodyBytes.length > _maximumResponseBytes) {
-      throw StateError('The local authentication bridge returned too much data.');
+      throw StateError(
+        'The local authentication bridge returned too much data.',
+      );
     }
     if (response.statusCode != 200) {
       throw StateError('The isolated test sign-in was not accepted.');
@@ -98,15 +100,17 @@ final class SharedAuthTestClient extends SupabaseAuthClient {
     try {
       decoded = jsonDecode(utf8.decode(response.bodyBytes));
     } on FormatException {
-      throw StateError('The local authentication bridge returned invalid JSON.');
+      throw StateError(
+        'The local authentication bridge returned invalid JSON.',
+      );
     }
     if (decoded is! Map) {
-      throw StateError('The local authentication bridge returned invalid JSON.');
+      throw StateError(
+        'The local authentication bridge returned invalid JSON.',
+      );
     }
 
-    final session = SupabaseSession.fromJson(
-      decoded.cast<String, dynamic>(),
-    );
+    final session = SupabaseSession.fromJson(decoded.cast<String, dynamic>());
     if (session.email.trim().toLowerCase() != normalizedEmail) {
       throw const FormatException(
         'The isolated test session belonged to another identity.',
@@ -131,7 +135,8 @@ final class SharedAuthTestClient extends SupabaseAuthClient {
       );
     }
     final audience = claims['aud'];
-    final authenticated = audience == 'authenticated' ||
+    final authenticated =
+        audience == 'authenticated' ||
         (audience is List && audience.contains('authenticated'));
     if (!authenticated) {
       throw const FormatException(
