@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+const _originHeader = 'origin';
 const _maxRequestBytes = 16 * 1024;
 const _maxResponseBytes = 256 * 1024;
 
@@ -72,7 +73,7 @@ Future<void> _handle(
   required _MinuteLimiter limiter,
 }) async {
   _secure(request.response);
-  final origin = request.headers.value(HttpHeaders.originHeader);
+  final origin = request.headers.value(_originHeader);
   final allowedOrigin = origin == null ? null : _loopbackOrigin(origin);
   if (origin != null && allowedOrigin == null) {
     await _error(request.response, HttpStatus.forbidden, 'origin_rejected');
@@ -81,7 +82,7 @@ Future<void> _handle(
   if (allowedOrigin != null) {
     request.response.headers
       ..set(HttpHeaders.accessControlAllowOriginHeader, allowedOrigin)
-      ..set(HttpHeaders.varyHeader, HttpHeaders.originHeader);
+      ..set(HttpHeaders.varyHeader, _originHeader);
   }
 
   if (request.method == 'OPTIONS' && request.uri.path == '/session') {
