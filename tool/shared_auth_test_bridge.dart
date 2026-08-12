@@ -107,11 +107,7 @@ Future<void> _handle(
     return;
   }
   if (!limiter.allow()) {
-    await _error(
-      request.response,
-      HttpStatus.tooManyRequests,
-      'rate_limited',
-    );
+    await _error(request.response, HttpStatus.tooManyRequests, 'rate_limited');
     return;
   }
   if (request.headers.contentType?.mimeType != ContentType.json.mimeType) {
@@ -196,20 +192,11 @@ Future<Uint8List?> _exchange(
       ..followRedirects = false
       ..headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType)
       ..headers.contentType = ContentType.json
-      ..headers.set(
-        HttpHeaders.authorizationHeader,
-        'Bearer ${config.bearer}',
-      )
+      ..headers.set(HttpHeaders.authorizationHeader, 'Bearer ${config.bearer}')
       ..write(
-        jsonEncode({
-          'email': email,
-          'code': code,
-          'project': config.project,
-        }),
+        jsonEncode({'email': email, 'code': code, 'project': config.project}),
       );
-    final response = await request.close().timeout(
-      const Duration(seconds: 30),
-    );
+    final response = await request.close().timeout(const Duration(seconds: 30));
     final body = await _readLimited(response, _maxResponseBytes);
     if (response.statusCode != HttpStatus.ok) return null;
     return body;
@@ -226,9 +213,7 @@ Map<String, Object?>? _decodeObject(Uint8List bytes) {
   try {
     final decoded = jsonDecode(utf8.decode(bytes));
     if (decoded is! Map) return null;
-    return decoded.map(
-      (key, value) => MapEntry(key.toString(), value),
-    );
+    return decoded.map((key, value) => MapEntry(key.toString(), value));
   } on FormatException {
     return null;
   }
@@ -330,15 +315,14 @@ final class _Config {
     final upstream = _upstream(
       environment['SONUS_TEST_SHARED_AUTH_UPSTREAM'] ?? '',
     );
-    final bearer =
-        (environment['SONUS_TEST_SHARED_AUTH_BEARER'] ?? '').trim();
+    final bearer = (environment['SONUS_TEST_SHARED_AUTH_BEARER'] ?? '').trim();
     if (bearer.length < 32) {
       throw StateError(
         'SONUS_TEST_SHARED_AUTH_BEARER must contain at least 32 characters.',
       );
     }
-    final project =
-        (environment['SONUS_TEST_SHARED_AUTH_PROJECT'] ?? '').trim();
+    final project = (environment['SONUS_TEST_SHARED_AUTH_PROJECT'] ?? '')
+        .trim();
     final lower = project.toLowerCase();
     final parts = lower
         .split(RegExp(r'[^a-z0-9]+'))
