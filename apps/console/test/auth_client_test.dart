@@ -451,10 +451,12 @@ void main() {
   test(
     'MFA: enrollTotp returns the shared secret and challenge id flows',
     () async {
+      late http.Request enrollmentRequest;
       final client = AuthClient(
         config: _config,
         httpClient: MockClient((req) async {
           if (req.url.path == '/auth/v1/factors') {
+            enrollmentRequest = req;
             return http.Response(
               jsonEncode({
                 'id': 'factor-1',
@@ -477,8 +479,28 @@ void main() {
       expect(enrollment.factorId, 'factor-1');
       expect(enrollment.secret, 'BASE32SECRET');
       expect(enrollment.uri, 'otpauth://totp/x');
+      expect(jsonDecode(enrollmentRequest.body), {
+        'factor_type': 'totp',
+        'friendly_name': 'Authy',
+        'issuer': 'sonus-auris:live',
+      });
     },
   );
+
+  test('MFA: authenticator issuer separates local and live accounts', () {
+    for (final url in [
+      'http://localhost:54321',
+      'http://127.0.0.1:54321',
+      'http://10.0.2.2:54321',
+      'http://[::1]:54321',
+    ]) {
+      expect(consoleTotpIssuerForUrl(url), 'sonus-auris:localhost');
+    }
+    expect(
+      consoleTotpIssuerForUrl('https://project.supabase.co'),
+      'sonus-auris:live',
+    );
+  });
 
   test('challengeFactor returns the challenge id', () async {
     final client = AuthClient(

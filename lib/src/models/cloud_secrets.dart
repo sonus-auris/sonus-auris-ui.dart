@@ -8,6 +8,9 @@ class CloudSecrets {
     this.supabaseAccessToken = '',
     this.supabaseRefreshToken = '',
     this.supabaseAccessTokenExpiresAt = '',
+    this.supabaseSessionId = '',
+    this.supabaseSessionStartedAt = '',
+    this.supabaseReauthReminderCheckpoint = '',
     this.supabaseUserId = '',
     this.supabaseEmail = '',
     this.sttApiKey = '',
@@ -33,6 +36,16 @@ class CloudSecrets {
 
   /// ISO-8601 UTC expiry of [supabaseAccessToken]. Empty when unknown.
   final String supabaseAccessTokenExpiresAt;
+
+  final String supabaseSessionId;
+  final String supabaseSessionStartedAt;
+  final String supabaseReauthReminderCheckpoint;
+
+  DateTime? get supabaseSessionStartedAtUtc =>
+      DateTime.tryParse(supabaseSessionStartedAt)?.toUtc();
+
+  int get supabaseReauthReminderCheckpointValue =>
+      int.tryParse(supabaseReauthReminderCheckpoint) ?? 0;
 
   /// Stable Supabase Auth subject (`auth.users.id`) for the active session.
   ///
@@ -118,6 +131,9 @@ class CloudSecrets {
     String? supabaseAccessToken,
     String? supabaseRefreshToken,
     String? supabaseAccessTokenExpiresAt,
+    String? supabaseSessionId,
+    String? supabaseSessionStartedAt,
+    String? supabaseReauthReminderCheckpoint,
     String? supabaseUserId,
     String? supabaseEmail,
     String? sttApiKey,
@@ -135,6 +151,12 @@ class CloudSecrets {
       supabaseRefreshToken: supabaseRefreshToken ?? this.supabaseRefreshToken,
       supabaseAccessTokenExpiresAt:
           supabaseAccessTokenExpiresAt ?? this.supabaseAccessTokenExpiresAt,
+      supabaseSessionId: supabaseSessionId ?? this.supabaseSessionId,
+      supabaseSessionStartedAt:
+          supabaseSessionStartedAt ?? this.supabaseSessionStartedAt,
+      supabaseReauthReminderCheckpoint:
+          supabaseReauthReminderCheckpoint ??
+          this.supabaseReauthReminderCheckpoint,
       supabaseUserId: supabaseUserId ?? this.supabaseUserId,
       supabaseEmail: supabaseEmail ?? this.supabaseEmail,
       sttApiKey: sttApiKey ?? this.sttApiKey,

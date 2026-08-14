@@ -36,6 +36,7 @@ import 'src/services/supabase_device_presence_client.dart';
 import 'src/theme/sonus_brand.dart';
 import 'src/theme/sonus_theme.dart';
 import 'src/widgets/supabase_auth_form.dart';
+import 'src/widgets/account_deletion_section.dart';
 import 'src/widgets/supabase_mfa_gate.dart';
 import 'src/widgets/retention_expiry_banner.dart';
 
@@ -89,6 +90,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
   StreamSubscription<Uri>? _authLinkSubscription;
   Uri? _pendingAuthLink;
   bool _controllerReady = false;
+  final FreshSignInHomePolicy _freshSignInHomePolicy = FreshSignInHomePolicy();
   Object? _startupError;
   FlutterExceptionHandler? _previousFlutterOnError;
   ui.ErrorCallback? _previousPlatformOnError;
@@ -256,31 +258,75 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
             if (viewModel == null || viewModel.isInitializing) {
               return const LoadingPage();
             }
+            _freshSignInHomePolicy.observe(viewModel.isSignedIn);
             // Gate the app behind onboarding/consent until it's completed for
             // the current consent version.
             return ValueListenableBuilder<bool>(
               valueListenable: controller.onboardingComplete,
-              builder: (context, complete, _) => complete
-                  ? SettingsPage(controller: controller)
-                  : OnboardingFlow(
-                      controller: controller,
-                      // A legacy callback/OTP return relaunches the app with a
-                      // session (first factor or full AAL2). Resume at the
-                      // account step — where the mandatory MFA gate lives —
-                      // instead of throwing the user back to the welcome
-                      // screen.
-                      initialStep:
-                          viewModel.isSignedIn ||
-                              viewModel.hasFirstFactorSession
-                          ? 1
-                          : 0,
-                    ),
+              builder: (context, complete, _) {
+                if (complete) {
+                  final startOnHome = _freshSignInHomePolicy.pending;
+                  if (startOnHome) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      _freshSignInHomePolicy.markHandled();
+                    });
+                  }
+                  return SettingsPage(
+                    controller: controller,
+                    startOnHome: startOnHome,
+                  );
+                }
+                return OnboardingFlow(
+                  controller: controller,
+                  // A legacy callback/OTP return relaunches the app with a
+                  // session (first factor or full AAL2). Resume at the
+                  // account step — where the mandatory MFA gate lives —
+                  // instead of throwing the user back to the welcome
+                  // screen.
+                  initialStep:
+                      viewModel.isSignedIn || viewModel.hasFirstFactorSession
+                      ? 1
+                      : 0,
+                );
+              },
             );
           },
         );
       },
     );
   }
+}
+
+/// True only for an authentication transition completed after this process
+/// started. Restoring an already-authenticated session may keep the user's
+/// previous tab, but a fresh sign-in must always enter through Home.
+bool didCompleteSignIn({
+  required bool? previousSignedIn,
+  required bool isSignedIn,
+}) => previousSignedIn == false && isSignedIn;
+
+/// Holds a fresh-sign-in Home reset until the application shell is actually
+/// shown. This matters when sign-in completes during onboarding: intervening
+/// authenticated view-model emissions must not consume the reset early.
+class FreshSignInHomePolicy {
+  bool? _previousSignedIn;
+  bool _pending = false;
+
+  bool get pending => _pending;
+
+  void observe(bool isSignedIn) {
+    if (didCompleteSignIn(
+      previousSignedIn: _previousSignedIn,
+      isSignedIn: isSignedIn,
+    )) {
+      _pending = true;
+    } else if (!isSignedIn) {
+      _pending = false;
+    }
+    _previousSignedIn = isSignedIn;
+  }
+
+  void markHandled() => _pending = false;
 }
 
 class LoadingPage extends StatelessWidget {
@@ -861,9 +907,14 @@ class _RecordingDisclosure extends StatelessWidget {
 }
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key, required this.controller});
+  const SettingsPage({
+    super.key,
+    required this.controller,
+    this.startOnHome = false,
+  });
 
   final AppController controller;
+  final bool startOnHome;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -903,13 +954,30 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
-    _restoreSelectedTab();
+    if (widget.startOnHome) {
+      unawaited(_persistSelectedTab(0));
+    } else {
+      unawaited(_restoreSelectedTab());
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.startOnHome && widget.startOnHome) {
+      _selectedIndex = 0;
+      unawaited(_persistSelectedTab(0));
+    }
   }
 
   Future<void> _restoreSelectedTab() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getInt(_kLastTabKey);
-    if (saved != null && saved >= 0 && saved <= 4 && mounted) {
+    if (!widget.startOnHome &&
+        saved != null &&
+        saved >= 0 &&
+        saved <= 4 &&
+        mounted) {
       setState(() => _selectedIndex = saved);
     }
   }
@@ -1138,13 +1206,22 @@ class _SettingsPageState extends State<SettingsPage> {
           signedInEmail: viewModel.signedInEmail,
           isDeviceRegistered: viewModel.isDeviceRegistered,
           isAwaitingDeviceRegistration: viewModel.isAwaitingDeviceRegistration,
+          isRecording: viewModel.recorder.isRecording,
           supabaseUrlController: _supabaseUrlController,
           supabaseAnonKeyController: _supabaseAnonKeyController,
           onRequestCode: (email) => _requestCode(viewModel, email),
           onSubmitCode: (email, code) => _submitCode(viewModel, email, code),
-          onSignOut: widget.controller.signOutSupabase,
-          onDeleteAccount: widget.controller.deleteAccount,
+          onSignOut: (keepRecording) =>
+              widget.controller.signOutSupabase(keepRecording: keepRecording),
         ),
+        accountDeletionSection: viewModel.isSignedIn
+            ? AccountDeletionSection(
+                controller: widget.controller,
+                signedInEmail: viewModel.signedInEmail ?? '',
+                onDeleteAccount: (confirmedEmail) => widget.controller
+                    .deleteAccount(confirmedEmail: confirmedEmail),
+              )
+            : null,
         selectedProvider: _selectedProvider,
         uploadEnabled: _uploadEnabled,
         onUploadEnabledChanged: (value) =>
@@ -2030,6 +2107,7 @@ class _ConfigureView extends StatelessWidget {
     required this.page,
     required this.viewModel,
     required this.accountSection,
+    required this.accountDeletionSection,
     required this.selectedProvider,
     required this.uploadEnabled,
     required this.onUploadEnabledChanged,
@@ -2058,6 +2136,7 @@ class _ConfigureView extends StatelessWidget {
   final _ConfigurePage page;
   final AppViewModel viewModel;
   final Widget accountSection;
+  final Widget? accountDeletionSection;
   final CloudProvider selectedProvider;
   final bool uploadEnabled;
   final ValueChanged<bool> onUploadEnabledChanged;
@@ -2213,6 +2292,15 @@ class _ConfigureView extends StatelessWidget {
                   controller: controller,
                 ),
               ],
+            ),
+          ),
+        if (page == _ConfigurePage.general && accountDeletionSection != null)
+          _SettingsTab(
+            label: 'Delete account',
+            icon: Icons.delete_forever,
+            child: _SettingsPane(
+              storageKey: 'configure-delete-account',
+              children: [accountDeletionSection!],
             ),
           ),
       ],
@@ -2445,12 +2533,12 @@ class _AccountSection extends StatefulWidget {
     required this.signedInEmail,
     required this.isDeviceRegistered,
     required this.isAwaitingDeviceRegistration,
+    required this.isRecording,
     required this.supabaseUrlController,
     required this.supabaseAnonKeyController,
     required this.onRequestCode,
     required this.onSubmitCode,
     required this.onSignOut,
-    required this.onDeleteAccount,
   });
 
   final AppController controller;
@@ -2463,8 +2551,8 @@ class _AccountSection extends StatefulWidget {
   final TextEditingController supabaseAnonKeyController;
   final Future<bool> Function(String email) onRequestCode;
   final Future<void> Function(String email, String code) onSubmitCode;
-  final Future<void> Function() onSignOut;
-  final Future<void> Function() onDeleteAccount;
+  final bool isRecording;
+  final Future<void> Function(bool keepRecording) onSignOut;
 
   @override
   State<_AccountSection> createState() => _AccountSectionState();
@@ -2474,6 +2562,41 @@ class _AccountSectionState extends State<_AccountSection> {
   final _emailController = TextEditingController();
   final _codeController = TextEditingController();
   bool _busy = false;
+
+  Future<void> _confirmSignOut() async {
+    final keepRecording = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Sign out of Sonus Auris?'),
+        content: Text(
+          widget.isRecording
+              ? 'By default, signing out pauses recording. Sonus Auris will remember that capture was active and restart it immediately after your next phone or authenticator-verified sign-in. You can explicitly keep local recording active instead.'
+              : 'You will return to the sign-in screen.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          if (widget.isRecording)
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Keep recording and sign out'),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(
+              widget.isRecording ? 'Stop recording and sign out' : 'Sign out',
+            ),
+          ),
+        ],
+      ),
+    );
+    if (keepRecording == null || !mounted) {
+      return;
+    }
+    await _runAccountAction(() => widget.onSignOut(keepRecording));
+  }
 
   @override
   void dispose() {
@@ -2493,31 +2616,6 @@ class _AccountSectionState extends State<_AccountSection> {
       if (mounted) {
         setState(() => _busy = false);
       }
-    }
-  }
-
-  Future<void> _confirmDeleteAccount() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete account?'),
-        content: const Text(
-          'This deletes your account, backend metadata, local recordings, and saved tokens on this device. Recordings copied to your own cloud storage must be removed there.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete account'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await _runAccountAction(widget.onDeleteAccount);
     }
   }
 
@@ -2583,9 +2681,7 @@ class _AccountSectionState extends State<_AccountSection> {
               runSpacing: 8,
               children: [
                 OutlinedButton.icon(
-                  onPressed: _busy
-                      ? null
-                      : () => _runAccountAction(widget.onSignOut),
+                  onPressed: _busy ? null : _confirmSignOut,
                   icon: _busy
                       ? const SizedBox.square(
                           dimension: 18,
@@ -2593,14 +2689,6 @@ class _AccountSectionState extends State<_AccountSection> {
                         )
                       : const Icon(Icons.logout),
                   label: Text(_busy ? 'Working…' : 'Sign out'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : _confirmDeleteAccount,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: theme.colorScheme.error,
-                  ),
-                  icon: const Icon(Icons.delete_forever),
-                  label: const Text('Delete account'),
                 ),
               ],
             ),
@@ -2622,7 +2710,7 @@ class _AccountSectionState extends State<_AccountSection> {
             TextButton(
               onPressed: _busy
                   ? null
-                  : () => _runAccountAction(widget.onSignOut),
+                  : () => _runAccountAction(() => widget.onSignOut(false)),
               child: const Text('Cancel and sign out'),
             ),
           ],

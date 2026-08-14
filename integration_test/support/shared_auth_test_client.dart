@@ -96,20 +96,19 @@ final class SharedAuthTestClient extends SupabaseAuthClient {
     required AppConfig config,
     required String accessToken,
     String? friendlyName,
+    String? issuer,
   }) async {
     final email = _aal1Email(config, accessToken);
     final factor = _newFactor(factorType: 'totp', friendlyName: friendlyName);
+    final resolvedIssuer = issuer ?? 'sonus-auris:localhost';
     return TotpEnrollment(
       factorId: factor.id,
       secret: _totpSecret,
       uri: Uri(
         scheme: 'otpauth',
         host: 'totp',
-        path: 'Sonus Auris Test:$email',
-        queryParameters: const {
-          'secret': _totpSecret,
-          'issuer': 'Sonus Auris Test',
-        },
+        path: '$resolvedIssuer:$email',
+        queryParameters: {'secret': _totpSecret, 'issuer': resolvedIssuer},
       ).toString(),
     );
   }

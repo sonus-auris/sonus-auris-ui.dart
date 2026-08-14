@@ -453,7 +453,40 @@ class _DesktopRootState extends State<_DesktopRoot> {
 
   Future<void> _accountAction(AppViewModel vm) async {
     if (vm.isSignedIn) {
-      await widget.controller.signOutSupabase();
+      final keepRecording = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Sign out of Sonus Auris?'),
+          content: Text(
+            vm.recorder.isRecording
+                ? 'By default, signing out pauses recording and resumes it after your next verified sign-in. You may explicitly keep local recording active instead.'
+                : 'You will return to the sign-in screen.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            if (vm.recorder.isRecording)
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Keep recording and sign out'),
+              ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(
+                vm.recorder.isRecording
+                    ? 'Stop recording and sign out'
+                    : 'Sign out',
+              ),
+            ),
+          ],
+        ),
+      );
+      if (keepRecording == null || !mounted) {
+        return;
+      }
+      await widget.controller.signOutSupabase(keepRecording: keepRecording);
       return;
     }
     await _showSignInDialog();

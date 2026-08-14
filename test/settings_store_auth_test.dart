@@ -22,6 +22,9 @@ void main() {
       supabaseAccessToken: 'access-token',
       supabaseRefreshToken: 'refresh-token',
       supabaseAccessTokenExpiresAt: '2026-07-13T12:00:00.000Z',
+      supabaseSessionId: '11111111-1111-4111-8111-111111111111',
+      supabaseSessionStartedAt: '2026-05-01T12:00:00.000Z',
+      supabaseReauthReminderCheckpoint: '1',
       supabaseUserId: '00000000-0000-4000-8000-000000000001',
       supabaseEmail: 'person@example.com',
     );
@@ -33,6 +36,9 @@ void main() {
     expect(restored.supabaseRefreshToken, 'refresh-token');
     expect(restored.supabaseAccessTokenExpiresAt, '2026-07-13T12:00:00.000Z');
     expect(restored.supabaseUserId, '00000000-0000-4000-8000-000000000001');
+    expect(restored.supabaseSessionId, saved.supabaseSessionId);
+    expect(restored.supabaseSessionStartedAt, saved.supabaseSessionStartedAt);
+    expect(restored.supabaseReauthReminderCheckpointValue, 1);
     expect(restored.supabaseEmail, 'person@example.com');
     expect(restored.s3AccessKeyId, 's3-access');
   });
@@ -59,6 +65,22 @@ void main() {
     expect(restored.backendDeviceToken, isEmpty);
     expect(restored.s3AccessKeyId, 's3-access');
     expect(restored.s3SecretAccessKey, 's3-secret');
+  });
+
+  test('capture authentication intents persist and clear', () async {
+    final store = SettingsStore(secureStorage: const FlutterSecureStorage());
+
+    expect(await store.loadResumeCaptureAfterSignIn(), isFalse);
+    expect(await store.loadAllowSignedOutRecording(), isFalse);
+    await store.saveResumeCaptureAfterSignIn(true);
+    await store.saveAllowSignedOutRecording(true);
+    expect(await store.loadResumeCaptureAfterSignIn(), isTrue);
+    expect(await store.loadAllowSignedOutRecording(), isTrue);
+
+    await store.saveResumeCaptureAfterSignIn(false);
+    await store.saveAllowSignedOutRecording(false);
+    expect(await store.loadResumeCaptureAfterSignIn(), isFalse);
+    expect(await store.loadAllowSignedOutRecording(), isFalse);
   });
 
   test('pending PKCE state is secure, expiring, and clearable', () async {

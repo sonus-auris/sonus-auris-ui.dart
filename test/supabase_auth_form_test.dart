@@ -129,6 +129,67 @@ void main() {
     expect(harness.submitCalls, 0);
   });
 
+  testWidgets(
+    'keeps local validation inline and in a floating toast in landscape',
+    (tester) async {
+      tester.view.physicalSize = const Size(844, 390);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final harness = _AuthHarness(showProjectConfiguration: true);
+      addTearDown(harness.dispose);
+      await tester.pumpWidget(harness.build());
+
+      await tester.enterText(
+        find.byKey(const ValueKey('supabase-url-field')),
+        'https://test-project.supabase.co',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('supabase-anon-key-field')),
+        'sb_publishable_test_public_value',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('supabase-email-field')),
+        'definitely-not-an-email',
+      );
+      await tester.tap(find.byKey(const ValueKey('supabase-request-button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Enter a valid email address.'), findsOneWidget);
+      expect(
+        find.text('Fix before continuing: Enter a valid email address.'),
+        findsOneWidget,
+      );
+      final toast = find.byKey(const ValueKey('auth-validation-toast'));
+      expect(toast, findsOneWidget);
+      final bounds = tester.getRect(toast);
+      expect(bounds.left, greaterThanOrEqualTo(0));
+      expect(bounds.top, greaterThanOrEqualTo(0));
+      expect(bounds.right, lessThanOrEqualTo(844));
+      expect(bounds.bottom, lessThanOrEqualTo(390));
+      expect(harness.requestCalls, 0);
+
+      // A second attempt must queue another visible error instead of replacing
+      // or silently dropping the first one. Advance past the first toast's
+      // eight-second lifetime and confirm the queued toast is now rendered.
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('supabase-request-button')),
+          )
+          .onPressed!();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 9));
+      expect(toast, findsOneWidget);
+      expect(
+        find.text('Fix before continuing: Enter a valid email address.'),
+        findsOneWidget,
+      );
+      expect(harness.requestCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('reports per-step progress and busy states', (tester) async {
     final requestCompleter = Completer<void>();
     final submitCompleter = Completer<void>();

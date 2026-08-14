@@ -87,8 +87,10 @@ import '../services/voice/voice_command_parser.dart';
 import '../services/voice_id/voice_profile_service.dart';
 import '../retention/local_retention_policy.dart';
 import '../platform/runtime_platform.dart';
+import 'authenticated_capture_policy.dart';
 import 'app_view_model.dart';
 import 'mfa_gate_controller.dart';
+import 'session_reauthentication_policy.dart';
 
 /// Consent string recorded against the device on registration. Bump when the
 /// recording/privacy disclosure shown to the user materially changes. Bumping
@@ -563,6 +565,7 @@ class AppController implements MfaGateController {
   // device that genuinely cannot record does not spin.
   bool _intendRecording = false;
   bool _autoResuming = false;
+  late AuthenticatedCapturePolicy _captureAuthPolicy;
   final List<DateTime> _recentAutoResumes = [];
   static const int _maxAutoResumesPerMinute = 4;
   BackendUploadSession? _backendSession;
@@ -666,6 +669,13 @@ class AppController implements MfaGateController {
     _consentRecord = await _settingsStore.loadConsentRecord();
     _onboardingComplete.value = _hasValidConsent(_consentRecord);
     final secrets = await _settingsStore.loadSecrets();
+    _captureAuthPolicy = AuthenticatedCapturePolicy(
+      accountRequired: config.hasSupabaseAuthConfig,
+      signedIn: _hasAuthenticatedCaptureSession(secrets),
+      resumePending: await _settingsStore.loadResumeCaptureAfterSignIn(),
+      allowSignedOutRecording: await _settingsStore
+          .loadAllowSignedOutRecording(),
+    );
     final pendingAlerts = await _settingsStore.loadPendingAlerts();
     final pendingTelemetry = await _settingsStore.loadPendingTelemetry();
     // Browser builds are used for account setup and automated auth coverage.
@@ -694,6 +704,7 @@ class AppController implements MfaGateController {
     );
     final initialAppLink = await appLinks.getInitialLink();
     _secrets.add(secrets);
+    await _enforceSessionReauthenticationPolicy();
     if (initialAppLink != null) {
       unawaited(handleIncomingAppLink(initialAppLink));
     }
@@ -772,9 +783,18 @@ class AppController implements MfaGateController {
     // taking over consent windows, begin capturing on launch (including the
     // boot-triggered relaunch) without them pressing Start.
     if (!config.recordingSchedule.hasAnyWindows &&
-        config.autoStartCaptureEnabled &&
+        (config.autoStartCaptureEnabled ||
+            _captureAuthPolicy.resumePending ||
+            _captureAuthPolicy.allowsSignedOutRecording) &&
+        _captureAuthPolicy.mayRecord &&
         !_recorder.isRecording) {
-      _diagnostics.add('Auto-start capture is enabled; starting recording.');
+      _diagnostics.add(
+        _captureAuthPolicy.resumePending
+            ? 'Resuming capture intent after authenticated startup.'
+            : _captureAuthPolicy.allowsSignedOutRecording
+            ? 'Resuming explicitly allowed signed-out capture.'
+            : 'Auto-start capture is enabled; starting recording.',
+      );
       await startRecording();
     }
     await _localNotifications.ensureInitialized();
@@ -1083,6 +1103,10 @@ class AppController implements MfaGateController {
     }
     await _settingsStore.saveConfig(normalized);
     _config.add(normalized);
+    _captureAuthPolicy.updateAccountState(
+      accountRequired: normalized.hasSupabaseAuthConfig,
+      signedIn: _hasAuthenticatedCaptureSession(_secrets.valueOrNull),
+    );
     final settingsSyncError = await _syncPortableSettingsToSupabase(normalized);
     _message.add(
       settingsSyncError == null
@@ -1284,27 +1308,35 @@ class AppController implements MfaGateController {
     requestUploadDrain();
   }
 
-  Future<void> deleteAccount() async {
+  Future<void> deleteAccount({required String confirmedEmail}) async {
     if (!_config.hasValue || !_secrets.hasValue) {
-      return;
+      const message = 'Account data is still loading. Try deletion again.';
+      _message.add(message);
+      throw StateError(message);
     }
     await _ensureFreshSupabaseToken();
     final config = _config.value;
     final secrets = _secrets.value;
     if (config.backendBaseUrl.trim().isEmpty) {
-      _message.add('Backend URL is required before deleting your account.');
-      return;
+      const message = 'Backend URL is required before deleting your account.';
+      _message.add(message);
+      throw StateError(message);
     }
     if (!secrets.hasSupabaseToken) {
-      _message.add('Sign in before deleting your account.');
-      return;
+      const message = 'Sign in before deleting your account.';
+      _message.add(message);
+      throw StateError(message);
     }
     try {
       if (_recorder.isRecording) {
         await stopRecording();
       }
       await _playback.stop();
-      await _backendClient.deleteAccount(config: config, secrets: secrets);
+      await _backendClient.deleteAccount(
+        config: config,
+        secrets: secrets,
+        confirmedEmail: confirmedEmail,
+      );
       await _segmentIndex.clearAll();
       _segments.add(const []);
       _pendingAlertEvents.clear();
@@ -1327,13 +1359,15 @@ class AppController implements MfaGateController {
       _accountGroup.add(null);
       _message.add('Account deleted and local data cleared.');
     } catch (error) {
-      _message.add(_describeError(error));
+      final message = _describeError(error);
+      _message.add(message);
+      throw StateError(message);
     }
   }
 
   /// Revokes the Supabase session (best-effort server-side) and clears the
   /// stored identity and device token so the next sign-in re-registers cleanly.
-  Future<void> signOutSupabase() async {
+  Future<void> signOutSupabase({bool keepRecording = false}) async {
     final secrets = _secrets.valueOrNull;
     if (secrets != null && secrets.hasSupabaseToken && _config.hasValue) {
       await _authClient.signOut(
@@ -1341,6 +1375,7 @@ class AppController implements MfaGateController {
         accessToken: secrets.supabaseAccessToken,
       );
     }
+    await _applySignedOutCaptureChoice(keepRecording: keepRecording);
     // Drop the device token too: it is bound to the signed-out account, so a
     // different user signing in on this device must get a fresh registration.
     final cleared = (secrets ?? const CloudSecrets())
@@ -1368,6 +1403,7 @@ class AppController implements MfaGateController {
   }
 
   Future<void> _invalidateSupabaseSession({required String message}) async {
+    await _applySignedOutCaptureChoice(keepRecording: false);
     final secrets = _secrets.valueOrNull ?? const CloudSecrets();
     final cleared = secrets.withoutSupabaseSession().copyWith(
       backendDeviceToken: '',
@@ -1382,6 +1418,69 @@ class AppController implements MfaGateController {
     await _persistSecrets(cleared);
     _accountStatus.add(const AccountStatus());
     _message.add(message);
+  }
+
+  bool _hasAuthenticatedCaptureSession(CloudSecrets? secrets) =>
+      secrets != null &&
+      secrets.hasFreshSupabaseToken() &&
+      supabaseJwtIsPasswordlessAal2(secrets.supabaseAccessToken);
+
+  Future<void> _persistCaptureAuthenticationPolicy() async {
+    await Future.wait([
+      _settingsStore.saveResumeCaptureAfterSignIn(
+        _captureAuthPolicy.resumePending,
+      ),
+      _settingsStore.saveAllowSignedOutRecording(
+        _captureAuthPolicy.allowsSignedOutRecording,
+      ),
+    ]);
+  }
+
+  Future<void> _applySignedOutCaptureChoice({
+    required bool keepRecording,
+  }) async {
+    final shouldStop = _captureAuthPolicy.signedOut(
+      isRecording: _recorder.isRecording,
+      isStarting: _isStarting.value,
+      keepRecording: keepRecording,
+    );
+    await _persistCaptureAuthenticationPolicy();
+    if (shouldStop) {
+      _diagnostics.add(
+        'Authentication ended; pausing capture until the next AAL2 sign-in.',
+      );
+      await _stopRecording(preserveAuthenticationResume: true);
+    } else if (_captureAuthPolicy.allowsSignedOutRecording) {
+      _diagnostics.add(
+        'Authentication ended; continuing local capture by explicit choice.',
+      );
+    }
+  }
+
+  Future<void> _resumeCaptureAfterAuthentication() async {
+    final shouldResume = _captureAuthPolicy.signedIn();
+    await _persistCaptureAuthenticationPolicy();
+    if (!shouldResume || RuntimePlatform.isWeb) {
+      return;
+    }
+    if (_recorder.isRecording) {
+      _captureAuthPolicy.resumedSuccessfully();
+      await _persistCaptureAuthenticationPolicy();
+      return;
+    }
+    _diagnostics.add(
+      'AAL2 sign-in completed; immediately resuming pre-sign-out capture.',
+    );
+    await startRecording();
+    if (_recorder.isRecording) {
+      _captureAuthPolicy.resumedSuccessfully();
+      await _persistCaptureAuthenticationPolicy();
+      _message.add('Signed in and recording resumed.');
+    } else {
+      _message.add(
+        'Signed in, but recording could not resume. Tap Start to retry.',
+      );
+    }
   }
 
   // --- Passwordless sign-in (OTP-only email delivery) -----------------------
@@ -1767,6 +1866,7 @@ class AppController implements MfaGateController {
         config: _config.value,
         accessToken: token,
         friendlyName: friendlyName,
+        issuer: supabaseTotpIssuerForUrl(_config.value.supabaseUrl),
       );
     } catch (error) {
       _message.add(_describeError(error));
@@ -2303,6 +2403,24 @@ class AppController implements MfaGateController {
     final refreshToken = session.refreshToken.trim().isEmpty
         ? current.supabaseRefreshToken
         : session.refreshToken;
+    final claims = decodeSupabaseJwtPayload(session.accessToken) ?? const {};
+    final rawSessionId = claims['session_id'];
+    final sessionId = rawSessionId is String ? rawSessionId.trim() : '';
+    final sameSession = sessionId.isNotEmpty
+        ? sessionId == current.supabaseSessionId.trim()
+        : current.supabaseSessionId.trim().isEmpty &&
+              current.supabaseSessionStartedAtUtc != null &&
+              current.supabaseUserId.trim() == userId.trim();
+    final issuedAtSeconds = claims['iat'];
+    final issuedAt = issuedAtSeconds is num
+        ? DateTime.fromMillisecondsSinceEpoch(
+            issuedAtSeconds.toInt() * 1000,
+            isUtc: true,
+          )
+        : DateTime.now().toUtc();
+    final sessionStartedAt = sameSession
+        ? current.supabaseSessionStartedAtUtc ?? issuedAt
+        : issuedAt;
     // If a *different* user signed in, the existing device token belongs to the
     // previous account — drop it so the next backend call re-registers under the
     // new identity instead of writing this user's audio into the old account.
@@ -2319,6 +2437,11 @@ class AppController implements MfaGateController {
       supabaseAccessTokenExpiresAt: session.expiresAtUtc
           .toUtc()
           .toIso8601String(),
+      supabaseSessionId: sessionId,
+      supabaseSessionStartedAt: sessionStartedAt.toIso8601String(),
+      supabaseReauthReminderCheckpoint: sameSession
+          ? current.supabaseReauthReminderCheckpoint
+          : '',
       supabaseUserId: userId,
       supabaseEmail: email,
     );
@@ -2330,6 +2453,10 @@ class AppController implements MfaGateController {
       await _persistPendingTelemetry();
     }
     await _persistSecrets(next);
+    _captureAuthPolicy.updateAccountState(
+      accountRequired: _config.value.hasSupabaseAuthConfig,
+      signedIn: session.isPasswordlessAal2,
+    );
     if (session.isPasswordlessAal2) {
       _connectTelemetryRealtime();
       _connectDevicePresence();
@@ -2352,6 +2479,12 @@ class AppController implements MfaGateController {
     }
     _scheduleSupabaseTokenRefresh();
     _scheduleTelemetryFlush();
+    if (session.isPasswordlessAal2) {
+      final expired = await _enforceSessionReauthenticationPolicy();
+      if (!expired) {
+        await _resumeCaptureAfterAuthentication();
+      }
+    }
   }
 
   void _queueDiagnosticTelemetry(DiagnosticEntry entry) {
@@ -2643,6 +2776,9 @@ class AppController implements MfaGateController {
     if (!_config.hasValue) {
       return;
     }
+    if (await _enforceSessionReauthenticationPolicy()) {
+      return;
+    }
     final config = _config.value;
     final secrets = _secrets.valueOrNull;
     if (secrets == null ||
@@ -2671,6 +2807,36 @@ class AppController implements MfaGateController {
     } finally {
       _supabaseRefreshInFlight = null;
     }
+  }
+
+  Future<bool> _enforceSessionReauthenticationPolicy() async {
+    final secrets = _secrets.valueOrNull;
+    final startedAt = secrets?.supabaseSessionStartedAtUtc;
+    if (secrets == null || !secrets.hasSupabaseSession || startedAt == null) {
+      return false;
+    }
+    final decision = evaluateSessionReauthentication(
+      sessionStartedAtUtc: startedAt,
+      lastReminderCheckpoint: secrets.supabaseReauthReminderCheckpointValue,
+    );
+    if (decision.expired) {
+      await _invalidateSupabaseSession(
+        message:
+            decision.message ??
+            'Your Sonus Auris session ended. Sign in again.',
+      );
+      return true;
+    }
+    if (decision.shouldWarn) {
+      await _persistSecrets(
+        secrets.copyWith(
+          supabaseReauthReminderCheckpoint: decision.reminderCheckpoint
+              .toString(),
+        ),
+      );
+      _message.add(decision.message);
+    }
+    return false;
   }
 
   Future<void> _refreshSupabaseToken(
@@ -2906,6 +3072,12 @@ class AppController implements MfaGateController {
   }
 
   Future<void> startRecording({bool scheduleInitiated = false}) async {
+    if (!_captureAuthPolicy.mayRecord) {
+      _message.add(
+        'Sign in and complete phone or authenticator verification before starting recording.',
+      );
+      return;
+    }
     if (!hasValidRecordingConsent) {
       _message.add(
         'Accept the microphone recording disclosure before starting capture.',
@@ -2930,10 +3102,29 @@ class AppController implements MfaGateController {
         _diagnostics.add(backgroundError);
       }
       try {
+        if (!_captureAuthPolicy.mayRecord) {
+          await _backgroundCaptureService.stop();
+          _diagnostics.add(
+            'Recorder start cancelled because authentication ended.',
+          );
+          return;
+        }
         _diagnostics.add('Starting PCM microphone stream.');
         await _recorder.start(_config.value);
+        if (!_captureAuthPolicy.mayRecord) {
+          await _recorder.stop();
+          await _backgroundCaptureService.stop();
+          _diagnostics.add(
+            'Recorder stopped because authentication ended during startup.',
+          );
+          return;
+        }
         // Capture is live: from here a dropped stream should be auto-resumed.
         _intendRecording = true;
+        if (_captureAuthPolicy.resumePending) {
+          _captureAuthPolicy.resumedSuccessfully();
+          await _persistCaptureAuthenticationPolicy();
+        }
         _diagnostics.add('PCM microphone stream started.');
         _startCollisionMonitoring();
         unawaited(_feedback.say('Recording started'));
@@ -2954,7 +3145,16 @@ class AppController implements MfaGateController {
     await _updateContextTriggers();
   }
 
-  Future<void> stopRecording() async {
+  Future<void> stopRecording() =>
+      _stopRecording(preserveAuthenticationResume: false);
+
+  Future<void> _stopRecording({
+    required bool preserveAuthenticationResume,
+  }) async {
+    if (!preserveAuthenticationResume) {
+      _captureAuthPolicy.stoppedExplicitly();
+      await _persistCaptureAuthenticationPolicy();
+    }
     _diagnostics.add('Stop recording requested.');
     // An explicit stop supersedes a pending pause auto-resume.
     _cancelPendingPauseResume();

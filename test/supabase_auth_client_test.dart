@@ -84,6 +84,72 @@ void main() {
     );
   });
 
+  test('TOTP issuer distinguishes localhost from live Supabase', () {
+    for (final localUrl in [
+      'http://localhost:54321',
+      'http://127.0.0.1:54321',
+      'http://10.0.2.2:54321',
+      'http://[::1]:54321',
+      'https://auth.localhost',
+    ]) {
+      expect(
+        supabaseTotpIssuerForUrl(localUrl),
+        'sonus-auris:localhost',
+        reason: localUrl,
+      );
+    }
+    for (final liveUrl in [
+      'https://project.supabase.co',
+      'https://auth.sonus-auris.com',
+      '',
+      'not a URL',
+    ]) {
+      expect(
+        supabaseTotpIssuerForUrl(liveUrl),
+        'sonus-auris:live',
+        reason: liveUrl,
+      );
+    }
+  });
+
+  test('enrollTotp sends the Sonus Auris issuer to GoTrue', () async {
+    late http.Request captured;
+    final client = SupabaseAuthClient(
+      httpClient: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({
+            'id': 'factor-1',
+            'totp': {
+              'secret': 'BASE32SECRET',
+              'uri':
+                  'otpauth://totp/sonus-auris%3Alive:user%40example.com'
+                  '?secret=BASE32SECRET&issuer=sonus-auris%3Alive',
+            },
+          }),
+          200,
+        );
+      }),
+    );
+
+    final enrollment = await client.enrollTotp(
+      config: config,
+      accessToken: access1,
+      friendlyName: 'My authenticator',
+      issuer: supabaseTotpIssuerForUrl(config.supabaseUrl),
+    );
+
+    expect(captured.url.path, '/auth/v1/factors');
+    expect(jsonDecode(captured.body), {
+      'factor_type': 'totp',
+      'friendly_name': 'My authenticator',
+      'issuer': 'sonus-auris:live',
+    });
+    expect(enrollment.factorId, 'factor-1');
+    expect(enrollment.secret, 'BASE32SECRET');
+    expect(enrollment.uri, contains('issuer=sonus-auris%3Alive'));
+  });
+
   test('PKCE uses an RFC 7636 S256 challenge and strong verifier', () {
     expect(SupabaseAuthClient.pkceChallengeForVerifier(verifier), challenge);
     final generated = {

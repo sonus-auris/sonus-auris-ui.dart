@@ -197,6 +197,27 @@ void main() {
     );
   });
 
+  test(
+    'account deletion is the final Configure tab and requires fresh MFA',
+    () {
+      final mobile = File('lib/main.dart').readAsStringSync();
+      final deletion = File(
+        'lib/src/widgets/account_deletion_section.dart',
+      ).readAsStringSync();
+
+      expect(
+        mobile.indexOf("label: 'Delete account'"),
+        greaterThan(mobile.indexOf("label: 'Intelligence'")),
+      );
+      expect(mobile, contains("storageKey: 'configure-delete-account'"));
+      expect(deletion, contains('Confirm signed-in email'));
+      expect(deletion, contains('challengeMfaFactor'));
+      expect(deletion, contains('verifyMfaFactor'));
+      expect(deletion, contains('completesSignIn: false'));
+      expect(deletion, contains('Delete permanently'));
+    },
+  );
+
   test('offline escape hatch is structurally release-gated', () {
     final source = File(
       'lib/src/platform/offline_development_mode.dart',

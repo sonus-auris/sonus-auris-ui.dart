@@ -229,6 +229,52 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
     );
   }
 
+  void _queueErrorToast(String message) {
+    if (!mounted || message.trim().isEmpty) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          key: const ValueKey('auth-validation-toast'),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 8),
+          showCloseIcon: true,
+          content: Semantics(
+            label: 'Authentication error: $message',
+            liveRegion: true,
+            child: Text('Fix before continuing: $message'),
+          ),
+        ),
+      );
+    });
+  }
+
+  String _emailStepValidationError() {
+    final emailError = validateAccountEmail(widget.emailController.text);
+    if (emailError != null) {
+      return emailError;
+    }
+    if (widget.showProjectConfiguration) {
+      final urlError = validateSupabaseProjectUrl(
+        widget.supabaseUrlController?.text,
+      );
+      if (urlError != null) {
+        return urlError;
+      }
+      final keyError = validateSupabaseAnonKey(
+        widget.supabaseAnonKeyController?.text,
+      );
+      if (keyError != null) {
+        return keyError;
+      }
+    }
+    return 'Check the highlighted account fields.';
+  }
+
   Future<void> _requestCode() async {
     if (_isBusy || !widget.enabled) {
       return;
@@ -240,6 +286,7 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
       _inlineError = null;
     });
     if (!(_formKey.currentState?.validate() ?? false)) {
+      _queueErrorToast(_emailStepValidationError());
       return;
     }
     await _sendCode();
@@ -267,7 +314,9 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
       }
     } catch (error) {
       if (mounted) {
-        setState(() => _inlineError = describeAuthError(error));
+        final message = describeAuthError(error);
+        setState(() => _inlineError = message);
+        _queueErrorToast(message);
       }
     } finally {
       if (mounted) {
@@ -285,6 +334,10 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
       _inlineError = null;
     });
     if (!(_formKey.currentState?.validate() ?? false)) {
+      _queueErrorToast(
+        validateEmailOtpCode(widget.codeController.text) ??
+            'Check the highlighted sign-in code.',
+      );
       return;
     }
     setState(() => _busy = _Busy.verify);
@@ -294,7 +347,9 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
       await widget.onSubmitCode(email, code);
     } catch (error) {
       if (mounted) {
-        setState(() => _inlineError = describeAuthError(error));
+        final message = describeAuthError(error);
+        setState(() => _inlineError = message);
+        _queueErrorToast(message);
       }
     } finally {
       if (mounted) {

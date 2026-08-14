@@ -290,6 +290,7 @@ void main() {
         expect(request.url.path, '/api/mobile/v1/account');
         expect(request.headers['x-supabase-auth'], 'Bearer user-jwt');
         expect(request.headers['authorization'], isNull);
+        expect(jsonDecode(request.body), {'confirmEmail': 'user@example.com'});
         return http.Response('{"ok":true}', 200);
       }),
     );
@@ -297,6 +298,7 @@ void main() {
     await client.deleteAccount(
       config: config,
       secrets: const CloudSecrets(supabaseAccessToken: 'user-jwt'),
+      confirmedEmail: ' user@example.com ',
     );
 
     client.close();

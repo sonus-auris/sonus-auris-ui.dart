@@ -50,6 +50,9 @@ enable_signup = true
 enable_anonymous_sign_ins = false
 minimum_password_length = 8
 
+[auth.sessions]
+timebox = "2520h"
+
 [auth.rate_limit]
 email_sent = 500
 sms_sent = 500

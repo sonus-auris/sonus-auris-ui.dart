@@ -68,6 +68,10 @@ class SettingsStore {
   static const _pendingTelemetryKey = 'audio_dashcam.pending_telemetry.v1';
   static const _sleepCycleProfileKey = 'audio_dashcam.sleep_cycle_profile.v1';
   static const _consentRecordKey = 'audio_dashcam.consent_record.v1';
+  static const _resumeCaptureAfterSignInKey =
+      'audio_dashcam.capture.resume_after_sign_in.v1';
+  static const _allowSignedOutRecordingKey =
+      'audio_dashcam.capture.allow_signed_out.v1';
   static const _s3AccessKeyKey = 'audio_dashcam.s3.access_key_id';
   static const _s3SecretKeyKey = 'audio_dashcam.s3.secret_access_key';
   static const _s3SessionTokenKey = 'audio_dashcam.s3.session_token';
@@ -77,6 +81,11 @@ class SettingsStore {
       'audio_dashcam.supabase.refresh_token';
   static const _supabaseTokenExpiresAtKey =
       'audio_dashcam.supabase.token_expires_at';
+  static const _supabaseSessionIdKey = 'audio_dashcam.supabase.session_id';
+  static const _supabaseSessionStartedAtKey =
+      'audio_dashcam.supabase.session_started_at';
+  static const _supabaseReauthReminderCheckpointKey =
+      'audio_dashcam.supabase.reauth_reminder_checkpoint';
   static const _supabaseUserIdKey = 'audio_dashcam.supabase.user_id';
   static const _supabaseEmailKey = 'audio_dashcam.supabase.email';
   static const _pendingSupabaseAuthKey =
@@ -229,6 +238,34 @@ class SettingsStore {
     await prefs.setString(_consentRecordKey, jsonEncode(record.toJson()));
   }
 
+  Future<bool> loadResumeCaptureAfterSignIn() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_resumeCaptureAfterSignInKey) ?? false;
+  }
+
+  Future<void> saveResumeCaptureAfterSignIn(bool shouldResume) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (shouldResume) {
+      await prefs.setBool(_resumeCaptureAfterSignInKey, true);
+    } else {
+      await prefs.remove(_resumeCaptureAfterSignInKey);
+    }
+  }
+
+  Future<bool> loadAllowSignedOutRecording() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_allowSignedOutRecordingKey) ?? false;
+  }
+
+  Future<void> saveAllowSignedOutRecording(bool allowed) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (allowed) {
+      await prefs.setBool(_allowSignedOutRecordingKey, true);
+    } else {
+      await prefs.remove(_allowSignedOutRecordingKey);
+    }
+  }
+
   Future<CloudSecrets> loadSecrets() async {
     return CloudSecrets(
       s3AccessKeyId: await _secureStorage.read(key: _s3AccessKeyKey) ?? '',
@@ -242,6 +279,15 @@ class SettingsStore {
           await _secureStorage.read(key: _supabaseRefreshTokenKey) ?? '',
       supabaseAccessTokenExpiresAt:
           await _secureStorage.read(key: _supabaseTokenExpiresAtKey) ?? '',
+      supabaseSessionId:
+          await _secureStorage.read(key: _supabaseSessionIdKey) ?? '',
+      supabaseSessionStartedAt:
+          await _secureStorage.read(key: _supabaseSessionStartedAtKey) ?? '',
+      supabaseReauthReminderCheckpoint:
+          await _secureStorage.read(
+            key: _supabaseReauthReminderCheckpointKey,
+          ) ??
+          '',
       supabaseUserId: await _secureStorage.read(key: _supabaseUserIdKey) ?? '',
       supabaseEmail: await _secureStorage.read(key: _supabaseEmailKey) ?? '',
       sttApiKey: await _secureStorage.read(key: _sttApiKeyKey) ?? '',
@@ -266,6 +312,15 @@ class SettingsStore {
     await _writeSecure(
       _supabaseTokenExpiresAtKey,
       secrets.supabaseAccessTokenExpiresAt,
+    );
+    await _writeSecure(_supabaseSessionIdKey, secrets.supabaseSessionId);
+    await _writeSecure(
+      _supabaseSessionStartedAtKey,
+      secrets.supabaseSessionStartedAt,
+    );
+    await _writeSecure(
+      _supabaseReauthReminderCheckpointKey,
+      secrets.supabaseReauthReminderCheckpoint,
     );
     await _writeSecure(_supabaseUserIdKey, secrets.supabaseUserId);
     await _writeSecure(_supabaseEmailKey, secrets.supabaseEmail);

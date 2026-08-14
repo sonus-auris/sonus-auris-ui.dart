@@ -492,10 +492,15 @@ class SoundRecorderBackendClient {
   Future<void> deleteAccount({
     required AppConfig config,
     required CloudSecrets secrets,
+    required String confirmedEmail,
   }) async {
     final uri = _apiUri(config, '/api/mobile/v1/account');
     final response = await _httpClient
-        .delete(uri, headers: _identityHeaders(secrets))
+        .delete(
+          uri,
+          headers: _identityHeaders(secrets),
+          body: jsonEncode({'confirmEmail': confirmedEmail.trim()}),
+        )
         .timeout(requestTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(

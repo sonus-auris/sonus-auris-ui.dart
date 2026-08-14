@@ -17,6 +17,22 @@ const String kSupabaseAuthRedirectUrl = String.fromEnvironment(
   defaultValue: 'sonusauris://auth/callback',
 );
 
+/// Stable TOTP issuer shown by authenticator apps such as Authy.
+///
+/// The issuer is intentionally derived from the Supabase endpoint rather than
+/// from the Flutter target: a web or Android client pointed at a local GoTrue
+/// instance must still be visibly separated from the live account.
+String supabaseTotpIssuerForUrl(String rawUrl) {
+  final host = Uri.tryParse(rawUrl.trim())?.host.trim().toLowerCase() ?? '';
+  final isLocal =
+      host == 'localhost' ||
+      host.endsWith('.localhost') ||
+      host == '127.0.0.1' ||
+      host == '::1' ||
+      host == '10.0.2.2';
+  return isLocal ? 'sonus-auris:localhost' : 'sonus-auris:live';
+}
+
 /// Thin client for Supabase's GoTrue REST auth API. Implemented over plain
 /// `http` (no native plugin) so it is fully testable and adds no dependency.
 ///
@@ -307,6 +323,7 @@ class SupabaseAuthClient {
     required AppConfig config,
     required String accessToken,
     String? friendlyName,
+    String? issuer,
   }) async {
     final uri = _authUri(config, 'factors');
     final decoded = await _post(
@@ -316,6 +333,7 @@ class SupabaseAuthClient {
         'factor_type': 'totp',
         if ((friendlyName ?? '').trim().isNotEmpty)
           'friendly_name': friendlyName!.trim(),
+        if ((issuer ?? '').trim().isNotEmpty) 'issuer': issuer!.trim(),
       },
       'Could not start authenticator enrollment.',
       accessToken: accessToken,

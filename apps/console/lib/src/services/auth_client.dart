@@ -18,6 +18,18 @@ import '../models/mfa.dart';
 import '../models/supabase_session.dart';
 import 'key_policy.dart';
 
+/// Stable TOTP issuer shown by authenticator apps such as Authy.
+String consoleTotpIssuerForUrl(String rawUrl) {
+  final host = Uri.tryParse(rawUrl.trim())?.host.trim().toLowerCase() ?? '';
+  final isLocal =
+      host == 'localhost' ||
+      host.endsWith('.localhost') ||
+      host == '127.0.0.1' ||
+      host == '::1' ||
+      host == '10.0.2.2';
+  return isLocal ? 'sonus-auris:localhost' : 'sonus-auris:live';
+}
+
 class AuthClient {
   AuthClient({
     required this.config,
@@ -205,7 +217,7 @@ class AuthClient {
       'token',
       {'auth_code': code, 'code_verifier': codeVerifier},
       'This legacy sign-in link is invalid or expired. Request a fresh email '
-      'code.',
+          'code.',
       query: {'grant_type': 'pkce'},
     );
     return SupabaseSession.fromJson(json);
@@ -218,11 +230,11 @@ class AuthClient {
   }) async {
     _requireEmail(email);
     final normalizedCode = _requireSixDigitCode(code);
-    final json = await _post(
-      'verify',
-      {'type': 'email', 'email': email.trim(), 'token': normalizedCode},
-      'That code was not accepted. Request a fresh one and try again.',
-    );
+    final json = await _post('verify', {
+      'type': 'email',
+      'email': email.trim(),
+      'token': normalizedCode,
+    }, 'That code was not accepted. Request a fresh one and try again.');
     return SupabaseSession.fromJson(json);
   }
 
@@ -280,7 +292,7 @@ class AuthClient {
         'verify',
         {'type': 'magiclink', 'token_hash': tokenHash},
         'That legacy sign-in link was not accepted. Request a fresh email code '
-        'and try again.',
+            'and try again.',
       );
       return SupabaseSession.fromJson(json);
     }
@@ -340,6 +352,7 @@ class AuthClient {
         'factor_type': 'totp',
         if ((friendlyName ?? '').trim().isNotEmpty)
           'friendly_name': friendlyName!.trim(),
+        'issuer': consoleTotpIssuerForUrl(config.supabaseUrl),
       },
       'Could not start authenticator enrollment.',
       accessToken: accessToken,
