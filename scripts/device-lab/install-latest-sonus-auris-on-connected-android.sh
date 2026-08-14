@@ -413,6 +413,13 @@ cd "$APP_REPO"
 note "Materializing integrity-pinned zed-pkg dependencies"
 "$ZED" install --frozen
 "$FLUTTER" pub get
+if [[ -f "$APP_REPO/apps/console/pubspec.yaml" ]]; then
+  note "Resolving the nested Flutter console package"
+  (
+    cd "$APP_REPO/apps/console"
+    "$FLUTTER" pub get
+  )
+fi
 if [[ "${SONUS_SKIP_TESTS:-0}" != "1" ]]; then
   note "Running analyzer"
   "$FLUTTER" analyze --no-fatal-infos
