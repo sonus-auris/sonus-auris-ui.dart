@@ -16,6 +16,9 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    # Downloaded zed-pkg packages are analyzed in their source repositories;
+    # keep app analysis scoped to source owned by this repository.
+    - zed_modules/**
 include: package:flutter_lints/flutter.yaml
 
 linter:
