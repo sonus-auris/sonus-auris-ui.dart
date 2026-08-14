@@ -78,7 +78,8 @@ test('[puppeteer] the passwordless sign-in screen renders', async () => {
   );
   assert.match(text, /Sign in/i);
   assert.match(text, /Email me a code/i);
-  assert.doesNotMatch(text, /magic link|email link|sign-in link/i);
+  assert.match(text, /6-digit one-time code/i);
+  assert.doesNotMatch(text, /email link|magic link|sign-in link|fallback/i);
   assert.match(text, /new accounts are created automatically/i);
 });
 

@@ -9,8 +9,9 @@ import '../services/supabase_key_policy.dart';
 /// verified), so keeping both entry points on one widget prevents the first-run
 /// and returning-user flows from drifting apart.
 ///
-/// The code step requires both hosted Supabase signup and passwordless email
-/// templates to include `{{ .Token }}` and omit authentication links.
+/// The code step requires the hosted Supabase confirmation and magic-link
+/// templates to render `{{ .Token }}` only. Current sign-in emails must not
+/// contain a clickable authentication link.
 class SupabaseAuthForm extends StatefulWidget {
   const SupabaseAuthForm({
     super.key,

@@ -147,7 +147,7 @@ class ConsoleController extends ChangeNotifier {
       final redirect = _auth.magicLinkRedirectUri;
       if (redirect == null) {
         throw const FormatException(
-          'Configure an HTTPS magic-link callback before signing in.',
+          'Secure sign-in callback configuration is missing.',
         );
       }
       final verifier = AuthClient.createPkceVerifier();
@@ -173,7 +173,7 @@ class ConsoleController extends ChangeNotifier {
       final redirect = _auth.magicLinkRedirectUri;
       if (redirect == null) {
         throw const FormatException(
-          'Configure an HTTPS magic-link callback before signing in.',
+          'Secure sign-in callback configuration is missing.',
         );
       }
       final verifier = AuthClient.createPkceVerifier();
@@ -202,8 +202,9 @@ class ConsoleController extends ChangeNotifier {
     });
   }
 
-  /// Completes passwordless sign-in from a verified operating-system deep link.
-  /// The callback is never logged or persisted; only the resulting session is.
+  /// Completes legacy passwordless sign-in from a verified operating-system
+  /// deep link. The callback is never logged or persisted; only the resulting
+  /// session is.
   Future<void> consumeMagicLink(Uri callback) async {
     await _guard(() async {
       final session = await _auth.consumeMagicLink(callback);
@@ -230,7 +231,8 @@ class ConsoleController extends ChangeNotifier {
         final redirect = _auth.magicLinkRedirectUri;
         if (pending == null) {
           throw StateError(
-            'This magic link was not requested in this browser. Request a fresh one.',
+            'This legacy sign-in link was not requested in this browser. '
+            'Request a fresh email code.',
           );
         }
         if (pending.isExpired() ||
@@ -239,7 +241,7 @@ class ConsoleController extends ChangeNotifier {
             pending.redirectUrl != redirect.toString()) {
           await _store.clearPendingMagicLink();
           throw StateError(
-            'This sign-in request expired. Request a fresh magic link.',
+            'This sign-in request expired. Request a fresh email code.',
           );
         }
         final session = await _auth.exchangePkceCode(
@@ -250,7 +252,7 @@ class ConsoleController extends ChangeNotifier {
         await _acceptFirstFactorSession(
           session,
           expectedEmail: pending.email,
-          successMessage: 'Signed in with your magic link.',
+          successMessage: 'Signed in from a legacy callback.',
         );
       });
       return true;
@@ -503,7 +505,7 @@ class ConsoleController extends ChangeNotifier {
 
   String get _accessToken => _session?.accessToken ?? '';
 
-  /// Adopts a first-factor session (email code or magic link): verifies it is
+  /// Adopts a first-factor session (email code or legacy callback): verifies it
   /// passwordless and belongs to the identity that requested sign-in, persists
   /// it, then continues to enrollment, the MFA challenge, or the console.
   Future<void> _acceptFirstFactorSession(

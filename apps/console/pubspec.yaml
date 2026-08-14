@@ -39,7 +39,7 @@ dependencies:
   flutter_secure_storage: ^10.3.1
   shared_preferences: ^2.5.5
   url_launcher: ^6.3.2
-  # Receives Supabase magic-link callbacks on mobile and desktop platforms.
+  # Temporarily receives already-issued legacy Supabase callbacks.
   app_links: ^7.2.1
   uuid: ^4.6.0
   qr_flutter: ^4.1.0

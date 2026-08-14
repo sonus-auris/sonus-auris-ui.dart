@@ -185,17 +185,27 @@ selected phrase window.
 Every native/mobile sign-up and sign-in surface is code-first: it sends a
 six-digit Supabase email OTP, and unknown email addresses are created on first
 verification. The app has no account password field or password-reset flow.
-The hosted Confirm Signup and Magic Link / OTP templates must each contain the
-six-digit `{{ .Token }}` and no `{{ .ConfirmationURL }}`, token hash, or
-clickable authentication link. Legacy S256 PKCE callback handling remains only
-for separately reviewed non-login flows; release clients reject access or
-refresh tokens delivered in any callback URL.
+Both the hosted **Confirm signup** and **Magic Link / OTP** templates must
+render only the six-digit `{{ .Token }}` and must not render
+`{{ .ConfirmationURL }}`, a token hash, or another clickable authentication
+URL. Supabase can select either template based on account state, so configuring
+only one does not satisfy this contract.
 
 `Token` is a fixed top-level variable in Supabase's hosted Go-template
 context, so it must remain `{{ .Token }}` rather than an invented nested path
 such as `{{ .x.y.Token }}`. Supabase reserves `{{ .Data.* }}` for nested user
 metadata; it does not place the OTP there. SendGrid receives the message only
 after Supabase has rendered it and therefore cannot add a template namespace.
+
+Legacy S256 PKCE callback validation remains in the clients only so
+already-issued links can drain safely during migration. The matching verifier
+stays in Keychain/Keystore and expires with the request, and release clients
+reject access or refresh tokens delivered in a callback URL. This compatibility
+path is not advertised and is not part of the current sign-in email contract.
+While that compatibility path remains, keep `sonusauris://auth/callback` (or
+the `SONUS_SUPABASE_AUTH_REDIRECT_URL` build-time override) in the Supabase Auth
+redirect allow-list as an exact URL; current hosted email templates must not
+reference it.
 
 For local development while Supabase is unavailable, a debug build can expose
 the explicit offline option with

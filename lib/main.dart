@@ -264,7 +264,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
                   ? SettingsPage(controller: controller)
                   : OnboardingFlow(
                       controller: controller,
-                      // A magic-link/OTP return relaunches the app with a
+                      // A legacy callback/OTP return relaunches the app with a
                       // session (first factor or full AAL2). Resume at the
                       // account step — where the mandatory MFA gate lives —
                       // instead of throwing the user back to the welcome

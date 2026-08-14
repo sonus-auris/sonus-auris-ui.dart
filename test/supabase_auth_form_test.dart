@@ -60,6 +60,15 @@ void main() {
     // The single flow reveals the code field and hides the email-step button.
     expect(find.byKey(const ValueKey('supabase-code-field')), findsOneWidget);
     expect(find.byKey(const ValueKey('supabase-request-button')), findsNothing);
+    expect(
+      find.text(
+        'We emailed a 6-digit sign-in code to person@example.com. Enter it to '
+        'continue.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('fallback'), findsNothing);
+    expect(find.textContaining('sign-in link'), findsNothing);
 
     await tester.enterText(
       find.byKey(const ValueKey('supabase-code-field')),
