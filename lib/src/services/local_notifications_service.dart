@@ -1,8 +1,6 @@
 // Single owner of the local-notifications plugin, shared by schedule reminders and context-trigger consent prompts.
 // ignore_for_file: prefer_initializing_formals
 
-import 'dart:io';
-
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
@@ -10,6 +8,7 @@ import 'package:timezone/timezone.dart' as tz;
 import '../models/acoustic_detection.dart';
 import '../models/context_trigger.dart';
 import '../models/recording_schedule.dart';
+import '../platform/runtime_platform.dart';
 import 'diagnostic_log.dart';
 
 /// Narrow schedule-reminder seam used by [PluginSchedulePlatform]. Tests inject
@@ -115,7 +114,7 @@ class LocalNotificationsService implements ScheduleReminderClient {
   @override
   Future<bool> requestPermission() async {
     await ensureInitialized();
-    if (Platform.isIOS) {
+    if (RuntimePlatform.isIOS) {
       final granted = await _plugin
           .resolvePlatformSpecificImplementation<
             IOSFlutterLocalNotificationsPlugin
@@ -123,7 +122,7 @@ class LocalNotificationsService implements ScheduleReminderClient {
           ?.requestPermissions(alert: true, badge: false, sound: true);
       return granted ?? false;
     }
-    if (Platform.isMacOS) {
+    if (RuntimePlatform.isMacOS) {
       final granted = await _plugin
           .resolvePlatformSpecificImplementation<
             MacOSFlutterLocalNotificationsPlugin
@@ -131,7 +130,7 @@ class LocalNotificationsService implements ScheduleReminderClient {
           ?.requestPermissions(alert: true, badge: false, sound: true);
       return granted ?? false;
     }
-    if (Platform.isAndroid) {
+    if (RuntimePlatform.isAndroid) {
       final granted = await _plugin
           .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin
@@ -148,7 +147,7 @@ class LocalNotificationsService implements ScheduleReminderClient {
   /// restricted by Google Play to alarm/timer/calendar apps.
   Future<bool> requestExactAlarmPermission() async {
     await ensureInitialized();
-    if (!Platform.isAndroid) {
+    if (!RuntimePlatform.isAndroid) {
       return true;
     }
     final android = _plugin

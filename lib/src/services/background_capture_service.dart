@@ -2,10 +2,9 @@
 // that keeps an already user-started recording alive in the background.
 // ignore_for_file: prefer_initializing_formals
 
-import 'dart:io';
-
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
+import '../platform/runtime_platform.dart';
 import 'diagnostic_log.dart';
 
 enum BackgroundCaptureMode {
@@ -44,7 +43,7 @@ class BackgroundCaptureService {
   final DiagnosticLog? _diagnostics;
 
   void init() {
-    if (!Platform.isAndroid) {
+    if (!RuntimePlatform.isAndroid) {
       _diagnostics?.add(
         'Foreground task initialization skipped: platform is not Android.',
       );
@@ -82,7 +81,7 @@ class BackgroundCaptureService {
   Future<String?> start({
     BackgroundCaptureMode mode = BackgroundCaptureMode.recording,
   }) async {
-    if (!Platform.isAndroid) {
+    if (!RuntimePlatform.isAndroid) {
       _diagnostics?.add('Foreground service skipped: platform is not Android.');
       return null;
     }
@@ -153,7 +152,7 @@ class BackgroundCaptureService {
   }
 
   Future<void> stop() async {
-    if (!Platform.isAndroid) {
+    if (!RuntimePlatform.isAndroid) {
       return;
     }
     if (await FlutterForegroundTask.isRunningService) {

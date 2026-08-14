@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:share_plus/share_plus.dart';
 
 import '../models/recording_segment.dart';
+import '../platform/runtime_platform.dart';
 
 enum LocalExportStatus {
   completed,
@@ -154,10 +155,12 @@ class LocalExportService {
   }
 
   static LocalExportPlatform _detectPlatform() {
-    if (Platform.isAndroid || Platform.isIOS) {
+    if (RuntimePlatform.isAndroid || RuntimePlatform.isIOS) {
       return LocalExportPlatform.mobileShare;
     }
-    if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
+    if (RuntimePlatform.isLinux ||
+        RuntimePlatform.isMacOS ||
+        RuntimePlatform.isWindows) {
       return LocalExportPlatform.desktopSave;
     }
     return LocalExportPlatform.unsupported;
@@ -187,7 +190,7 @@ class LocalExportService {
   }
 
   static Rect? _defaultSharePositionOrigin() {
-    if (!Platform.isIOS) {
+    if (!RuntimePlatform.isIOS) {
       return null;
     }
     final views = WidgetsBinding.instance.platformDispatcher.views;

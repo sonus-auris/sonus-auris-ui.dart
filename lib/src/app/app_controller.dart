@@ -1,5 +1,6 @@
 // Central app orchestrator: owns every service and drives the capture/encrypt/upload/analysis lifecycle, exposing app state to the UI.
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -85,6 +86,7 @@ import '../services/voice/voice_command_dispatcher.dart';
 import '../services/voice/voice_command_parser.dart';
 import '../services/voice_id/voice_profile_service.dart';
 import '../retention/local_retention_policy.dart';
+import '../platform/runtime_platform.dart';
 import 'app_view_model.dart';
 import 'mfa_gate_controller.dart';
 
@@ -666,9 +668,15 @@ class AppController implements MfaGateController {
     final secrets = await _settingsStore.loadSecrets();
     final pendingAlerts = await _settingsStore.loadPendingAlerts();
     final pendingTelemetry = await _settingsStore.loadPendingTelemetry();
-    final recovered = await _segmentIndex.recoverOrphanedLocalSegments(
-      fallbackSegmentMinutes: config.segmentMinutes,
-    );
+    // Browser builds are used for account setup and automated auth coverage.
+    // The rolling audio index is intentionally native-only: it is backed by
+    // dart:io files and path_provider has no application-support directory on
+    // the web. Keep browser startup independent of that storage boundary.
+    final recovered = RuntimePlatform.isWeb
+        ? <RecordingSegment>[]
+        : await _segmentIndex.recoverOrphanedLocalSegments(
+            fallbackSegmentMinutes: config.segmentMinutes,
+          );
     _pendingAlertEvents
       ..clear()
       ..addAll(pendingAlerts);
@@ -679,7 +687,7 @@ class AppController implements MfaGateController {
     _config.add(config);
     final appLinks = AppLinks();
     _authLinkSubscription = appLinks.uriLinkStream.listen(
-      (uri) => unawaited(_handleAppLink(uri)),
+      (uri) => unawaited(handleIncomingAppLink(uri)),
       onError: (Object error) {
         _diagnostics.add('App-link stream error: $error');
       },
@@ -687,7 +695,7 @@ class AppController implements MfaGateController {
     final initialAppLink = await appLinks.getInitialLink();
     _secrets.add(secrets);
     if (initialAppLink != null) {
-      unawaited(_handleAppLink(initialAppLink));
+      unawaited(handleIncomingAppLink(initialAppLink));
     }
     _segments.add(recovered);
     _closedSegmentsSubscription = _recorder.closedSegments
@@ -752,6 +760,12 @@ class AppController implements MfaGateController {
     // direct S3/R2 remain useful while the account services retry in the
     // background.
     unawaited(_initializeRemoteAccountServices());
+    if (RuntimePlatform.isWeb) {
+      _diagnostics.add(
+        'Browser account mode initialized; native recording services skipped.',
+      );
+      return;
+    }
     requestUploadDrain();
     await _enforceRetention();
     // "Always-on": if the user enabled auto-start and no weekly schedule is
@@ -1078,6 +1092,11 @@ class AppController implements MfaGateController {
     if (settingsSyncError != null) {
       _diagnostics.add(settingsSyncError);
     }
+    if (RuntimePlatform.isWeb) {
+      // Account/settings mode on the web has no dart:io recording index or
+      // native scheduler to reconcile after a configuration save.
+      return;
+    }
     // Battery-saver / network-policy may have changed; re-evaluate the gate (and
     // report the new policy to the backend) before draining.
     await _refreshTransferStatus();
@@ -1116,16 +1135,17 @@ class AppController implements MfaGateController {
         needsBluetooth || kinds.contains(ContextTriggerKind.wifiChange);
     try {
       if (needsBluetooth) {
-        if (Platform.isAndroid) {
+        if (RuntimePlatform.isAndroid) {
           await [
             Permission.bluetoothScan,
             Permission.bluetoothConnect,
           ].request();
-        } else if (Platform.isIOS) {
+        } else if (RuntimePlatform.isIOS) {
           await Permission.bluetooth.request();
         }
       }
-      if (needsLocation && (Platform.isAndroid || Platform.isIOS)) {
+      if (needsLocation &&
+          (RuntimePlatform.isAndroid || RuntimePlatform.isIOS)) {
         await Permission.locationWhenInUse.request();
       }
     } catch (error) {
@@ -1197,16 +1217,16 @@ class AppController implements MfaGateController {
         await _localNotifications.requestPermission();
       }
       if (record.granted(ConsentItem.location) &&
-          (Platform.isAndroid || Platform.isIOS)) {
+          (RuntimePlatform.isAndroid || RuntimePlatform.isIOS)) {
         await Permission.locationWhenInUse.request();
       }
       if (record.granted(ConsentItem.bluetooth)) {
-        if (Platform.isAndroid) {
+        if (RuntimePlatform.isAndroid) {
           await [
             Permission.bluetoothScan,
             Permission.bluetoothConnect,
           ].request();
-        } else if (Platform.isIOS) {
+        } else if (RuntimePlatform.isIOS) {
           await Permission.bluetooth.request();
         }
       }
@@ -1459,7 +1479,9 @@ class AppController implements MfaGateController {
     }
   }
 
-  Future<bool> _handleAppLink(Uri uri) async {
+  /// Routes only recognized Sonus invitation and Supabase callback URLs.
+  /// Ordinary Flutter web launch URLs are deliberately ignored.
+  Future<bool> handleIncomingAppLink(Uri uri) async {
     if (uri.scheme == 'sonusauris' &&
         uri.host == 'invite' &&
         uri.path == '/join') {
@@ -1478,6 +1500,29 @@ class AppController implements MfaGateController {
         return true;
       }
       return acceptAccountInvite(token);
+    }
+    // On Flutter web app_links reports the page's ordinary launch URL as the
+    // initial link. A plain `/` navigation is not an authentication callback
+    // and must not become a user-visible "targets another app" error.
+    final callbackParameters = <String, String>{...uri.queryParameters};
+    if (uri.fragment.isNotEmpty) {
+      try {
+        callbackParameters.addAll(
+          Uri.splitQueryString(uri.fragment, encoding: utf8),
+        );
+      } on FormatException {
+        return false;
+      }
+    }
+    const callbackKeys = <String>{
+      'code',
+      'access_token',
+      'token_hash',
+      'error',
+      'error_description',
+    };
+    if (!callbackParameters.keys.any(callbackKeys.contains)) {
+      return false;
     }
     return handleSupabaseAuthCallback(uri);
   }
@@ -2471,19 +2516,19 @@ class AppController implements MfaGateController {
   }
 
   String _telemetryPlatform() {
-    if (Platform.isAndroid) {
+    if (RuntimePlatform.isAndroid) {
       return 'android';
     }
-    if (Platform.isIOS) {
+    if (RuntimePlatform.isIOS) {
       return 'ios';
     }
-    if (Platform.isMacOS) {
+    if (RuntimePlatform.isMacOS) {
       return 'macos';
     }
-    if (Platform.isWindows) {
+    if (RuntimePlatform.isWindows) {
       return 'windows';
     }
-    if (Platform.isLinux) {
+    if (RuntimePlatform.isLinux) {
       return 'linux';
     }
     return 'other';
@@ -2781,13 +2826,13 @@ class AppController implements MfaGateController {
   }
 
   String _platformName() {
-    if (Platform.isIOS) {
+    if (RuntimePlatform.isIOS) {
       return 'ios';
     }
-    if (Platform.isAndroid) {
+    if (RuntimePlatform.isAndroid) {
       return 'android';
     }
-    if (Platform.isMacOS) {
+    if (RuntimePlatform.isMacOS) {
       return 'macos';
     }
     return 'other';
