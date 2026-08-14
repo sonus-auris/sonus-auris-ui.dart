@@ -1,7 +1,8 @@
 // Dart side of the iOS-only ShazamKit song-identification bridge.
-import 'dart:io';
 
 import 'package:flutter/services.dart';
+
+import '../platform/runtime_platform.dart';
 
 /// A song identified by ShazamKit.
 class ShazamMatch {
@@ -33,7 +34,7 @@ class ShazamClient {
   final int maxClipBytes;
 
   /// Whether song identification is available on this platform.
-  bool get isSupported => Platform.isIOS;
+  bool get isSupported => RuntimePlatform.isIOS;
 
   /// Identifies a song from a short clip of interleaved PCM16. Returns null when
   /// unsupported, on error, or when nothing matched.

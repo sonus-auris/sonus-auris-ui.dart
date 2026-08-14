@@ -1,7 +1,7 @@
 // Free-disk-space lookup behind the audio_dashcam/device_storage MethodChannel.
-import 'dart:io';
-
 import 'package:flutter/services.dart';
+
+import '../platform/runtime_platform.dart';
 
 /// Reports the free bytes available to the app on the volume holding [path].
 ///
@@ -16,7 +16,7 @@ class DeviceStorageInfo {
   final MethodChannel _channel;
 
   Future<int?> freeBytes(String path) async {
-    if (!Platform.isAndroid && !Platform.isIOS) {
+    if (!RuntimePlatform.isAndroid && !RuntimePlatform.isIOS) {
       return null;
     }
     try {

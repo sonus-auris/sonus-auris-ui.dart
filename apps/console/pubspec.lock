@@ -336,6 +336,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "9.4.1"
+  oresoftware_next_loggers:
+    dependency: "direct main"
+    description:
+      path: "../../zed_modules/oresoftware/next-loggers-dart"
+      relative: true
+    source: path
+    version: "0.1.0"
   package_config:
     dependency: transitive
     description:

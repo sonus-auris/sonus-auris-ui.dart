@@ -1,8 +1,9 @@
 // Dart side of the on-device (offline) speech-recognition bridge, keeping transcription inside the local plaintext window.
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/services.dart';
+
+import '../platform/runtime_platform.dart';
 
 /// Dart side of the **on-device** speech-recognition bridge.
 ///
@@ -34,7 +35,7 @@ class OnDeviceSpeechClient {
 
   /// Whether on-device speech recognition is plausibly supported on this OS.
   /// The authoritative check is [isAvailable], which asks the native model.
-  bool get isSupported => Platform.isIOS || Platform.isAndroid;
+  bool get isSupported => RuntimePlatform.isIOS || RuntimePlatform.isAndroid;
 
   /// Asks the native layer whether an on-device recognition model is installed
   /// and ready. Returns false on any error or unsupported platform.

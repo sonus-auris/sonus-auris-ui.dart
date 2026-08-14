@@ -33,6 +33,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'src/app/app_controller.dart';
+import 'src/platform/runtime_platform.dart';
 import 'src/app/app_view_model.dart';
 import 'src/models/cloud_connection.dart';
 import 'src/models/cloud_provider.dart';
@@ -1558,7 +1559,7 @@ class _DesktopConnectionsPanelState extends State<_DesktopConnectionsPanel> {
   }
 
   Future<void> _link(CloudProvider provider) => _run(() async {
-    if ((Platform.isWindows || Platform.isLinux) &&
+    if ((RuntimePlatform.isWindows || RuntimePlatform.isLinux) &&
         provider != CloudProvider.iCloudDrive) {
       await _linkWithAuthorizationCode(provider);
       return;
@@ -1946,7 +1947,7 @@ class _DesktopConnectionsPanelState extends State<_DesktopConnectionsPanel> {
   Widget _providerCard(CloudProvider provider, CloudConnection? connection) {
     final linked = connection?.status == 'active';
     final canLinkOnThisDevice =
-        provider != CloudProvider.iCloudDrive || Platform.isMacOS;
+        provider != CloudProvider.iCloudDrive || RuntimePlatform.isMacOS;
     final detail = <String>[
       if (linked) 'Connected' else 'Not connected',
       if (connection != null && !linked) 'Status: ${connection.status}',

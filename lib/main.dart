@@ -1,6 +1,5 @@
 // Mobile entrypoint: boots Flutter, wires up the AppController and services, and runs the Sonus Auris app UI.
 import 'dart:async';
-import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:app_links/app_links.dart';
@@ -20,6 +19,7 @@ import 'src/app/app_view_model.dart';
 import 'src/models/account_status.dart';
 import 'src/platform/form_factor.dart';
 import 'src/platform/offline_development_mode.dart';
+import 'src/platform/runtime_platform.dart';
 import 'src/models/acoustic_detection.dart';
 import 'src/models/app_config.dart';
 import 'src/models/cloud_connection.dart';
@@ -57,7 +57,7 @@ Future<void> _openPublicPage(BuildContext context, String url) async {
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  if (Platform.isAndroid) {
+  if (RuntimePlatform.isAndroid) {
     FlutterForegroundTask.initCommunicationPort();
   }
   // Native alarm-manager readiness is owned by PluginSchedulePlatform's
@@ -160,7 +160,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
     final pending = _pendingAuthLink;
     _pendingAuthLink = null;
     if (pending != null) {
-      await controller.consumeSupabaseMagicLink(pending);
+      await controller.handleIncomingAppLink(pending);
     }
   }
 
@@ -170,7 +170,7 @@ class _AudioDashcamRootState extends State<AudioDashcamRoot>
       _pendingAuthLink = link;
       return;
     }
-    unawaited(controller.consumeSupabaseMagicLink(link));
+    unawaited(controller.handleIncomingAppLink(link));
   }
 
   void _installTelemetryErrorHooks(AppController controller) {
@@ -398,11 +398,11 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     final record = ConsentRecord(
       consentVersion: kConsentVersion,
       acceptedAtUtc: DateTime.now().toUtc(),
-      platform: Platform.isAndroid
+      platform: RuntimePlatform.isAndroid
           ? 'android'
-          : Platform.isIOS
+          : RuntimePlatform.isIOS
           ? 'ios'
-          : Platform.operatingSystem,
+          : RuntimePlatform.operatingSystem,
       grants: {for (final e in _grants.entries) e.key.key: e.value},
     );
     await widget.controller.completeOnboarding(record);
@@ -530,11 +530,14 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const SizedBox(height: 8),
-          SupabaseMfaGate(controller: widget.controller),
+          SupabaseMfaGate(
+            controller: widget.controller,
+            onAuthorized: _advancePastAccountStep,
+          ),
           const SizedBox(height: 8),
           TextButton(
             onPressed: _busy ? null : widget.controller.signOutSupabase,
-            child: const Text('Use a different account'),
+            child: const Text('Use a different account — sign out'),
           ),
         ],
       );
@@ -547,7 +550,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         const SizedBox(height: 8),
         const Text(
           'Use one 6-digit email code to sign up or sign in and securely store '
-          'your settings and consent. No password is required.',
+          'your settings and consent. No password or email link is required.',
           style: TextStyle(color: SonusColors.inkSoft),
         ),
         const SizedBox(height: 16),
@@ -577,6 +580,13 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         ],
       ],
     );
+  }
+
+  void _advancePastAccountStep() {
+    if (!mounted || _step != 1) {
+      return;
+    }
+    setState(() => _step = 2);
   }
 
   void _seedSupabaseProject(AppViewModel? viewModel) {
@@ -748,19 +758,20 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
               onPressed: _busy ? null : () => setState(() => _step += 1),
               child: const Text('Continue offline (development)'),
             ),
-          FilledButton(
-            onPressed:
-                _busy || !accountReady || (_step == 2 && !_requiredAccepted)
-                ? null
-                : () {
-                    if (isLast) {
-                      _finish();
-                    } else {
-                      setState(() => _step += 1);
-                    }
-                  },
-            child: Text(isLast ? 'Finish' : 'Continue'),
-          ),
+          if (!onAccountStep || (vm?.isSignedIn ?? false))
+            FilledButton(
+              onPressed:
+                  _busy || !accountReady || (_step == 2 && !_requiredAccepted)
+                  ? null
+                  : () {
+                      if (isLast) {
+                        _finish();
+                      } else {
+                        setState(() => _step += 1);
+                      }
+                    },
+              child: Text(isLast ? 'Finish' : 'Continue'),
+            ),
         ],
       ),
     );
@@ -4473,7 +4484,7 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              if (Platform.isIOS || Platform.isMacOS)
+              if (RuntimePlatform.isIOS || RuntimePlatform.isMacOS)
                 OutlinedButton.icon(
                   onPressed: _busy
                       ? null
@@ -4504,7 +4515,7 @@ class _CloudLinkSectionState extends State<_CloudLinkSection> {
               ),
             ],
           ),
-          if (Platform.isIOS || Platform.isMacOS) ...[
+          if (RuntimePlatform.isIOS || RuntimePlatform.isMacOS) ...[
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerLeft,

@@ -1,0 +1,12 @@
+version = 1
+
+[[package]]
+org = "oresoftware"
+name = "next-loggers-dart"
+version = "0.1.0"
+sha256 = "ec4c68051065588fab2f3f7f126efaffe5da881337ef144e9a224cf44f986ca4"
+size = 11252
+format = "tar.gz"
+vcs_tag = "v0.1.0"
+vcs_commit = "artifact-sha256:ec4c68051065588fab2f3f7f126efaffe5da881337ef144e9a224cf44f986ca4"
+source = "https://registry.zpkg.net"

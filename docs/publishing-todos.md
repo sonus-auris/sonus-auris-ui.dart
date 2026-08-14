@@ -40,7 +40,7 @@ signing access.
   configuration, or key retrieval. Never place service-role or secret keys in a
   client build.
 - [ ] In the selected Supabase project, set both the **Confirm signup** and
-  **Magic Link** email templates to display only `{{ .Token }}` as the
+  **Magic Link / OTP** email templates to display only `{{ .Token }}` as the
   six-digit sign-in code. Neither template may render `{{ .ConfirmationURL }}`,
   `{{ .TokenHash }}`, or another clickable authentication URL. Retain the
   client callback handler only for already-issued legacy PKCE links. Apply

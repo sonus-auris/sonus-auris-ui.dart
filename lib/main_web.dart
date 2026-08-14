@@ -229,6 +229,9 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
 
   Future<void> _handleMagicLink(Uri uri) async {
     final expected = Uri.parse(_effectiveAuthRedirectUrl);
+    if (!SupabaseAuthClient.hasAuthCallbackPayload(uri)) {
+      return;
+    }
     if (!SupabaseAuthClient.isExpectedMagicLinkCallback(
       callbackUri: uri,
       expectedRedirectUri: expected,

@@ -1,11 +1,12 @@
 // Registers the packaged desktop build as a login item (no-op on mobile).
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/services.dart';
 import 'package:launch_at_startup/launch_at_startup.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'runtime_platform.dart';
 
 /// Compile-time safety boundary for packaged runtime probes.
 ///
@@ -34,12 +35,14 @@ class DesktopAutostart {
   static Future<void>? _macMigration;
 
   static bool get isSupported =>
-      Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+      RuntimePlatform.isMacOS ||
+      RuntimePlatform.isWindows ||
+      RuntimePlatform.isLinux;
 
   static bool get canConfigure =>
       !kSonusDeviceLabNoSideEffects &&
       isSupported &&
-      (!Platform.isMacOS || kReleaseMode);
+      (!RuntimePlatform.isMacOS || kReleaseMode);
 
   /// Wires the legacy cross-platform package on every desktop platform. On
   /// macOS it is used only to detect and remove an older LaunchAgent that may
@@ -49,9 +52,9 @@ class DesktopAutostart {
     if (!isSupported || kSonusDeviceLabNoSideEffects) return;
     launchAtStartup.setup(
       appName: 'Sonus Auris',
-      appPath: Platform.resolvedExecutable,
+      appPath: RuntimePlatform.resolvedExecutable,
     );
-    if (Platform.isMacOS) {
+    if (RuntimePlatform.isMacOS) {
       _macMigration ??= _migrateLegacyMacRegistration();
       unawaited(_macMigration);
     }
@@ -76,7 +79,7 @@ class DesktopAutostart {
     if (!canConfigure) return false;
     try {
       await _awaitMacMigration();
-      if (Platform.isMacOS) {
+      if (RuntimePlatform.isMacOS) {
         return await _macChannel.invokeMethod<bool>('isEnabled') ?? false;
       }
       return await launchAtStartup.isEnabled();
@@ -96,7 +99,7 @@ class DesktopAutostart {
   }
 
   static Future<void> _awaitMacMigration() async {
-    if (kSonusDeviceLabNoSideEffects || !Platform.isMacOS) return;
+    if (kSonusDeviceLabNoSideEffects || !RuntimePlatform.isMacOS) return;
     _macMigration ??= _migrateLegacyMacRegistration();
     await _macMigration;
   }
@@ -142,7 +145,7 @@ class DesktopAutostart {
 
   static Future<void> _setEnabled(bool enabled) async {
     if (kSonusDeviceLabNoSideEffects) return;
-    if (Platform.isMacOS) {
+    if (RuntimePlatform.isMacOS) {
       await _macChannel.invokeMethod<void>('setEnabled', <String, Object>{
         'enabled': enabled,
       });

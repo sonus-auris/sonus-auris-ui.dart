@@ -4,12 +4,12 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/recording_schedule.dart';
+import '../platform/runtime_platform.dart';
 import 'alarm_manager_initialization.dart';
 import 'diagnostic_log.dart';
 import 'local_notifications_service.dart';
@@ -31,10 +31,10 @@ const String kSchedulePendingShouldRecordKey = 'schedule_pending_should_record';
 enum ScheduleHostPlatform { android, ios, other }
 
 ScheduleHostPlatform _currentHostPlatform() {
-  if (Platform.isAndroid) {
+  if (RuntimePlatform.isAndroid) {
     return ScheduleHostPlatform.android;
   }
-  if (Platform.isIOS) {
+  if (RuntimePlatform.isIOS) {
     return ScheduleHostPlatform.ios;
   }
   return ScheduleHostPlatform.other;

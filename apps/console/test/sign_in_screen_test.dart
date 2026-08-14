@@ -62,6 +62,14 @@ void main() {
       expect(otpCalls, 1);
       // Advanced to the code-entry step.
       expect(find.text('Check your email'), findsOneWidget);
+      expect(find.textContaining('magic link'), findsNothing);
+      expect(find.textContaining('email link'), findsNothing);
+      final codeField = tester.widget<TextField>(find.byType(TextField).first);
+      expect(codeField.maxLength, 6);
+
+      await tester.enterText(find.byType(TextField).first, '1234567');
+      await tester.pump();
+      expect(codeField.controller?.text, '123456');
     },
   );
 }

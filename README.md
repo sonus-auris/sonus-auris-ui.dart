@@ -185,10 +185,17 @@ selected phrase window.
 Every native/mobile sign-up and sign-in surface is code-first: it sends a
 six-digit Supabase email OTP, and unknown email addresses are created on first
 verification. The app has no account password field or password-reset flow.
-Both the hosted **Confirm signup** and **Magic Link** templates must render only
-the six-digit `{{ .Token }}` and must not render `{{ .ConfirmationURL }}` or
-another clickable authentication URL. Supabase can select either template
-based on account state, so configuring only one does not satisfy this contract.
+Both the hosted **Confirm signup** and **Magic Link / OTP** templates must
+render only the six-digit `{{ .Token }}` and must not render
+`{{ .ConfirmationURL }}`, a token hash, or another clickable authentication
+URL. Supabase can select either template based on account state, so configuring
+only one does not satisfy this contract.
+
+`Token` is a fixed top-level variable in Supabase's hosted Go-template
+context, so it must remain `{{ .Token }}` rather than an invented nested path
+such as `{{ .x.y.Token }}`. Supabase reserves `{{ .Data.* }}` for nested user
+metadata; it does not place the OTP there. SendGrid receives the message only
+after Supabase has rendered it and therefore cannot add a template namespace.
 
 Legacy S256 PKCE callback validation remains in the clients only so
 already-issued links can drain safely during migration. The matching verifier

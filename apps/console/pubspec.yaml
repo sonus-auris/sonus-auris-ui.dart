@@ -48,7 +48,9 @@ dependencies:
   # root; re-sync it when the contract changes.
   sonus_auris_interfaces:
     path: ../../packages/sonus_auris_interfaces
-
+  # Installed and integrity-pinned by the root zed-pkg manifest.
+  oresoftware_next_loggers:
+    path: ../../zed_modules/oresoftware/next-loggers-dart
 dev_dependencies:
   flutter_test:
     sdk: flutter

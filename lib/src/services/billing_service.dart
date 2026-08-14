@@ -16,13 +16,13 @@
 //   support" and logs it instead of failing the purchase flow.
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:in_app_purchase/in_app_purchase.dart';
 
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
+import '../platform/runtime_platform.dart';
 
 /// Store product id for the Sonus Auris Plus auto-renewing subscription. Must
 /// exist (with this exact id) in both App Store Connect and Play Console.
@@ -117,13 +117,13 @@ class BillingService {
        platformName = platformName ?? _detectPlatformName(),
        platformSupportsStoreBilling =
            platformSupportsStoreBilling ??
-           (Platform.isAndroid || Platform.isIOS);
+           (RuntimePlatform.isAndroid || RuntimePlatform.isIOS);
 
   final StorePurchaseGateway? _injectedGateway;
   final http.Client _httpClient;
   final Duration requestTimeout;
 
-  /// `android` / `ios` / other `Platform.operatingSystem` values.
+  /// `android` / `ios` / other `RuntimePlatform.operatingSystem` values.
   final String platformName;
 
   /// Store billing exists only on Android/iOS; every entry point no-ops
@@ -153,13 +153,13 @@ class BillingService {
   }
 
   static String _detectPlatformName() {
-    if (Platform.isIOS) {
+    if (RuntimePlatform.isIOS) {
       return 'ios';
     }
-    if (Platform.isAndroid) {
+    if (RuntimePlatform.isAndroid) {
       return 'android';
     }
-    return Platform.operatingSystem;
+    return RuntimePlatform.operatingSystem;
   }
 
   /// Starts listening to store purchase updates. Safe to call once at app

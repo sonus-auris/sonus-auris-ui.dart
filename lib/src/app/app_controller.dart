@@ -1,5 +1,6 @@
 // Central app orchestrator: owns every service and drives the capture/encrypt/upload/analysis lifecycle, exposing app state to the UI.
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -74,6 +75,7 @@ import '../services/oauth_browser.dart';
 import '../services/sound_recorder_backend_client.dart';
 import '../services/speech_to_text_client.dart';
 import '../services/on_device_speech_client.dart';
+import '../services/ores_telemetry_bridge.dart';
 import '../services/supabase_auth_client.dart';
 import '../services/supabase_device_presence_client.dart';
 import '../services/supabase_rest_client.dart';
@@ -84,7 +86,9 @@ import '../services/voice/voice_command_dispatcher.dart';
 import '../services/voice/voice_command_parser.dart';
 import '../services/voice_id/voice_profile_service.dart';
 import '../retention/local_retention_policy.dart';
+import '../platform/runtime_platform.dart';
 import 'app_view_model.dart';
+import 'mfa_gate_controller.dart';
 
 /// Consent string recorded against the device on registration. Bump when the
 /// recording/privacy disclosure shown to the user materially changes. Bumping
@@ -110,7 +114,7 @@ const String kSupabaseAuthRedirectUrl = String.fromEnvironment(
 
 enum _MfaGateDecision { enroll, challenge, authorized }
 
-class AppController {
+class AppController implements MfaGateController {
   factory AppController({
     SettingsStore? settingsStore,
     SegmentIndex? segmentIndex,
@@ -573,6 +577,11 @@ class AppController {
   static const int _telemetryBatchSize = 20;
   final String _telemetrySessionId = const Uuid().v4();
   final Random _telemetryJitter = Random.secure();
+  late final OresTelemetryBridge _oresTelemetryBridge = OresTelemetryBridge(
+    sessionId: _telemetrySessionId,
+    platform: _telemetryPlatform(),
+    sendBatch: _enqueueOresTelemetry,
+  );
 
   /// Writes the time-aligned FFT feature sidecar next to each finalized segment.
   final SpectralSidecar _spectralSidecar = SpectralSidecar();
@@ -586,9 +595,17 @@ class AppController {
     const AccountStatus(),
   );
 
+  @override
   Stream<AccountStatus> get accountStatus => _accountStatus;
 
+  @override
   AccountStatus get accountStatusValue => _accountStatus.value;
+
+  /// Most recent user-facing operation result. Focused flows such as the MFA
+  /// gate use this to preserve the exact Supabase error when legacy controller
+  /// methods return a nullable result for compatibility with other screens.
+  @override
+  String? get latestMessage => _message.valueOrNull;
 
   final BehaviorSubject<List<interfaces.DeviceRecord>> _accountDevices =
       BehaviorSubject.seeded(const <interfaces.DeviceRecord>[]);
@@ -651,9 +668,15 @@ class AppController {
     final secrets = await _settingsStore.loadSecrets();
     final pendingAlerts = await _settingsStore.loadPendingAlerts();
     final pendingTelemetry = await _settingsStore.loadPendingTelemetry();
-    final recovered = await _segmentIndex.recoverOrphanedLocalSegments(
-      fallbackSegmentMinutes: config.segmentMinutes,
-    );
+    // Browser builds are used for account setup and automated auth coverage.
+    // The rolling audio index is intentionally native-only: it is backed by
+    // dart:io files and path_provider has no application-support directory on
+    // the web. Keep browser startup independent of that storage boundary.
+    final recovered = RuntimePlatform.isWeb
+        ? <RecordingSegment>[]
+        : await _segmentIndex.recoverOrphanedLocalSegments(
+            fallbackSegmentMinutes: config.segmentMinutes,
+          );
     _pendingAlertEvents
       ..clear()
       ..addAll(pendingAlerts);
@@ -664,7 +687,7 @@ class AppController {
     _config.add(config);
     final appLinks = AppLinks();
     _authLinkSubscription = appLinks.uriLinkStream.listen(
-      (uri) => unawaited(_handleAppLink(uri)),
+      (uri) => unawaited(handleIncomingAppLink(uri)),
       onError: (Object error) {
         _diagnostics.add('App-link stream error: $error');
       },
@@ -672,7 +695,7 @@ class AppController {
     final initialAppLink = await appLinks.getInitialLink();
     _secrets.add(secrets);
     if (initialAppLink != null) {
-      unawaited(_handleAppLink(initialAppLink));
+      unawaited(handleIncomingAppLink(initialAppLink));
     }
     _segments.add(recovered);
     _closedSegmentsSubscription = _recorder.closedSegments
@@ -737,6 +760,12 @@ class AppController {
     // direct S3/R2 remain useful while the account services retry in the
     // background.
     unawaited(_initializeRemoteAccountServices());
+    if (RuntimePlatform.isWeb) {
+      _diagnostics.add(
+        'Browser account mode initialized; native recording services skipped.',
+      );
+      return;
+    }
     requestUploadDrain();
     await _enforceRetention();
     // "Always-on": if the user enabled auto-start and no weekly schedule is
@@ -1063,6 +1092,11 @@ class AppController {
     if (settingsSyncError != null) {
       _diagnostics.add(settingsSyncError);
     }
+    if (RuntimePlatform.isWeb) {
+      // Account/settings mode on the web has no dart:io recording index or
+      // native scheduler to reconcile after a configuration save.
+      return;
+    }
     // Battery-saver / network-policy may have changed; re-evaluate the gate (and
     // report the new policy to the backend) before draining.
     await _refreshTransferStatus();
@@ -1101,16 +1135,17 @@ class AppController {
         needsBluetooth || kinds.contains(ContextTriggerKind.wifiChange);
     try {
       if (needsBluetooth) {
-        if (Platform.isAndroid) {
+        if (RuntimePlatform.isAndroid) {
           await [
             Permission.bluetoothScan,
             Permission.bluetoothConnect,
           ].request();
-        } else if (Platform.isIOS) {
+        } else if (RuntimePlatform.isIOS) {
           await Permission.bluetooth.request();
         }
       }
-      if (needsLocation && (Platform.isAndroid || Platform.isIOS)) {
+      if (needsLocation &&
+          (RuntimePlatform.isAndroid || RuntimePlatform.isIOS)) {
         await Permission.locationWhenInUse.request();
       }
     } catch (error) {
@@ -1182,16 +1217,16 @@ class AppController {
         await _localNotifications.requestPermission();
       }
       if (record.granted(ConsentItem.location) &&
-          (Platform.isAndroid || Platform.isIOS)) {
+          (RuntimePlatform.isAndroid || RuntimePlatform.isIOS)) {
         await Permission.locationWhenInUse.request();
       }
       if (record.granted(ConsentItem.bluetooth)) {
-        if (Platform.isAndroid) {
+        if (RuntimePlatform.isAndroid) {
           await [
             Permission.bluetoothScan,
             Permission.bluetoothConnect,
           ].request();
-        } else if (Platform.isIOS) {
+        } else if (RuntimePlatform.isIOS) {
           await Permission.bluetooth.request();
         }
       }
@@ -1349,11 +1384,11 @@ class AppController {
     _message.add(message);
   }
 
-  // --- Passwordless sign-in (email code) ------------------------------------
+  // --- Passwordless sign-in (OTP-only email delivery) -----------------------
 
   /// Emails a six-digit sign-in code. Same call for sign-in and sign-up — an
-  /// unknown address is created when its first code is verified, so there is
-  /// no separate sign-up path or password.
+  /// unknown address is created when its first code is verified, so there is no
+  /// separate sign-up path, password, or delivered authentication link.
   Future<bool> requestSupabaseEmailOtp({required String email}) async {
     if (!_config.hasValue) {
       return false;
@@ -1444,7 +1479,9 @@ class AppController {
     }
   }
 
-  Future<bool> _handleAppLink(Uri uri) async {
+  /// Routes only recognized Sonus invitation and Supabase callback URLs.
+  /// Ordinary Flutter web launch URLs are deliberately ignored.
+  Future<bool> handleIncomingAppLink(Uri uri) async {
     if (uri.scheme == 'sonusauris' &&
         uri.host == 'invite' &&
         uri.path == '/join') {
@@ -1463,6 +1500,29 @@ class AppController {
         return true;
       }
       return acceptAccountInvite(token);
+    }
+    // On Flutter web app_links reports the page's ordinary launch URL as the
+    // initial link. A plain `/` navigation is not an authentication callback
+    // and must not become a user-visible "targets another app" error.
+    final callbackParameters = <String, String>{...uri.queryParameters};
+    if (uri.fragment.isNotEmpty) {
+      try {
+        callbackParameters.addAll(
+          Uri.splitQueryString(uri.fragment, encoding: utf8),
+        );
+      } on FormatException {
+        return false;
+      }
+    }
+    const callbackKeys = <String>{
+      'code',
+      'access_token',
+      'token_hash',
+      'error',
+      'error_description',
+    };
+    if (!callbackParameters.keys.any(callbackKeys.contains)) {
+      return false;
     }
     return handleSupabaseAuthCallback(uri);
   }
@@ -1683,6 +1743,7 @@ class AppController {
 
   /// Lists the signed-in user's MFA factors (for the challenge step and the
   /// Account management screen), refreshing [accountStatus].
+  @override
   Future<List<MfaFactor>> refreshMfaFactors() async {
     try {
       await _refreshMfaChallengeState();
@@ -1695,6 +1756,7 @@ class AppController {
 
   /// Begins enrolling an authenticator app; the returned secret/URI must be
   /// confirmed with [verifyMfaEnrollment].
+  @override
   Future<TotpEnrollment?> enrollTotpFactor({String? friendlyName}) async {
     final token = await _freshAccessToken();
     if (token == null) {
@@ -1713,6 +1775,7 @@ class AppController {
   }
 
   /// Begins enrolling an SMS factor; a texted code is sent by [challengeMfaFactor].
+  @override
   Future<PhoneEnrollment?> enrollPhoneFactor({
     required String phone,
     String? friendlyName,
@@ -1736,6 +1799,7 @@ class AppController {
 
   /// Starts a challenge for a factor (sends the SMS for phone factors). Returns
   /// the challenge id to pass to [verifyMfaFactor].
+  @override
   Future<String?> challengeMfaFactor(String factorId) async {
     final token = await _freshAccessToken();
     if (token == null) {
@@ -1756,6 +1820,7 @@ class AppController {
   /// Verifies a factor code, upgrading the session to aal2. Used both to finish
   /// enrollment and to satisfy the sign-in MFA challenge; on success the
   /// post-sign-in sync runs and the MFA gate clears.
+  @override
   Future<bool> verifyMfaFactor({
     required String factorId,
     required String challengeId,
@@ -2297,42 +2362,38 @@ class AppController {
         !_supabaseRestClient.canInsert(config, secrets)) {
       return;
     }
-    final eventId = const Uuid().v4();
-    final requestedTraceId = entry.details['traceId']?.toString().trim() ?? '';
-    final traceId = requestedTraceId.isEmpty
-        ? _telemetrySessionId
-        : requestedTraceId;
-    final telemetry = ClientTelemetryEvent(
-      clientEventId: eventId,
-      level: _normalizeTelemetryLevel(entry.level),
-      event: entry.event.trim().isEmpty ? 'diagnostic' : entry.event.trim(),
-      message: entry.message,
-      occurredAtUtc: entry.occurredAtUtc,
-      stack: entry.stack?.toString(),
-      platform: _telemetryPlatform(),
-      sessionId: _telemetrySessionId,
-      source: 'flutter',
-      transport: 'rest_outbox+realtime_broadcast',
-      traceId: traceId,
-      spanId: eventId,
-      details: {'source': 'diagnostic_log', ...entry.details},
-    );
-    _pendingTelemetry.add(telemetry);
+    unawaited(_oresTelemetryBridge.record(entry).catchError((_) {}));
+  }
+
+  Future<void> _enqueueOresTelemetry(List<ClientTelemetryEvent> events) async {
+    if (events.isEmpty) {
+      return;
+    }
+    final config = _config.valueOrNull;
+    final secrets = _secrets.valueOrNull;
+    if (config == null ||
+        secrets == null ||
+        !_supabaseRestClient.canInsert(config, secrets)) {
+      return;
+    }
+    _pendingTelemetry.addAll(events);
     if (_pendingTelemetry.length > _maxPendingTelemetry) {
       _pendingTelemetry.removeRange(
         0,
         _pendingTelemetry.length - _maxPendingTelemetry,
       );
     }
-    unawaited(_persistPendingTelemetry());
+    await _persistPendingTelemetry();
     _connectTelemetryRealtime();
-    _telemetryRealtimeClient.publish(
-      _supabaseRestClient.toOrganizationTelemetryEntry(
-        _supabaseRestClient.sanitizeTelemetryRow(
-          telemetry.toSupabaseRow(config.deviceId),
+    for (final telemetry in events) {
+      _telemetryRealtimeClient.publish(
+        _supabaseRestClient.toOrganizationTelemetryEntry(
+          _supabaseRestClient.sanitizeTelemetryRow(
+            telemetry.toSupabaseRow(config.deviceId),
+          ),
         ),
-      ),
-    );
+      );
+    }
     _scheduleTelemetryFlush();
   }
 
@@ -2455,28 +2516,22 @@ class AppController {
   }
 
   String _telemetryPlatform() {
-    if (Platform.isAndroid) {
+    if (RuntimePlatform.isAndroid) {
       return 'android';
     }
-    if (Platform.isIOS) {
+    if (RuntimePlatform.isIOS) {
       return 'ios';
     }
-    if (Platform.isMacOS) {
+    if (RuntimePlatform.isMacOS) {
       return 'macos';
     }
-    if (Platform.isWindows) {
+    if (RuntimePlatform.isWindows) {
       return 'windows';
     }
-    if (Platform.isLinux) {
+    if (RuntimePlatform.isLinux) {
       return 'linux';
     }
     return 'other';
-  }
-
-  String _normalizeTelemetryLevel(String level) {
-    final normalized = level.trim().toLowerCase();
-    const allowed = {'debug', 'info', 'warning', 'error', 'fatal'};
-    return allowed.contains(normalized) ? normalized : 'info';
   }
 
   void recordFlutterError(FlutterErrorDetails details) {
@@ -2771,13 +2826,13 @@ class AppController {
   }
 
   String _platformName() {
-    if (Platform.isIOS) {
+    if (RuntimePlatform.isIOS) {
       return 'ios';
     }
-    if (Platform.isAndroid) {
+    if (RuntimePlatform.isAndroid) {
       return 'android';
     }
-    if (Platform.isMacOS) {
+    if (RuntimePlatform.isMacOS) {
       return 'macos';
     }
     return 'other';
@@ -3914,6 +3969,8 @@ class AppController {
     _telemetryRealtimeClient.close();
     _cancelPendingPauseResume();
     _phraseQualityTimer?.cancel();
+    await _oresTelemetryBridge.close();
+    await _persistPendingTelemetry();
     await _voiceCommands.dispose();
 
     // 2. Synchronous client/scheduler closes — fire them off together.

@@ -186,7 +186,10 @@ class _CodeStepState extends State<_CodeStep> {
           autofocus: true,
           keyboardType: TextInputType.number,
           maxLength: 6,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(6),
+          ],
           decoration: const InputDecoration(
             labelText: 'Sign-in code',
             prefixIcon: Icon(Icons.pin_outlined),

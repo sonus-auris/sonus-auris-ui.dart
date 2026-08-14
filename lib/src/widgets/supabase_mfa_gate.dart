@@ -1,8 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
-import '../app/app_controller.dart';
+import '../app/mfa_gate_controller.dart';
 import '../models/account_status.dart';
 import '../models/supabase_mfa.dart';
 
@@ -18,7 +20,7 @@ class SupabaseMfaGate extends StatefulWidget {
     this.onAuthorized,
   });
 
-  final AppController controller;
+  final MfaGateController controller;
   final VoidCallback? onAuthorized;
 
   @override
@@ -28,6 +30,12 @@ class SupabaseMfaGate extends StatefulWidget {
 class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
   final _phone = TextEditingController();
   final _code = TextEditingController();
+  final _errorKey = GlobalKey();
+  final _toastMessages = ValueNotifier<List<_MfaToastMessage>>(const []);
+  final _toastTimers = <int, Timer>{};
+  OverlayEntry? _toastOverlay;
+  int _nextToastId = 0;
+  int _factorAttempt = 0;
   TotpEnrollment? _totp;
   PhoneEnrollment? _phoneEnrollment;
   String? _selectedFactorId;
@@ -39,6 +47,13 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
   void dispose() {
     _phone.dispose();
     _code.dispose();
+    for (final timer in _toastTimers.values) {
+      timer.cancel();
+    }
+    _toastTimers.clear();
+    _toastOverlay?.remove();
+    _toastOverlay = null;
+    _toastMessages.dispose();
     super.dispose();
   }
 
@@ -162,7 +177,7 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
         ),
         const SizedBox(height: 8),
         const Text(
-          'Magic links replace passwords, so a verified second factor is '
+          'Email codes replace passwords, so a verified second factor is '
           'required before account data or cloud sync can be opened.',
         ),
         const SizedBox(height: 16),
@@ -282,10 +297,14 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
       return const SizedBox.shrink();
     }
     return Padding(
+      key: _errorKey,
       padding: const EdgeInsets.only(top: 10),
-      child: Text(
-        error,
-        style: TextStyle(color: Theme.of(context).colorScheme.error),
+      child: Semantics(
+        liveRegion: true,
+        child: Text(
+          error,
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
       ),
     );
   }
@@ -299,13 +318,13 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
   Future<void> _startTotpEnrollment() async {
     await _run(() async {
       final enrollment = await widget.controller.enrollTotpFactor(
-        friendlyName: 'Authenticator',
+        friendlyName: _newFactorName('authenticator'),
       );
       if (enrollment == null) {
         throw StateError(
           widget.controller.accountStatusValue.mfaCheckFailed
               ? 'Could not verify account security.'
-              : 'Could not start authenticator enrollment.',
+              : _controllerErrorOr('Could not start authenticator enrollment.'),
         );
       }
       setState(() => _totp = enrollment);
@@ -316,16 +335,20 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
     await _run(() async {
       final enrollment = await widget.controller.enrollPhoneFactor(
         phone: _phone.text,
-        friendlyName: 'Phone',
+        friendlyName: _newFactorName('phone'),
       );
       if (enrollment == null) {
-        throw StateError('Could not start phone enrollment.');
+        throw StateError(
+          _controllerErrorOr('Could not start phone enrollment.'),
+        );
       }
       final challengeId = await widget.controller.challengeMfaFactor(
         enrollment.factorId,
       );
       if (challengeId == null) {
-        throw StateError('Could not send the phone verification code.');
+        throw StateError(
+          _controllerErrorOr('Could not send the phone verification code.'),
+        );
       }
       setState(() {
         _phoneEnrollment = enrollment;
@@ -339,7 +362,9 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
       final challengeId =
           _challengeId ?? await widget.controller.challengeMfaFactor(factorId);
       if (challengeId == null) {
-        throw StateError('Could not start two-factor verification.');
+        throw StateError(
+          _controllerErrorOr('Could not start two-factor verification.'),
+        );
       }
       _challengeId = challengeId;
       final verified = await widget.controller.verifyMfaFactor(
@@ -349,7 +374,9 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
         completesSignIn: true,
       );
       if (!verified) {
-        throw StateError('That verification code was not accepted.');
+        throw StateError(
+          _controllerErrorOr('That verification code was not accepted.'),
+        );
       }
       widget.onAuthorized?.call();
     });
@@ -366,8 +393,20 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
     try {
       await action();
     } catch (error) {
+      final message = _errorTextFor(error);
       if (mounted) {
-        setState(() => _error = _errorTextFor(error));
+        setState(() => _error = message);
+        _showErrorToast(message);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final errorContext = _errorKey.currentContext;
+          if (errorContext != null) {
+            Scrollable.ensureVisible(
+              errorContext,
+              alignment: 0.5,
+              duration: const Duration(milliseconds: 250),
+            );
+          }
+        });
       }
     } finally {
       if (mounted) {
@@ -381,6 +420,102 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
     return name.isEmpty ? factor.factorType : '$name (${factor.factorType})';
   }
 
+  String _controllerErrorOr(String fallback) {
+    final message = widget.controller.latestMessage?.trim() ?? '';
+    return message.isEmpty ? fallback : message;
+  }
+
+  String _newFactorName(String factor) {
+    _factorAttempt += 1;
+    final attempt = DateTime.now().toUtc().millisecondsSinceEpoch.toRadixString(
+      36,
+    );
+    return 'Sonus Auris $factor $attempt-$_factorAttempt';
+  }
+
+  void _showErrorToast(String message) {
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 8),
+          content: Semantics(liveRegion: true, child: Text(message)),
+          action: SnackBarAction(label: 'Dismiss', onPressed: () {}),
+        ),
+      );
+      return;
+    }
+
+    final toast = _MfaToastMessage(id: ++_nextToastId, message: message);
+    final next = [..._toastMessages.value, toast];
+    if (next.length > 3) {
+      final evicted = next.removeAt(0);
+      _toastTimers.remove(evicted.id)?.cancel();
+    }
+    _toastMessages.value = List.unmodifiable(next);
+    _toastOverlay ??= OverlayEntry(builder: _buildToastStack);
+    if (!_toastOverlay!.mounted) {
+      overlay.insert(_toastOverlay!);
+    }
+    _toastTimers[toast.id] = Timer(
+      const Duration(seconds: 8),
+      () => _dismissToast(toast.id),
+    );
+  }
+
+  Widget _buildToastStack(BuildContext context) {
+    final width = (MediaQuery.sizeOf(context).width - 24).clamp(0.0, 360.0);
+    return Positioned(
+      top: MediaQuery.paddingOf(context).top + 12,
+      right: 12,
+      width: width,
+      child: ValueListenableBuilder<List<_MfaToastMessage>>(
+        valueListenable: _toastMessages,
+        builder: (context, messages, _) {
+          return Column(
+            key: const ValueKey('mandatory-mfa-error-toast-stack'),
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final toast in messages)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Material(
+                    elevation: 8,
+                    color: Theme.of(context).colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Semantics(
+                      liveRegion: true,
+                      child: ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.error_outline),
+                        title: Text(toast.message),
+                        trailing: IconButton(
+                          tooltip: 'Dismiss error',
+                          onPressed: () => _dismissToast(toast.id),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _dismissToast(int id) {
+    _toastTimers.remove(id)?.cancel();
+    if (!mounted) {
+      return;
+    }
+    _toastMessages.value = List.unmodifiable(
+      _toastMessages.value.where((toast) => toast.id != id),
+    );
+  }
+
   String _errorTextFor(Object error) {
     if (error is FormatException) {
       return error.message;
@@ -390,4 +525,11 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
     }
     return 'Two-factor verification failed. Try again.';
   }
+}
+
+class _MfaToastMessage {
+  const _MfaToastMessage({required this.id, required this.message});
+
+  final int id;
+  final String message;
 }
