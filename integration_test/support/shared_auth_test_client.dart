@@ -31,10 +31,10 @@ final class SharedAuthTestClient extends SupabaseAuthClient {
   SharedAuthTestClient._(
     http.Client client, {
     required String bridgeUrl,
-    required Duration requestTimeout,
+    required super.requestTimeout,
   }) : _client = client,
        _bridgeEndpoint = _normalizeBridgeEndpoint(bridgeUrl),
-       super(httpClient: client, requestTimeout: requestTimeout);
+       super(httpClient: client);
 
   static const int _maximumResponseBytes = 256 * 1024;
 
