@@ -65,7 +65,6 @@ class AuthClient {
       },
       'Sending the sign-in code failed.',
       query: {'redirect_to': redirect},
-      exposeServerError: false,
     );
   }
 
@@ -204,7 +203,6 @@ class AuthClient {
       {'auth_code': code, 'code_verifier': codeVerifier},
       'This sign-in link is invalid or expired. Request a fresh one.',
       query: {'grant_type': 'pkce'},
-      exposeServerError: false,
     );
     return SupabaseSession.fromJson(json);
   }
@@ -220,7 +218,6 @@ class AuthClient {
       'verify',
       {'type': 'email', 'email': email.trim(), 'token': normalizedCode},
       'That code was not accepted. Request a fresh one and try again.',
-      exposeServerError: false,
     );
     return SupabaseSession.fromJson(json);
   }
@@ -435,7 +432,6 @@ class AuthClient {
     String? accessToken,
     Map<String, String>? query,
     bool allowEmptyBody = false,
-    bool exposeServerError = true,
   }) async {
     final uri = _authUri(path, query: query);
     final http.Response response;
@@ -453,11 +449,7 @@ class AuthClient {
       throw StateError('Could not reach Supabase. Check your connection.');
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(
-        exposeServerError
-            ? _describe(response, failureMessage)
-            : failureMessage,
-      );
+      throw StateError(_describe(response, failureMessage));
     }
     return _decode(response.body, allowEmpty: allowEmptyBody);
   }

@@ -51,7 +51,7 @@ before(async () => {
       consoleErrors.push(msg.text());
     }
   });
-  page.on('pageerror', (err) => pageErrors.push(String(err)));
+page.on('pageerror', (err) => pageErrors.push(err.stack ?? String(err)));
   await page.goto(server.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.evaluate(ENABLE_SEMANTICS_SCRIPT);
 });
@@ -78,9 +78,7 @@ test('[puppeteer] the passwordless sign-in screen renders', async () => {
   );
   assert.match(text, /Sign in/i);
   assert.match(text, /Email me a code/i);
-  // The email-link fallback is advertised on this first step as "The email
-  // link is a fallback"; the words "magic link" only appear on the code step.
-  assert.match(text, /email link is a fallback/i);
+  assert.doesNotMatch(text, /magic link|email link|sign-in link/i);
   assert.match(text, /new accounts are created automatically/i);
 });
 
@@ -108,6 +106,71 @@ test('[puppeteer] passwordless sign-in remains usable at a phone viewport', asyn
   assert.equal(await page.$$eval('input[type="password"]', (nodes) => nodes.length), 0);
   await page.screenshot({ path: join(ARTIFACT_DIR, 'puppeteer-signin-mobile.png') });
 });
+
+test(
+  '[puppeteer] mobile web renders the real Supabase OTP error',
+  { skip: process.env.CONSOLE_TEST_OTP_ERROR !== '1' },
+  async () => {
+    await page.setRequestInterception(true);
+    page.on('request', async (request) => {
+      if (request.url().includes('/auth/v1/otp')) {
+        if (request.method() === 'OPTIONS') {
+          await request.respond({
+            status: 204,
+            headers: {
+              'access-control-allow-origin': '*',
+              'access-control-allow-methods': 'POST, OPTIONS',
+              'access-control-allow-headers': '*',
+            },
+          });
+          return;
+        }
+        await request.respond({
+          status: 429,
+          contentType: 'application/json',
+          headers: { 'access-control-allow-origin': '*' },
+          body: JSON.stringify({
+            code: 429,
+            error_code: 'over_email_send_rate_limit',
+            msg: 'email rate limit exceeded',
+          }),
+        });
+        return;
+      }
+      await request.continue();
+    });
+    const field = await page.$('input[data-semantics-role="text-field"]');
+    assert.ok(field, 'Flutter email field should be attached');
+    await field.focus();
+    const cdp = await page.createCDPSession();
+    await cdp.send('Input.insertText', {text: 'browser-error@example.test'});
+    await cdp.detach();
+    const buttons = await page.$$('flt-semantics[role="button"]');
+    let submit;
+    for (const button of buttons) {
+      const label = await button.evaluate((node) => node.textContent ?? '');
+      if (label.includes('Email me a code')) {
+        submit = button;
+        break;
+      }
+    }
+    assert.ok(submit, 'OTP request button should be attached');
+    await submit.click();
+    const text = await waitForSemanticText(
+      () => page.evaluate(READ_SEMANTICS_TEXT),
+      /email rate limit exceeded/i,
+    );
+    assert.doesNotMatch(text, /Sending the sign-in code failed/i);
+    for (let index = consoleErrors.length - 1; index >= 0; index -= 1) {
+      if (/status of 429 \(Too Many Requests\)/i.test(consoleErrors[index])) {
+        consoleErrors.splice(index, 1);
+      }
+    }
+    await page.screenshot({
+      path: join(ARTIFACT_DIR, 'puppeteer-real-otp-error-mobile.png'),
+    });
+  },
+);
 
 test('[puppeteer] no fatal console or page errors during boot', async () => {
   assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join('; ')}`);

@@ -111,7 +111,58 @@ void main() {
     for (final source in [form, panel]) {
       expect(source, contains("'Email me a 6-digit code'"));
       expect(source, isNot(contains('Email me a sign-in link')));
+      expect(source.toLowerCase(), isNot(contains('magic-link fallback')));
+      expect(source.toLowerCase(), isNot(contains('email link is a fallback')));
     }
+    final mfa = File(
+      'lib/src/widgets/supabase_mfa_gate.dart',
+    ).readAsStringSync();
+    expect(mfa, contains('Email codes replace passwords'));
+    expect(mfa, isNot(contains('Magic links replace passwords')));
+
+    final readme = File('README.md').readAsStringSync();
+    expect(readme, contains('fixed top-level variable'));
+    expect(readme, isNot(contains('must remain `{{ .x.y.Token }}`')));
+  });
+
+  test('onboarding has one forward action throughout account sign-in', () {
+    final mobile = File('lib/main.dart').readAsStringSync();
+    final controller = File(
+      'lib/src/app/app_controller.dart',
+    ).readAsStringSync();
+    final mfa = File(
+      'lib/src/widgets/supabase_mfa_gate.dart',
+    ).readAsStringSync();
+
+    expect(
+      mobile,
+      contains('if (!onAccountStep || (vm?.isSignedIn ?? false))'),
+      reason:
+          'the onboarding Continue button must stay hidden while the auth or '
+          'MFA form owns the forward action',
+    );
+    expect(
+      mobile,
+      contains('onAuthorized: _advancePastAccountStep'),
+      reason:
+          'successful mandatory MFA verification must advance onboarding '
+          'without asking the user to press Continue again',
+    );
+    expect(mobile, contains('Use a different account — sign out'));
+    expect(controller, contains('String? get latestMessage'));
+    expect(mfa, contains('_controllerErrorOr'));
+    expect(mfa, contains("_newFactorName('authenticator')"));
+    expect(mfa, contains("_newFactorName('phone')"));
+    expect(mfa, isNot(contains("friendlyName: 'Authenticator'")));
+    expect(mfa, isNot(contains("friendlyName: 'Phone'")));
+    expect(mfa, contains('SnackBarBehavior.floating'));
+    expect(mfa, contains('Scrollable.ensureVisible'));
+    expect(mfa, contains('liveRegion: true'));
+    expect(
+      mfa,
+      isNot(contains("throw StateError('Could not start phone enrollment.')")),
+      reason: 'the MFA gate must display the decoded Supabase server error',
+    );
   });
 
   test('offline escape hatch is structurally release-gated', () {

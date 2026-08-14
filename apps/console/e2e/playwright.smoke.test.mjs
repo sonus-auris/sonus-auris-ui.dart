@@ -66,9 +66,7 @@ test('[playwright] the passwordless sign-in screen renders', async () => {
   );
   assert.match(text, /Sign in/i);
   assert.match(text, /Email me a code/i);
-  // The email-link fallback is advertised on this first step as "The email
-  // link is a fallback"; the words "magic link" only appear on the code step.
-  assert.match(text, /email link is a fallback/i);
+  assert.doesNotMatch(text, /magic link|email link|sign-in link/i);
   assert.match(text, /new accounts are created automatically/i);
 });
 
@@ -96,6 +94,44 @@ test('[playwright] passwordless sign-in remains usable at a phone viewport', asy
   assert.equal(await page.locator('input[type="password"]').count(), 0);
   await page.screenshot({ path: join(ARTIFACT_DIR, 'playwright-signin-mobile.png') });
 });
+
+test(
+  '[playwright] mobile web renders the real Supabase OTP error',
+  { skip: process.env.CONSOLE_TEST_OTP_ERROR !== '1' },
+  async () => {
+    await page.route('**/auth/v1/otp**', async (route) => {
+      await route.fulfill({
+        status: 429,
+        contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({
+          code: 429,
+          error_code: 'over_email_send_rate_limit',
+          msg: 'email rate limit exceeded',
+        }),
+      });
+    });
+    const field = page.locator('input[data-semantics-role="text-field"]').first();
+    await field.fill('browser-error@example.test');
+    await page
+      .locator('flt-semantics[role="button"]', { hasText: 'Email me a code' })
+      .first()
+      .click({ force: true });
+    const text = await waitForSemanticText(
+      () => page.evaluate(READ_SEMANTICS_TEXT),
+      /email rate limit exceeded/i,
+    );
+    assert.doesNotMatch(text, /Sending the sign-in code failed/i);
+    for (let index = consoleErrors.length - 1; index >= 0; index -= 1) {
+      if (/status of 429 \(Too Many Requests\)/i.test(consoleErrors[index])) {
+        consoleErrors.splice(index, 1);
+      }
+    }
+    await page.screenshot({
+      path: join(ARTIFACT_DIR, 'playwright-real-otp-error-mobile.png'),
+    });
+  },
+);
 
 test('[playwright] no fatal console or page errors during boot', async () => {
   assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join('; ')}`);

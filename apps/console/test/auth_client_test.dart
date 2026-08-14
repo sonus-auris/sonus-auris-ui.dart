@@ -75,6 +75,33 @@ void main() {
     },
   );
 
+  test('sendEmailOtp surfaces the Supabase email delivery error', () async {
+    final client = AuthClient(
+      config: _config,
+      httpClient: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'code': 429,
+            'error_code': 'over_email_send_rate_limit',
+            'msg': 'email rate limit exceeded',
+          }),
+          429,
+        ),
+      ),
+    );
+
+    await expectLater(
+      client.sendEmailOtp('a@example.test', codeVerifier: _verifier),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'email rate limit exceeded',
+        ),
+      ),
+    );
+  });
+
   test(
     'PKCE callback exchanges one code and rejects implicit tokens',
     () async {
@@ -202,7 +229,7 @@ void main() {
   });
 
   test(
-    'PKCE exchange errors are generic and malformed success fails closed',
+    'PKCE exchange errors are surfaced and malformed success fails closed',
     () async {
       final rejected = AuthClient(
         config: _config,
@@ -222,7 +249,7 @@ void main() {
           isA<StateError>().having(
             (error) => error.message,
             'message',
-            'This sign-in link is invalid or expired. Request a fresh one.',
+            'internal account and project details',
           ),
         ),
       );
@@ -402,7 +429,7 @@ void main() {
     expect(session.aal, 'aal2');
   });
 
-  test('a GoTrue verification error does not expose server details', () async {
+  test('a GoTrue verification error exposes the real server message', () async {
     final client = AuthClient(
       config: _config,
       httpClient: MockClient((req) async {
@@ -415,7 +442,7 @@ void main() {
         isA<StateError>().having(
           (e) => e.message,
           'message',
-          'That code was not accepted. Request a fresh one and try again.',
+          'Token has expired',
         ),
       ),
     );

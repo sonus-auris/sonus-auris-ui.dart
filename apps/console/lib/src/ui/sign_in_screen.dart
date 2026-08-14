@@ -123,8 +123,7 @@ class _EmailStepState extends State<_EmailStep> {
           title: 'Sign in',
           subtitle:
               'Enter your email and we\'ll send a 6-digit one-time code. '
-              'No password needed — new accounts are created automatically. '
-              'The email link is a fallback.',
+              'No password needed — new accounts are created automatically.',
         ),
         TextField(
           controller: _email,
@@ -173,22 +172,24 @@ class _CodeStepState extends State<_CodeStep> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
-    final canSubmit = _code.text.trim().length >= 6 && !controller.busy;
+    final canSubmit = _code.text.trim().length == 6 && !controller.busy;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _Header(
           title: 'Check your email',
           subtitle:
-              'Enter the 6-digit code we sent to ${controller.pendingEmail}, '
-              'or use the one-time magic link in the email as a fallback.',
+              'Enter the 6-digit code we sent to ${controller.pendingEmail}.',
         ),
         TextField(
           controller: _code,
           autofocus: true,
           keyboardType: TextInputType.number,
-          maxLength: 8,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          maxLength: 6,
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(6),
+          ],
           decoration: const InputDecoration(
             labelText: 'Sign-in code',
             prefixIcon: Icon(Icons.pin_outlined),

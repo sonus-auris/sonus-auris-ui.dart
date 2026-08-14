@@ -53,6 +53,37 @@ void main() {
     });
   });
 
+  test('sendEmailOtp surfaces the Supabase email delivery error', () async {
+    final client = SupabaseAuthClient(
+      httpClient: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'code': 429,
+            'error_code': 'over_email_send_rate_limit',
+            'msg': 'email rate limit exceeded',
+          }),
+          429,
+        ),
+      ),
+    );
+
+    await expectLater(
+      client.sendEmailOtp(
+        config: config,
+        email: 'user@example.com',
+        codeVerifier: verifier,
+        redirectTo: 'sonusauris://auth/callback',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'email rate limit exceeded',
+        ),
+      ),
+    );
+  });
+
   test('PKCE uses an RFC 7636 S256 challenge and strong verifier', () {
     expect(SupabaseAuthClient.pkceChallengeForVerifier(verifier), challenge);
     final generated = {
@@ -210,6 +241,23 @@ void main() {
     },
   );
 
+  test('ordinary browser locations are not treated as auth callbacks', () {
+    for (final location in [
+      Uri.parse('https://console.example/auth/callback'),
+      Uri.parse('https://console.example/auth/callback?campaign=launch'),
+      Uri.parse('https://console.example/auth/callback#pricing'),
+    ]) {
+      expect(SupabaseAuthClient.hasAuthCallbackPayload(location), isFalse);
+    }
+    for (final callback in [
+      Uri.parse('https://console.example/auth/callback?code=one'),
+      Uri.parse('https://console.example/auth/callback?error=access_denied'),
+      Uri.parse('https://console.example/auth/callback#access_token=legacy'),
+    ]) {
+      expect(SupabaseAuthClient.hasAuthCallbackPayload(callback), isTrue);
+    }
+  });
+
   test('callback accepts exactly one bounded code on an exact HTTPS port', () {
     final expected = Uri.parse('https://console.example:8443/auth/callback');
     final maximumCode = List.filled(2048, 'a').join();
@@ -280,7 +328,7 @@ void main() {
   });
 
   test(
-    'auth failures hide server details and malformed success fails closed',
+    'auth failures surface server details and malformed success fails closed',
     () async {
       final rejected = SupabaseAuthClient(
         httpClient: MockClient(
@@ -300,7 +348,7 @@ void main() {
           isA<StateError>().having(
             (error) => error.message,
             'message',
-            'That code was not accepted. Request a fresh one and try again.',
+            'internal rate-limit and account details',
           ),
         ),
       );

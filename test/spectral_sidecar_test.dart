@@ -73,43 +73,50 @@ void main() {
     },
   );
 
-  test('writeForSegment durably registers the sidecar retention artifact', () async {
-    const rate = 16000;
-    final dir = await Directory.systemTemp.createTemp('sonus-spec-inventory');
-    try {
-      final index = SegmentIndex(baseDirectoryProvider: () async => dir);
-      final startedAt = DateTime.utc(2026, 7, 27, 20);
-      final wav = File(
-        await index.createSegmentPath(startedAt, extension: '.wav'),
-      );
-      await _writeToneWav(wav, sampleRate: rate);
-      final segment = RecordingSegment(
-        id: SegmentIndex.safeSegmentId(startedAt),
-        startedAtUtc: startedAt,
-        endedAtUtc: startedAt.add(const Duration(seconds: 1)),
-        sampleRate: rate,
-        channels: 1,
-        localPath: wav.path,
-        byteSize: await wav.length(),
-        uploadStatus: SegmentUploadStatus.pending,
-      );
-      await index.upsertSegment(segment);
+  test(
+    'writeForSegment durably registers the sidecar retention artifact',
+    () async {
+      const rate = 16000;
+      final dir = await Directory.systemTemp.createTemp('sonus-spec-inventory');
+      try {
+        final index = SegmentIndex(baseDirectoryProvider: () async => dir);
+        final startedAt = DateTime.utc(2026, 7, 27, 20);
+        final wav = File(
+          await index.createSegmentPath(startedAt, extension: '.wav'),
+        );
+        await _writeToneWav(wav, sampleRate: rate);
+        final segment = RecordingSegment(
+          id: SegmentIndex.safeSegmentId(startedAt),
+          startedAtUtc: startedAt,
+          endedAtUtc: startedAt.add(const Duration(seconds: 1)),
+          sampleRate: rate,
+          channels: 1,
+          localPath: wav.path,
+          byteSize: await wav.length(),
+          uploadStatus: SegmentUploadStatus.pending,
+        );
+        await index.upsertSegment(segment);
 
-      final sidecar = await SpectralSidecar(
-        fftSize: 1024,
-        segmentIndex: index,
-      ).writeForSegment(segment);
+        final sidecar = await SpectralSidecar(
+          fftSize: 1024,
+          segmentIndex: index,
+        ).writeForSegment(segment);
 
-      expect(sidecar, isNotNull);
-      expect(await sidecar!.exists(), isTrue);
-      final inventory = jsonDecode(
-        await File('${dir.path}/segment-artifacts.v1.json').readAsString(),
-      ) as Map<String, dynamic>;
-      expect(inventory[segment.id], [sidecar.path]);
-    } finally {
-      await dir.delete(recursive: true);
-    }
-  });
+        expect(sidecar, isNotNull);
+        expect(await sidecar!.exists(), isTrue);
+        final inventory =
+            jsonDecode(
+                  await File(
+                    '${dir.path}/segment-artifacts.v1.json',
+                  ).readAsString(),
+                )
+                as Map<String, dynamic>;
+        expect(inventory[segment.id], [await sidecar.resolveSymbolicLinks()]);
+      } finally {
+        await dir.delete(recursive: true);
+      }
+    },
+  );
 
   test('registration failure deletes the newly written sidecar', () async {
     const rate = 16000;

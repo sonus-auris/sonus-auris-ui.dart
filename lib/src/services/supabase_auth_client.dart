@@ -70,18 +70,12 @@ class SupabaseAuthClient {
         if (normalizedRedirect.isNotEmpty) 'redirect_to': normalizedRedirect,
       },
     );
-    await _post(
-      config,
-      uri,
-      {
-        'email': email.trim(),
-        'create_user': true,
-        'code_challenge': codeChallenge,
-        'code_challenge_method': 's256',
-      },
-      'Sending the sign-in code failed.',
-      exposeServerError: false,
-    );
+    await _post(config, uri, {
+      'email': email.trim(),
+      'create_user': true,
+      'code_challenge': codeChallenge,
+      'code_challenge_method': 's256',
+    }, 'Sending the sign-in code failed.');
   }
 
   /// Redeems an emailed one-time code for a session (passwordless sign-in).
@@ -93,13 +87,11 @@ class SupabaseAuthClient {
     _validateEmail(email);
     final trimmedCode = _requireSixDigitCode(code);
     final uri = _authUri(config, 'verify');
-    return _session(
-      config,
-      uri,
-      {'type': 'email', 'email': email.trim(), 'token': trimmedCode},
-      'That code was not accepted. Request a fresh one and try again.',
-      exposeServerError: false,
-    );
+    return _session(config, uri, {
+      'type': 'email',
+      'email': email.trim(),
+      'token': trimmedCode,
+    }, 'That code was not accepted. Request a fresh one and try again.');
   }
 
   /// Returns true only for the exact registered callback endpoint. Query
@@ -113,6 +105,34 @@ class SupabaseAuthClient {
         callbackUri.path == expectedRedirectUri.path &&
         callbackUri.userInfo.isEmpty &&
         _samePort(callbackUri, expectedRedirectUri);
+  }
+
+  /// Whether a matching browser URL actually carries an authentication
+  /// response. The web app's link plugin reports the ordinary page URL as its
+  /// initial link, so path matching alone must not turn a normal page load
+  /// into a bogus callback error.
+  static bool hasAuthCallbackPayload(Uri callbackUri) {
+    const keys = {
+      'code',
+      'error',
+      'error_code',
+      'error_description',
+      'access_token',
+      'refresh_token',
+    };
+    if (keys.any(callbackUri.queryParameters.containsKey)) {
+      return true;
+    }
+    final fragment = callbackUri.fragment.trim();
+    if (fragment.isEmpty) {
+      return false;
+    }
+    try {
+      final parameters = Uri.splitQueryString(fragment);
+      return keys.any(parameters.containsKey);
+    } on FormatException {
+      return false;
+    }
   }
 
   static bool sessionMatchesRequestedEmail({
@@ -190,7 +210,6 @@ class SupabaseAuthClient {
       _authUri(config, 'token', query: {'grant_type': 'pkce'}),
       {'auth_code': code, 'code_verifier': codeVerifier},
       'This sign-in link is invalid or expired. Request a fresh one.',
-      exposeServerError: false,
     );
   }
 
@@ -480,7 +499,6 @@ class SupabaseAuthClient {
     Map<String, Object?> body,
     String fallbackError, {
     String? accessToken,
-    bool exposeServerError = true,
   }) async {
     final decoded = await _post(
       config,
@@ -488,7 +506,6 @@ class SupabaseAuthClient {
       body,
       fallbackError,
       accessToken: accessToken,
-      exposeServerError: exposeServerError,
     );
     try {
       return SupabaseSession.fromJson(decoded);
@@ -503,7 +520,6 @@ class SupabaseAuthClient {
     Map<String, Object?> body,
     String fallbackError, {
     String? accessToken,
-    bool exposeServerError = true,
   }) async {
     late final http.Response response;
     try {
@@ -523,11 +539,7 @@ class SupabaseAuthClient {
     }
     final decoded = _decode(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(
-        exposeServerError
-            ? _errorMessage(decoded, fallbackError)
-            : fallbackError,
-      );
+      throw StateError(_errorMessage(decoded, fallbackError));
     }
     return decoded;
   }

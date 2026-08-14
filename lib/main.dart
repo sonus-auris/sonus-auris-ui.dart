@@ -530,11 +530,14 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const SizedBox(height: 8),
-          SupabaseMfaGate(controller: widget.controller),
+          SupabaseMfaGate(
+            controller: widget.controller,
+            onAuthorized: _advancePastAccountStep,
+          ),
           const SizedBox(height: 8),
           TextButton(
             onPressed: _busy ? null : widget.controller.signOutSupabase,
-            child: const Text('Use a different account'),
+            child: const Text('Use a different account — sign out'),
           ),
         ],
       );
@@ -547,7 +550,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         const SizedBox(height: 8),
         const Text(
           'Use one 6-digit email code to sign up or sign in and securely store '
-          'your settings and consent. The email link is a fallback.',
+          'your settings and consent. No password or email link is required.',
           style: TextStyle(color: SonusColors.inkSoft),
         ),
         const SizedBox(height: 16),
@@ -577,6 +580,13 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         ],
       ],
     );
+  }
+
+  void _advancePastAccountStep() {
+    if (!mounted || _step != 1) {
+      return;
+    }
+    setState(() => _step = 2);
   }
 
   void _seedSupabaseProject(AppViewModel? viewModel) {
@@ -748,19 +758,20 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
               onPressed: _busy ? null : () => setState(() => _step += 1),
               child: const Text('Continue offline (development)'),
             ),
-          FilledButton(
-            onPressed:
-                _busy || !accountReady || (_step == 2 && !_requiredAccepted)
-                ? null
-                : () {
-                    if (isLast) {
-                      _finish();
-                    } else {
-                      setState(() => _step += 1);
-                    }
-                  },
-            child: Text(isLast ? 'Finish' : 'Continue'),
-          ),
+          if (!onAccountStep || (vm?.isSignedIn ?? false))
+            FilledButton(
+              onPressed:
+                  _busy || !accountReady || (_step == 2 && !_requiredAccepted)
+                  ? null
+                  : () {
+                      if (isLast) {
+                        _finish();
+                      } else {
+                        setState(() => _step += 1);
+                      }
+                    },
+              child: Text(isLast ? 'Finish' : 'Continue'),
+            ),
         ],
       ),
     );

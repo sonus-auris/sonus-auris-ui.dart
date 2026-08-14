@@ -29,7 +29,10 @@ dependencies:
     sdk: flutter
   sonus_auris_interfaces:
     path: packages/sonus_auris_interfaces
-
+  # Installed and integrity-pinned by zed-pkg; Pub only resolves the
+  # materialized Dart target from the repository-local Zed dependency tree.
+  oresoftware_next_loggers:
+    path: zed_modules/oresoftware/next-loggers-dart
   cupertino_icons: ^1.0.8
   rxdart: ^0.28.0
   record: ^7.0.0

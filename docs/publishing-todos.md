@@ -39,9 +39,9 @@ signing access.
   Sonus Auris organization and must not be used for Sonus migrations,
   configuration, or key retrieval. Never place service-role or secret keys in a
   client build.
-- [ ] In the selected Supabase project, set the passwordless email template to
-  display `{{ .Token }}` as the primary six-digit sign-in code. Retain the
-  PKCE-bound link only if a fallback is desired. Apply
+- [ ] In the selected Supabase project, set both Confirm Signup and Magic Link /
+  OTP templates to display `{{ .Token }}` as the only authentication mechanism;
+  omit `{{ .ConfirmationURL }}`, token hashes, and clickable auth links. Apply
   `20260729010000_mandatory_mfa.sql`, enable TOTP and/or phone MFA, then prove
   that AAL1 is denied and AAL2 succeeds against the hosted project.
   - **Required invariant: Auth → Email OTP length must be `6`.** The client

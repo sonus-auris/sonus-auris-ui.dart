@@ -185,14 +185,17 @@ selected phrase window.
 Every native/mobile sign-up and sign-in surface is code-first: it sends a
 six-digit Supabase email OTP, and unknown email addresses are created on first
 verification. The app has no account password field or password-reset flow.
-The same email retains a magic-link fallback using S256 PKCE: the callback
-contains only a one-time authorization code, while the matching verifier stays
-in Keychain/Keystore and expires with the request. Release clients reject
-access or refresh tokens delivered in a callback URL. Add
-`sonusauris://auth/callback` (or the
-`SONUS_SUPABASE_AUTH_REDIRECT_URL` build-time override) to the Supabase Auth
-redirect allow-list as an exact URL. The hosted Magic Link template must retain
-both `{{ .ConfirmationURL }}` and the six-digit `{{ .Token }}` fallback.
+The hosted Confirm Signup and Magic Link / OTP templates must each contain the
+six-digit `{{ .Token }}` and no `{{ .ConfirmationURL }}`, token hash, or
+clickable authentication link. Legacy S256 PKCE callback handling remains only
+for separately reviewed non-login flows; release clients reject access or
+refresh tokens delivered in any callback URL.
+
+`Token` is a fixed top-level variable in Supabase's hosted Go-template
+context, so it must remain `{{ .Token }}` rather than an invented nested path
+such as `{{ .x.y.Token }}`. Supabase reserves `{{ .Data.* }}` for nested user
+metadata; it does not place the OTP there. SendGrid receives the message only
+after Supabase has rendered it and therefore cannot add a template namespace.
 
 For local development while Supabase is unavailable, a debug build can expose
 the explicit offline option with

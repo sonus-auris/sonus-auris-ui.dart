@@ -1,0 +1,17 @@
+[package]
+org = "sonus-auris"
+name = "sonus-auris-flutter"
+version = "1.0.0"
+description = "Sonus Auris Flutter clients"
+license = "Proprietary"
+
+[package.repository]
+vcs = "git"
+url = "https://github.com/sonus-auris/sonus-auris-flutter.dart"
+
+[install]
+dir = "zed_modules"
+adapter = "dart"
+
+[dependencies]
+"oresoftware/next-loggers-dart" = "=0.1.0"

@@ -28,6 +28,7 @@ class SupabaseMfaGate extends StatefulWidget {
 class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
   final _phone = TextEditingController();
   final _code = TextEditingController();
+  final _errorKey = GlobalKey();
   TotpEnrollment? _totp;
   PhoneEnrollment? _phoneEnrollment;
   String? _selectedFactorId;
@@ -162,7 +163,7 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
         ),
         const SizedBox(height: 8),
         const Text(
-          'Magic links replace passwords, so a verified second factor is '
+          'Email codes replace passwords, so a verified second factor is '
           'required before account data or cloud sync can be opened.',
         ),
         const SizedBox(height: 16),
@@ -282,10 +283,14 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
       return const SizedBox.shrink();
     }
     return Padding(
+      key: _errorKey,
       padding: const EdgeInsets.only(top: 10),
-      child: Text(
-        error,
-        style: TextStyle(color: Theme.of(context).colorScheme.error),
+      child: Semantics(
+        liveRegion: true,
+        child: Text(
+          error,
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
       ),
     );
   }
@@ -299,13 +304,13 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
   Future<void> _startTotpEnrollment() async {
     await _run(() async {
       final enrollment = await widget.controller.enrollTotpFactor(
-        friendlyName: 'Authenticator',
+        friendlyName: _newFactorName('authenticator'),
       );
       if (enrollment == null) {
         throw StateError(
           widget.controller.accountStatusValue.mfaCheckFailed
               ? 'Could not verify account security.'
-              : 'Could not start authenticator enrollment.',
+              : _controllerErrorOr('Could not start authenticator enrollment.'),
         );
       }
       setState(() => _totp = enrollment);
@@ -316,16 +321,20 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
     await _run(() async {
       final enrollment = await widget.controller.enrollPhoneFactor(
         phone: _phone.text,
-        friendlyName: 'Phone',
+        friendlyName: _newFactorName('phone'),
       );
       if (enrollment == null) {
-        throw StateError('Could not start phone enrollment.');
+        throw StateError(
+          _controllerErrorOr('Could not start phone enrollment.'),
+        );
       }
       final challengeId = await widget.controller.challengeMfaFactor(
         enrollment.factorId,
       );
       if (challengeId == null) {
-        throw StateError('Could not send the phone verification code.');
+        throw StateError(
+          _controllerErrorOr('Could not send the phone verification code.'),
+        );
       }
       setState(() {
         _phoneEnrollment = enrollment;
@@ -339,7 +348,9 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
       final challengeId =
           _challengeId ?? await widget.controller.challengeMfaFactor(factorId);
       if (challengeId == null) {
-        throw StateError('Could not start two-factor verification.');
+        throw StateError(
+          _controllerErrorOr('Could not start two-factor verification.'),
+        );
       }
       _challengeId = challengeId;
       final verified = await widget.controller.verifyMfaFactor(
@@ -349,7 +360,9 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
         completesSignIn: true,
       );
       if (!verified) {
-        throw StateError('That verification code was not accepted.');
+        throw StateError(
+          _controllerErrorOr('That verification code was not accepted.'),
+        );
       }
       widget.onAuthorized?.call();
     });
@@ -366,8 +379,20 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
     try {
       await action();
     } catch (error) {
+      final message = _errorTextFor(error);
       if (mounted) {
-        setState(() => _error = _errorTextFor(error));
+        setState(() => _error = message);
+        _showErrorToast(message);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final errorContext = _errorKey.currentContext;
+          if (errorContext != null) {
+            Scrollable.ensureVisible(
+              errorContext,
+              alignment: 0.5,
+              duration: const Duration(milliseconds: 250),
+            );
+          }
+        });
       }
     } finally {
       if (mounted) {
@@ -379,6 +404,29 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
   String _factorLabel(MfaFactor factor) {
     final name = factor.friendlyName.trim();
     return name.isEmpty ? factor.factorType : '$name (${factor.factorType})';
+  }
+
+  String _controllerErrorOr(String fallback) {
+    final message = widget.controller.latestMessage?.trim() ?? '';
+    return message.isEmpty ? fallback : message;
+  }
+
+  String _newFactorName(String factor) {
+    final attempt = DateTime.now().toUtc().millisecondsSinceEpoch.toRadixString(
+      36,
+    );
+    return 'Sonus Auris $factor $attempt';
+  }
+
+  void _showErrorToast(String message) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 8),
+        content: Semantics(liveRegion: true, child: Text(message)),
+        action: SnackBarAction(label: 'Dismiss', onPressed: () {}),
+      ),
+    );
   }
 
   String _errorTextFor(Object error) {

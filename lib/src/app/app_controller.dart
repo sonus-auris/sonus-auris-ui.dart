@@ -74,6 +74,7 @@ import '../services/oauth_browser.dart';
 import '../services/sound_recorder_backend_client.dart';
 import '../services/speech_to_text_client.dart';
 import '../services/on_device_speech_client.dart';
+import '../services/ores_telemetry_bridge.dart';
 import '../services/supabase_auth_client.dart';
 import '../services/supabase_device_presence_client.dart';
 import '../services/supabase_rest_client.dart';
@@ -573,6 +574,11 @@ class AppController {
   static const int _telemetryBatchSize = 20;
   final String _telemetrySessionId = const Uuid().v4();
   final Random _telemetryJitter = Random.secure();
+  late final OresTelemetryBridge _oresTelemetryBridge = OresTelemetryBridge(
+    sessionId: _telemetrySessionId,
+    platform: _telemetryPlatform(),
+    sendBatch: _enqueueOresTelemetry,
+  );
 
   /// Writes the time-aligned FFT feature sidecar next to each finalized segment.
   final SpectralSidecar _spectralSidecar = SpectralSidecar();
@@ -589,6 +595,11 @@ class AppController {
   Stream<AccountStatus> get accountStatus => _accountStatus;
 
   AccountStatus get accountStatusValue => _accountStatus.value;
+
+  /// Most recent user-facing operation result. Focused flows such as the MFA
+  /// gate use this to preserve the exact Supabase error when legacy controller
+  /// methods return a nullable result for compatibility with other screens.
+  String? get latestMessage => _message.valueOrNull;
 
   final BehaviorSubject<List<interfaces.DeviceRecord>> _accountDevices =
       BehaviorSubject.seeded(const <interfaces.DeviceRecord>[]);
@@ -1349,11 +1360,11 @@ class AppController {
     _message.add(message);
   }
 
-  // --- Passwordless sign-in (email code with magic-link fallback) -----------
+  // --- Passwordless sign-in (OTP-only email delivery) -----------------------
 
-  /// Emails a six-digit sign-in code (plus a magic-link fallback). Same call
-  /// for sign-in and sign-up — an unknown address is created when its first
-  /// code is verified, so there is no separate sign-up path or password.
+  /// Emails a six-digit sign-in code. Same call for sign-in and sign-up — an
+  /// unknown address is created when its first code is verified, so there is no
+  /// separate sign-up path, password, or delivered authentication link.
   Future<bool> requestSupabaseEmailOtp({required String email}) async {
     if (!_config.hasValue) {
       return false;
@@ -2291,42 +2302,38 @@ class AppController {
         !_supabaseRestClient.canInsert(config, secrets)) {
       return;
     }
-    final eventId = const Uuid().v4();
-    final requestedTraceId = entry.details['traceId']?.toString().trim() ?? '';
-    final traceId = requestedTraceId.isEmpty
-        ? _telemetrySessionId
-        : requestedTraceId;
-    final telemetry = ClientTelemetryEvent(
-      clientEventId: eventId,
-      level: _normalizeTelemetryLevel(entry.level),
-      event: entry.event.trim().isEmpty ? 'diagnostic' : entry.event.trim(),
-      message: entry.message,
-      occurredAtUtc: entry.occurredAtUtc,
-      stack: entry.stack?.toString(),
-      platform: _telemetryPlatform(),
-      sessionId: _telemetrySessionId,
-      source: 'flutter',
-      transport: 'rest_outbox+realtime_broadcast',
-      traceId: traceId,
-      spanId: eventId,
-      details: {'source': 'diagnostic_log', ...entry.details},
-    );
-    _pendingTelemetry.add(telemetry);
+    unawaited(_oresTelemetryBridge.record(entry).catchError((_) {}));
+  }
+
+  Future<void> _enqueueOresTelemetry(List<ClientTelemetryEvent> events) async {
+    if (events.isEmpty) {
+      return;
+    }
+    final config = _config.valueOrNull;
+    final secrets = _secrets.valueOrNull;
+    if (config == null ||
+        secrets == null ||
+        !_supabaseRestClient.canInsert(config, secrets)) {
+      return;
+    }
+    _pendingTelemetry.addAll(events);
     if (_pendingTelemetry.length > _maxPendingTelemetry) {
       _pendingTelemetry.removeRange(
         0,
         _pendingTelemetry.length - _maxPendingTelemetry,
       );
     }
-    unawaited(_persistPendingTelemetry());
+    await _persistPendingTelemetry();
     _connectTelemetryRealtime();
-    _telemetryRealtimeClient.publish(
-      _supabaseRestClient.toOrganizationTelemetryEntry(
-        _supabaseRestClient.sanitizeTelemetryRow(
-          telemetry.toSupabaseRow(config.deviceId),
+    for (final telemetry in events) {
+      _telemetryRealtimeClient.publish(
+        _supabaseRestClient.toOrganizationTelemetryEntry(
+          _supabaseRestClient.sanitizeTelemetryRow(
+            telemetry.toSupabaseRow(config.deviceId),
+          ),
         ),
-      ),
-    );
+      );
+    }
     _scheduleTelemetryFlush();
   }
 
@@ -2465,12 +2472,6 @@ class AppController {
       return 'linux';
     }
     return 'other';
-  }
-
-  String _normalizeTelemetryLevel(String level) {
-    final normalized = level.trim().toLowerCase();
-    const allowed = {'debug', 'info', 'warning', 'error', 'fatal'};
-    return allowed.contains(normalized) ? normalized : 'info';
   }
 
   void recordFlutterError(FlutterErrorDetails details) {
@@ -3908,6 +3909,8 @@ class AppController {
     _telemetryRealtimeClient.close();
     _cancelPendingPauseResume();
     _phraseQualityTimer?.cancel();
+    await _oresTelemetryBridge.close();
+    await _persistPendingTelemetry();
     await _voiceCommands.dispose();
 
     // 2. Synchronous client/scheduler closes — fire them off together.

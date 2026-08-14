@@ -9,9 +9,8 @@ import '../services/supabase_key_policy.dart';
 /// verified), so keeping both entry points on one widget prevents the first-run
 /// and returning-user flows from drifting apart.
 ///
-/// The code step requires the Supabase email template to include
-/// `{{ .Token }}`; the confirmation link in the same email remains available
-/// as a fallback.
+/// The code step requires both hosted Supabase signup and passwordless email
+/// templates to include `{{ .Token }}` and omit authentication links.
 class SupabaseAuthForm extends StatefulWidget {
   const SupabaseAuthForm({
     super.key,
@@ -30,9 +29,9 @@ class SupabaseAuthForm extends StatefulWidget {
   final TextEditingController? supabaseUrlController;
   final TextEditingController? supabaseAnonKeyController;
 
-  /// Emails the sign-in link + one-time code. Returns true when the code was
-  /// sent, which reveals the code field; false leaves the form on the email
-  /// step (the caller surfaces why).
+  /// Emails the one-time code. Returns true when the code was sent, which
+  /// reveals the code field; false leaves the form on the email step (the
+  /// caller surfaces why).
   final Future<bool> Function(String email) onRequestCode;
 
   /// Redeems the emailed code, signing the user in (or creating the account on
@@ -137,10 +136,9 @@ class _SupabaseAuthFormState extends State<SupabaseAuthForm> {
       const SizedBox(height: 4),
       Text(
         email.isEmpty
-            ? 'We emailed you a 6-digit sign-in code. Enter it to continue; '
-                  'the link is available as a fallback.'
+            ? 'We emailed you a 6-digit sign-in code. Enter it to continue.'
             : 'We emailed a 6-digit sign-in code to $email. Enter it to '
-                  'continue; the link is available as a fallback.',
+                  'continue.',
         style: theme.textTheme.bodySmall,
       ),
       const SizedBox(height: 16),

@@ -208,7 +208,7 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
     if (mounted) {
       setState(() {
         _config = config;
-        _status = 'We emailed you a sign-in link and a 6-digit code.';
+        _status = 'We emailed you a 6-digit sign-in code.';
       });
     }
     return true;
@@ -229,6 +229,9 @@ class _SonusWebAppState extends State<SonusWebApp> with WidgetsBindingObserver {
 
   Future<void> _handleMagicLink(Uri uri) async {
     final expected = Uri.parse(_effectiveAuthRedirectUrl);
+    if (!SupabaseAuthClient.hasAuthCallbackPayload(uri)) {
+      return;
+    }
     if (!SupabaseAuthClient.isExpectedMagicLinkCallback(
       callbackUri: uri,
       expectedRedirectUri: expected,
