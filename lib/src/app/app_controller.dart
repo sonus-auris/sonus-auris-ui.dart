@@ -86,6 +86,7 @@ import '../services/voice/voice_command_parser.dart';
 import '../services/voice_id/voice_profile_service.dart';
 import '../retention/local_retention_policy.dart';
 import 'app_view_model.dart';
+import 'mfa_gate_controller.dart';
 
 /// Consent string recorded against the device on registration. Bump when the
 /// recording/privacy disclosure shown to the user materially changes. Bumping
@@ -111,7 +112,7 @@ const String kSupabaseAuthRedirectUrl = String.fromEnvironment(
 
 enum _MfaGateDecision { enroll, challenge, authorized }
 
-class AppController {
+class AppController implements MfaGateController {
   factory AppController({
     SettingsStore? settingsStore,
     SegmentIndex? segmentIndex,
@@ -592,13 +593,16 @@ class AppController {
     const AccountStatus(),
   );
 
+  @override
   Stream<AccountStatus> get accountStatus => _accountStatus;
 
+  @override
   AccountStatus get accountStatusValue => _accountStatus.value;
 
   /// Most recent user-facing operation result. Focused flows such as the MFA
   /// gate use this to preserve the exact Supabase error when legacy controller
   /// methods return a nullable result for compatibility with other screens.
+  @override
   String? get latestMessage => _message.valueOrNull;
 
   final BehaviorSubject<List<interfaces.DeviceRecord>> _accountDevices =
@@ -1694,6 +1698,7 @@ class AppController {
 
   /// Lists the signed-in user's MFA factors (for the challenge step and the
   /// Account management screen), refreshing [accountStatus].
+  @override
   Future<List<MfaFactor>> refreshMfaFactors() async {
     try {
       await _refreshMfaChallengeState();
@@ -1706,6 +1711,7 @@ class AppController {
 
   /// Begins enrolling an authenticator app; the returned secret/URI must be
   /// confirmed with [verifyMfaEnrollment].
+  @override
   Future<TotpEnrollment?> enrollTotpFactor({String? friendlyName}) async {
     final token = await _freshAccessToken();
     if (token == null) {
@@ -1724,6 +1730,7 @@ class AppController {
   }
 
   /// Begins enrolling an SMS factor; a texted code is sent by [challengeMfaFactor].
+  @override
   Future<PhoneEnrollment?> enrollPhoneFactor({
     required String phone,
     String? friendlyName,
@@ -1747,6 +1754,7 @@ class AppController {
 
   /// Starts a challenge for a factor (sends the SMS for phone factors). Returns
   /// the challenge id to pass to [verifyMfaFactor].
+  @override
   Future<String?> challengeMfaFactor(String factorId) async {
     final token = await _freshAccessToken();
     if (token == null) {
@@ -1767,6 +1775,7 @@ class AppController {
   /// Verifies a factor code, upgrading the session to aal2. Used both to finish
   /// enrollment and to satisfy the sign-in MFA challenge; on success the
   /// post-sign-in sync runs and the MFA gate clears.
+  @override
   Future<bool> verifyMfaFactor({
     required String factorId,
     required String challengeId,

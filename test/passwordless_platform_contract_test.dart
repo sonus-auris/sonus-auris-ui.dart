@@ -186,6 +186,8 @@ void main() {
     expect(mfa, isNot(contains("friendlyName: 'Authenticator'")));
     expect(mfa, isNot(contains("friendlyName: 'Phone'")));
     expect(mfa, contains('SnackBarBehavior.floating'));
+    expect(mfa, contains('mandatory-mfa-error-toast-stack'));
+    expect(mfa, contains('if (next.length > 3)'));
     expect(mfa, contains('Scrollable.ensureVisible'));
     expect(mfa, contains('liveRegion: true'));
     expect(
