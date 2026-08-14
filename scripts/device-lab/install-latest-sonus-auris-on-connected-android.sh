@@ -63,6 +63,17 @@ find_adb() {
   return 1
 }
 
+find_zed() {
+  local candidate
+  for candidate in \
+    "${ZED_BIN:-}" \
+    "$(command -v zed 2>/dev/null || true)" \
+    "$HOME/.zed/bin/zed"; do
+    [[ -n "$candidate" && -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+
 configure_github_auth() {
   # Reuse a secure existing gh session when the caller did not export a token.
   if [[ -z "${GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
@@ -371,6 +382,7 @@ PY_CHECK
 [[ "$(uname -s)" == "Darwin" ]] || fail "Run this installer on the Mac that owns Flutter, Android platform-tools, and the authorized handset."
 FLUTTER="$(find_flutter)" || fail "Flutter was not found. Set FLUTTER_BIN or restore /Users/maca5/development/flutter."
 ADB="$(find_adb)" || fail "adb was not found. Install Android platform-tools or set ADB_BIN."
+ZED="$(find_zed)" || fail "zed-pkg was not found. Install it from https://zpkg.tech/install.sh or set ZED_BIN."
 configure_github_auth
 refresh_cache_repo "$APP_SLUG" "$APP_REPO" "$BRANCH"
 
@@ -395,8 +407,11 @@ printf 'Version: %s\n' "$VERSION"
 printf 'Config:  %s\n' "$CONFIG_SOURCE"
 printf 'Device:  %s\n' "$DEVICE_SERIAL"
 printf 'Flutter: %s\n' "$("$FLUTTER" --version | head -1)"
+printf 'zed-pkg: %s\n' "$("$ZED" --version)"
 
 cd "$APP_REPO"
+note "Materializing integrity-pinned zed-pkg dependencies"
+"$ZED" install --frozen
 "$FLUTTER" pub get
 if [[ "${SONUS_SKIP_TESTS:-0}" != "1" ]]; then
   note "Running analyzer"
