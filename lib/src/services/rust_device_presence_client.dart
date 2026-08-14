@@ -75,7 +75,7 @@ class RustDevicePresenceClient {
         'presence',
       ],
       query: '',
-      fragment: '',
+      fragment: null,
     );
   }
 

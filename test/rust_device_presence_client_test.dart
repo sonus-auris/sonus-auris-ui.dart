@@ -15,6 +15,8 @@ void main() {
     expect(uri.host, 'api.sonusauris.app');
     expect(uri.path, '/base/api/mobile/v1/devices/presence');
     expect(uri.query, isEmpty);
+    expect(uri.hasFragment, isFalse);
+    expect(uri.toString(), isNot(endsWith('#')));
   });
 
   test('rejects insecure non-loopback Rust presence endpoints', () {

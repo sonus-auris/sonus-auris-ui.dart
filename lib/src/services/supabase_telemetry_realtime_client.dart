@@ -102,7 +102,10 @@ class SupabaseTelemetryRealtimeClient {
         'apikey': config.supabaseAnonKey.trim(),
         'vsn': '1.0.0',
       },
-      fragment: '',
+      // Passing the empty string produces a literal trailing `#`. Browsers
+      // reject every WebSocket URL containing a fragment, including an empty
+      // one; null removes the fragment component entirely.
+      fragment: null,
     );
   }
 
@@ -120,6 +123,16 @@ class SupabaseTelemetryRealtimeClient {
         onError: (error, stackTrace) => _handleDisconnect(),
         onDone: _handleDisconnect,
         cancelOnError: true,
+      );
+      // Browser WebSocket construction returns a channel before the network
+      // handshake completes. Always consume `ready`: Realtime is optional and
+      // an unavailable endpoint must follow the bounded reconnect path rather
+      // than surface as an unhandled app/test exception.
+      unawaited(
+        channel.ready.then<void>(
+          (_) {},
+          onError: (_, _) => _handleDisconnect(),
+        ),
       );
       _send(
         event: 'phx_join',

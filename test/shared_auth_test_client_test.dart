@@ -25,7 +25,11 @@ void main() {
       expect(request.url, Uri.parse('https://bridge.automation.test/session'));
       expect(request.headers['authorization'], isNull);
       expect(request.headers['content-type'], 'application/json');
-      expect(jsonDecode(request.body), {'email': _email, 'code': '424242'});
+      expect(jsonDecode(request.body), {
+        'email': _email,
+        'code': '424242',
+        'assurance': 'aal1',
+      });
       return http.Response(
         jsonEncode(_sessionPayload()),
         200,
@@ -57,6 +61,131 @@ void main() {
     expect(session.hasPasswordlessFirstFactor, isTrue);
     expect(session.aal, 'aal1');
     expect(session.isPasswordlessAal2, isFalse);
+  });
+
+  test('424242 completes a genuine TOTP-shaped AAL2 exchange', () async {
+    final requests = <Map<String, Object?>>[];
+    final client = SharedAuthTestClient(
+      bridgeUrl: 'https://bridge.automation.test/session',
+      httpClient: MockClient((request) async {
+        final body = (jsonDecode(request.body) as Map).cast<String, Object?>();
+        requests.add(body);
+        return http.Response(
+          jsonEncode(
+            body['assurance'] == 'aal1'
+                ? _sessionPayload()
+                : _sessionPayload(aal: 'aal2', secondMethod: 'totp'),
+          ),
+          200,
+        );
+      }),
+    );
+    addTearDown(client.close);
+    final aal1 = await client.verifyEmailOtp(
+      config: _config,
+      email: _email,
+      code: SharedAuthTestClient.testCode,
+    );
+    final enrollment = await client.enrollTotp(
+      config: _config,
+      accessToken: aal1.accessToken,
+      friendlyName: 'browser authenticator',
+    );
+    expect(enrollment.secret, isNotEmpty);
+    expect(enrollment.uri, startsWith('otpauth://totp/'));
+    final challenge = await client.challengeFactor(
+      config: _config,
+      accessToken: aal1.accessToken,
+      factorId: enrollment.factorId,
+    );
+
+    await expectLater(
+      client.verifyFactor(
+        config: _config,
+        accessToken: aal1.accessToken,
+        factorId: enrollment.factorId,
+        challengeId: challenge,
+        code: '424241',
+      ),
+      throwsStateError,
+    );
+    final aal2 = await client.verifyFactor(
+      config: _config,
+      accessToken: aal1.accessToken,
+      factorId: enrollment.factorId,
+      challengeId: challenge,
+      code: SharedAuthTestClient.testCode,
+    );
+    expect(aal2.isPasswordlessAal2, isTrue);
+    expect(requests.last, {
+      'email': _email,
+      'code': '424242',
+      'assurance': 'aal2_totp',
+    });
+    final factors = await client.listFactors(
+      config: _config,
+      accessToken: aal2.accessToken,
+    );
+    expect(factors, hasLength(1));
+    expect(factors.single.isTotp, isTrue);
+    expect(factors.single.isVerified, isTrue);
+  });
+
+  test('424242 completes a genuine phone-shaped AAL2 exchange', () async {
+    final requests = <Map<String, Object?>>[];
+    final client = SharedAuthTestClient(
+      bridgeUrl: 'https://bridge.automation.test/session',
+      httpClient: MockClient((request) async {
+        final body = (jsonDecode(request.body) as Map).cast<String, Object?>();
+        requests.add(body);
+        return http.Response(
+          jsonEncode(
+            body['assurance'] == 'aal1'
+                ? _sessionPayload()
+                : _sessionPayload(aal: 'aal2', secondMethod: 'mfa/phone'),
+          ),
+          200,
+        );
+      }),
+    );
+    addTearDown(client.close);
+    final aal1 = await client.verifyEmailOtp(
+      config: _config,
+      email: _email,
+      code: SharedAuthTestClient.testCode,
+    );
+    final enrollment = await client.enrollPhone(
+      config: _config,
+      accessToken: aal1.accessToken,
+      phone: '+15005550006',
+      friendlyName: 'browser phone',
+    );
+    final challenge = await client.challengeFactor(
+      config: _config,
+      accessToken: aal1.accessToken,
+      factorId: enrollment.factorId,
+    );
+    final aal2 = await client.verifyFactor(
+      config: _config,
+      accessToken: aal1.accessToken,
+      factorId: enrollment.factorId,
+      challengeId: challenge,
+      code: SharedAuthTestClient.testCode,
+    );
+    expect(aal2.isPasswordlessAal2, isTrue);
+    expect(requests.last, {
+      'email': _email,
+      'code': '424242',
+      'assurance': 'aal2_phone',
+      'phone': '+15005550006',
+    });
+    final factors = await client.listFactors(
+      config: _config,
+      accessToken: aal2.accessToken,
+    );
+    expect(factors.single.isPhone, isTrue);
+    expect(factors.single.phone, '+15005550006');
+    expect(factors.single.isVerified, isTrue);
   });
 
   test('bridge and identity inputs fail closed', () async {
@@ -160,6 +289,7 @@ Map<String, Object?> _sessionPayload({
   String audience = 'authenticated',
   String aal = 'aal1',
   String method = 'otp',
+  String? secondMethod,
   String email = _email,
 }) {
   const userId = '00000000-0000-4000-8000-000000000001';
@@ -177,6 +307,11 @@ Map<String, Object?> _sessionPayload({
         'method': method,
         'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
       },
+      if (secondMethod != null)
+        {
+          'method': secondMethod,
+          'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        },
     ],
   });
   return {
