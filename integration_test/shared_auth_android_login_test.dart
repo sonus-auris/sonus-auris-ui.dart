@@ -65,6 +65,11 @@ void main() {
         find.text('Welcome to Sonus Auris'),
         timeout: const Duration(seconds: 90),
       );
+      // The app replaces its branded loading route with onboarding once the
+      // controller is ready. Android can expose the incoming route before that
+      // replacement animation has fully retired the old route, so wait for the
+      // navigator to settle before interacting with stateful form controls.
+      await tester.pumpAndSettle();
       stage = 'welcome-visible';
       await tester.tap(find.text('Continue'));
 
@@ -75,22 +80,18 @@ void main() {
       stage = 'sign-in-form-visible';
       final emailField = find.byKey(const ValueKey('supabase-email-field'));
       await _enterText(tester, emailField, _email);
-      FocusManager.instance.primaryFocus?.unfocus();
-      await tester.pump();
-      await tester.ensureVisible(requestButton);
-      await tester.tap(requestButton);
 
       final codeField = find.byKey(const ValueKey('supabase-code-field'));
-      await _pumpUntil(tester, codeField);
+      // Android's test IME may deliver the field's `done` action after text
+      // entry. That legitimately submits the form and briefly replaces the
+      // current step. Wait for either the next step or an enabled action rather
+      // than assuming one of them exists in the very next frame.
+      await _submitStepIfNeeded(
+        tester,
+        action: requestButton,
+        nextStep: codeField,
+      );
       stage = 'email-code-form-visible';
-      await _enterText(tester, codeField, _testCode);
-      final verifyButton = find.byKey(const ValueKey('supabase-verify-button'));
-      await tester.ensureVisible(verifyButton);
-      await tester.tap(verifyButton);
-
-      // The deterministic first factor must stop at AAL1. The test then drives
-      // the ordinary MFA enrollment UI; only submitting 424242 is intercepted
-      // by the integration-only client and exchanged for a genuine AAL2 token.
       final enrollmentButton = find.byKey(
         ValueKey(
           _mfaMethod == 'phone'
@@ -98,11 +99,17 @@ void main() {
               : 'mandatory-mfa-totp-button',
         ),
       );
-      await _pumpUntil(
+      await _enterText(tester, codeField, _testCode);
+      final verifyButton = find.byKey(const ValueKey('supabase-verify-button'));
+      await _submitStepIfNeeded(
         tester,
-        enrollmentButton,
-        timeout: const Duration(seconds: 60),
+        action: verifyButton,
+        nextStep: enrollmentButton,
       );
+
+      // The deterministic first factor must stop at AAL1. The test then drives
+      // the ordinary MFA enrollment UI; only submitting 424242 is intercepted
+      // by the integration-only client and exchanged for a genuine AAL2 token.
       stage = 'mandatory-mfa-visible';
       expect(
         find.byKey(const ValueKey('onboarding-signed-in-state')),
@@ -115,7 +122,7 @@ void main() {
           _phone,
         );
       }
-      await tester.tap(enrollmentButton);
+      await _pressEnabledButton(tester, enrollmentButton);
 
       final mfaCodeField = find.byKey(
         const ValueKey('mandatory-mfa-code-field'),
@@ -127,17 +134,21 @@ void main() {
       final mfaVerify = find.byKey(
         const ValueKey('mandatory-mfa-enrollment-verify-button'),
       );
+      final consentStep = find.text('What you consent to');
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pumpAndSettle();
-      await tester.ensureVisible(mfaVerify);
       stage = 'mfa-verify-ready';
-      await tester.tap(mfaVerify);
+      await _submitStepIfNeeded(
+        tester,
+        action: mfaVerify,
+        nextStep: consentStep,
+      );
       stage = 'mfa-verify-submitted';
 
       try {
         await _pumpUntil(
           tester,
-          find.text('What you consent to'),
+          consentStep,
           timeout: const Duration(seconds: 60),
         );
       } catch (error) {
@@ -200,23 +211,59 @@ Future<void> _enterText(
   String value,
 ) async {
   await tester.ensureVisible(finder);
-  await tester.tap(finder);
-  await tester.enterText(finder, value);
-  await tester.pumpAndSettle();
-  final widget = tester.widget<Widget>(finder);
-  final controller = switch (widget) {
-    TextFormField(:final controller) => controller,
-    TextField(:final controller) => controller,
-    _ => throw StateError('Expected a text input for $finder.'),
-  };
-  if (controller?.text != value) {
-    controller?.value = TextEditingValue(
-      text: value,
-      selection: TextSelection.collapsed(offset: value.length),
-    );
-    await tester.pumpAndSettle();
+  final editableFinder = find.descendant(
+    of: finder,
+    matching: find.byType(EditableText),
+  );
+  final editable = tester.widget<EditableText>(editableFinder);
+  final controller = editable.controller;
+  // Drive the same controller that backs the platform text field. Invoking the
+  // Android test IME here can deliver a delayed `done` action while the app's
+  // home route is rebuilding from a new view model, making an otherwise valid
+  // field become inactive between hit testing and entry.
+  controller.value = TextEditingValue(
+    text: value,
+    selection: TextSelection.collapsed(offset: value.length),
+  );
+  await tester.pump();
+  expect(controller.text, value);
+}
+
+Future<void> _pressEnabledButton(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  final button = tester.widget<ButtonStyleButton>(finder);
+  final onPressed = button.onPressed;
+  if (onPressed == null) {
+    throw StateError('Expected an enabled control: $finder');
   }
-  expect(controller?.text, value);
+  onPressed();
+  await tester.pump();
+}
+
+Future<void> _submitStepIfNeeded(
+  WidgetTester tester, {
+  required Finder action,
+  required Finder nextStep,
+  Duration timeout = const Duration(seconds: 30),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  var submitted = false;
+  while (DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 250));
+    if (nextStep.evaluate().isNotEmpty) return;
+    if (!submitted && action.evaluate().isNotEmpty) {
+      final button = tester.widget<ButtonStyleButton>(action);
+      if (button.onPressed != null) {
+        await _pressEnabledButton(tester, action);
+        submitted = true;
+      }
+    }
+  }
+  throw StateError(
+    'Timed out waiting for the next step after ${submitted ? 'submitting' : 'waiting for'} the current action: '
+    '$action -> $nextStep. Visible non-sensitive text: '
+    '${_visibleDiagnosticText(tester)}',
+  );
 }
 
 Future<void> _pumpUntil(
@@ -229,5 +276,26 @@ Future<void> _pumpUntil(
     await tester.pump(const Duration(milliseconds: 250));
     if (finder.evaluate().isNotEmpty) return;
   }
-  throw StateError('Timed out waiting for $finder');
+  throw StateError(
+    'Timed out waiting for $finder. Visible non-sensitive text: '
+    '${_visibleDiagnosticText(tester)}',
+  );
+}
+
+List<String> _visibleDiagnosticText(WidgetTester tester) {
+  final values = <String>[];
+  for (final element in find.byType(Text).evaluate()) {
+    final text = element.widget as Text;
+    final value = (text.data ?? text.textSpan?.toPlainText() ?? '').trim();
+    if (value.isEmpty ||
+        value.length > 160 ||
+        value.contains('@') ||
+        value.contains('otpauth') ||
+        RegExp(r'\b[0-9]{6}\b').hasMatch(value)) {
+      continue;
+    }
+    if (!values.contains(value)) values.add(value);
+    if (values.length == 20) break;
+  }
+  return values;
 }

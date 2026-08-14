@@ -47,7 +47,10 @@ void main() {
         find.byKey(const ValueKey('browser-aal1-locked')),
         timeout: const Duration(seconds: 60),
       );
-      expect(find.textContaining(_email), findsOneWidget);
+      final lockedMessage = tester.widget<Text>(
+        find.byKey(const ValueKey('browser-aal1-locked')),
+      );
+      expect(lockedMessage.data, contains(_email));
       expect(find.byKey(const ValueKey('browser-account-data')), findsNothing);
     },
     skip:
