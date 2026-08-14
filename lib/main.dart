@@ -430,9 +430,16 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                   children: [
                     _ProgressDots(step: _step, total: _lastStep + 1),
                     Expanded(
-                      child: ListView(
+                      // This flow has one stateful child whose height changes
+                      // between the email, OTP, MFA, and inline-error states.
+                      // A lazy ListView can evict that sole child when the
+                      // keyboard leaves a stale scroll offset beyond the new
+                      // extent, producing a blank form on short/landscape
+                      // mobile viewports. Keep it mounted and let the viewport
+                      // clamp its scroll position as the form changes height.
+                      child: SingleChildScrollView(
                         padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-                        children: [_buildStep(context, vm)],
+                        child: _buildStep(context, vm),
                       ),
                     ),
                     if (vm?.message != null)
