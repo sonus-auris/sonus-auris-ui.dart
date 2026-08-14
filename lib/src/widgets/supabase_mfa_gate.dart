@@ -189,6 +189,7 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
         ),
         const SizedBox(height: 12),
         TextField(
+          key: const ValueKey('mandatory-mfa-phone-field'),
           controller: _phone,
           enabled: !_busy,
           keyboardType: TextInputType.phone,
@@ -199,6 +200,7 @@ class _SupabaseMfaGateState extends State<SupabaseMfaGate> {
         ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
+          key: const ValueKey('mandatory-mfa-phone-button'),
           onPressed: _busy ? null : _startPhoneEnrollment,
           icon: const Icon(Icons.sms_outlined),
           label: const Text('Use this verified phone'),

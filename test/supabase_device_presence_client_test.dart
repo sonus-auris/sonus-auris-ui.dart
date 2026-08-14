@@ -1,7 +1,25 @@
+import 'package:audio_dashcam/src/models/app_config.dart';
 import 'package:audio_dashcam/src/services/supabase_device_presence_client.dart';
+import 'package:audio_dashcam/src/services/supabase_telemetry_realtime_client.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('realtime websocket URL never contains a fragment delimiter', () {
+    final uri = SupabaseTelemetryRealtimeClient.realtimeUri(
+      const AppConfig(
+        deviceId: 'device-a',
+        supabaseUrl: 'http://127.0.0.1:54321',
+        supabaseAnonKey: 'sb_publishable_test',
+      ),
+    );
+
+    expect(uri.scheme, 'ws');
+    expect(uri.path, '/realtime/v1/websocket');
+    expect(uri.queryParameters['apikey'], 'sb_publishable_test');
+    expect(uri.hasFragment, isFalse);
+    expect(uri.toString(), isNot(endsWith('#')));
+  });
+
   test('presence state maps device keys and ignores malformed entries', () {
     final state = presenceRefsFromState({
       'device-a': {

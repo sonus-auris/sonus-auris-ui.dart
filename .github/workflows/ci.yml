@@ -48,6 +48,9 @@ jobs:
       - name: Unit tests (hard gate)
         run: flutter test
 
+      - name: Prove test authentication is excluded from release web and Android
+        run: scripts/check-test-auth-release-boundary.sh
+
   console-analyze-test-build:
     name: Console analyze, test, and web build
     runs-on: ubuntu-latest

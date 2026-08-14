@@ -158,6 +158,12 @@ class SupabaseDevicePresenceClient {
         onDone: _handleDisconnect,
         cancelOnError: true,
       );
+      unawaited(
+        channel.ready.then<void>(
+          (_) {},
+          onError: (_, _) => _handleDisconnect(),
+        ),
+      );
       final joinRef = '${_nextReference++}';
       _joinReference = joinRef;
       _send(

@@ -131,8 +131,11 @@ Future<void> _handle(
   }
 
   final payload = _decodeObject(body);
+  const allowedKeys = {'email', 'code', 'assurance', 'phone'};
   if (payload == null ||
-      payload.length != 2 ||
+      payload.length < 2 ||
+      payload.length > 4 ||
+      payload.keys.any((key) => !allowedKeys.contains(key)) ||
       !payload.containsKey('email') ||
       !payload.containsKey('code')) {
     await _error(request.response, HttpStatus.badRequest, 'invalid_request');
@@ -140,13 +143,31 @@ Future<void> _handle(
   }
   final rawEmail = payload['email'];
   final rawCode = payload['code'];
-  if (rawEmail is! String || rawCode is! String) {
+  final rawAssurance = payload['assurance'] ?? 'aal1';
+  final rawPhone = payload['phone'];
+  if (rawEmail is! String ||
+      rawCode is! String ||
+      rawAssurance is! String ||
+      (rawPhone != null && rawPhone is! String)) {
     await _error(request.response, HttpStatus.badRequest, 'invalid_request');
     return;
   }
   final email = rawEmail.trim().toLowerCase();
   final code = rawCode.trim();
-  if (!_syntheticEmail(email) || !RegExp(r'^[0-9]{6}$').hasMatch(code)) {
+  final assurance = rawAssurance.trim();
+  final phone = rawPhone is String ? rawPhone.trim() : null;
+  final validAssurance = const {
+    'aal1',
+    'aal2_totp',
+    'aal2_phone',
+  }.contains(assurance);
+  final validPhone = assurance == 'aal2_phone'
+      ? phone != null && RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(phone)
+      : phone == null;
+  if (!_syntheticEmail(email) ||
+      !RegExp(r'^[0-9]{6}$').hasMatch(code) ||
+      !validAssurance ||
+      !validPhone) {
     await _error(request.response, HttpStatus.forbidden, 'identity_rejected');
     return;
   }
@@ -156,6 +177,8 @@ Future<void> _handle(
     config: config,
     email: email,
     code: code,
+    assurance: assurance,
+    phone: phone,
   );
   if (upstreamBody == null) {
     await _error(request.response, HttpStatus.badGateway, 'upstream_rejected');
@@ -184,6 +207,8 @@ Future<Uint8List?> _exchange(
   required _Config config,
   required String email,
   required String code,
+  required String assurance,
+  required String? phone,
 }) async {
   try {
     final request = await client
@@ -195,7 +220,13 @@ Future<Uint8List?> _exchange(
       ..headers.contentType = ContentType.json
       ..headers.set(HttpHeaders.authorizationHeader, 'Bearer ${config.bearer}')
       ..write(
-        jsonEncode({'email': email, 'code': code, 'project': config.project}),
+        jsonEncode({
+          'email': email,
+          'code': code,
+          'project': config.project,
+          'assurance': assurance,
+          'phone': ?phone,
+        }),
       );
     final response = await request.close().timeout(const Duration(seconds: 30));
     final body = await _readLimited(response, _maxResponseBytes);
