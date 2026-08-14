@@ -89,6 +89,7 @@ import '../retention/local_retention_policy.dart';
 import '../platform/runtime_platform.dart';
 import 'authenticated_capture_policy.dart';
 import 'app_view_model.dart';
+import 'capture_lifecycle_machine.dart';
 import 'mfa_gate_controller.dart';
 import 'session_reauthentication_policy.dart';
 
@@ -115,6 +116,16 @@ const String kSupabaseAuthRedirectUrl = String.fromEnvironment(
 );
 
 enum _MfaGateDecision { enroll, challenge, authorized }
+
+class _CaptureEffectFailure implements Exception {
+  const _CaptureEffectFailure(this.message, {required this.retryable});
+
+  final String message;
+  final bool retryable;
+
+  @override
+  String toString() => message;
+}
 
 class AppController implements MfaGateController {
   factory AppController({
@@ -320,11 +331,24 @@ class AppController implements MfaGateController {
     // Fold the init + starting flags into one slot (combineLatest is at its max
     // arity of 9 below).
     final lifecycle =
-        Rx.combineLatest2<bool, bool, ({bool isInitializing, bool isStarting})>(
+        Rx.combineLatest3<
+          bool,
+          bool,
+          CaptureLifecycleSnapshot,
+          ({
+            bool isInitializing,
+            bool isStarting,
+            CaptureLifecycleSnapshot capture,
+          })
+        >(
           _isInitializing,
           _isStarting,
-          (isInitializing, isStarting) =>
-              (isInitializing: isInitializing, isStarting: isStarting),
+          _captureLifecycle,
+          (isInitializing, isStarting, capture) => (
+            isInitializing: isInitializing,
+            isStarting: isStarting,
+            capture: capture,
+          ),
         );
     _viewModels =
         Rx.combineLatest9<
@@ -334,7 +358,11 @@ class AppController implements MfaGateController {
               RecorderSnapshot,
               PlaybackSnapshot,
               List<String>,
-              ({bool isInitializing, bool isStarting}),
+              ({
+                bool isInitializing,
+                bool isStarting,
+                CaptureLifecycleSnapshot capture,
+              }),
               ({bool isUploading, TransferGateStatus transfer}),
               ({
                 String? message,
@@ -373,6 +401,7 @@ class AppController implements MfaGateController {
                   diagnosticEntries: diagnosticEntries,
                   isInitializing: lifecycleState.isInitializing,
                   isStarting: lifecycleState.isStarting,
+                  captureLifecycle: lifecycleState.capture,
                   isUploading: uploadState.isUploading,
                   transferStatus: uploadState.transfer,
                   message: messageState.message,
@@ -446,7 +475,8 @@ class AppController implements MfaGateController {
   bool _phraseChangedSampleRate = false;
 
   /// True while capture is voice/user-paused awaiting the auto-resume.
-  bool get isRecordingPaused => _pauseResumeTimer != null;
+  bool get isRecordingPaused =>
+      _captureLifecycle.value.phase == CapturePhase.paused;
 
   /// When the current pause will auto-resume (null when not paused).
   DateTime? get pauseResumeAtUtc => _pauseResumeAtUtc;
@@ -527,6 +557,13 @@ class AppController implements MfaGateController {
   /// True while [startRecording] is in flight (permission prompts loading, mic
   /// stream opening) so the UI can show a spinner instead of a frozen button.
   final BehaviorSubject<bool> _isStarting = BehaviorSubject.seeded(false);
+  final BehaviorSubject<CaptureLifecycleSnapshot> _captureLifecycle =
+      BehaviorSubject.seeded(const CaptureLifecycleSnapshot.initial());
+
+  /// Serializes platform effects while the state machine continues accepting
+  /// newer intent. A completion from an older queued effect is therefore stale
+  /// by construction and cannot overwrite the newer transition.
+  Future<void> _captureEffectTail = Future<void>.value();
   final BehaviorSubject<bool> _isUploading = BehaviorSubject.seeded(false);
   final BehaviorSubject<TransferGateStatus> _transfer = BehaviorSubject.seeded(
     const TransferGateStatus.unknown(),
@@ -559,11 +596,8 @@ class AppController implements MfaGateController {
 
   static const Duration _deviceHeartbeatInterval = Duration(minutes: 10);
 
-  // Auto-resume state. [_intendRecording] is the user/schedule intent (true
-  // between a successful start and the next stop), independent of whether the
-  // mic stream is momentarily down. The rest rate-limit auto-restarts so a
-  // device that genuinely cannot record does not spin.
-  bool _intendRecording = false;
+  // Auto-resume execution guard. User/schedule intent lives only in the
+  // authoritative capture lifecycle snapshot; it is not duplicated here.
   bool _autoResuming = false;
   late AuthenticatedCapturePolicy _captureAuthPolicy;
   final List<DateTime> _recentAutoResumes = [];
@@ -787,7 +821,8 @@ class AppController implements MfaGateController {
             _captureAuthPolicy.resumePending ||
             _captureAuthPolicy.allowsSignedOutRecording) &&
         _captureAuthPolicy.mayRecord &&
-        !_recorder.isRecording) {
+        !_recorder.isRecording &&
+        _captureLifecycle.value.capabilities.canStart) {
       _diagnostics.add(
         _captureAuthPolicy.resumePending
             ? 'Resuming capture intent after authenticated startup.'
@@ -867,13 +902,15 @@ class AppController implements MfaGateController {
 
   Future<void> _applyScheduleState(bool shouldRecord) async {
     if (shouldRecord) {
-      if (!_recorder.isRecording) {
+      final capabilities = _captureLifecycle.value.capabilities;
+      if (capabilities.canStart || capabilities.canRecover) {
         _diagnostics.add('Schedule window active; starting recording.');
         await startRecording(scheduleInitiated: true);
       }
     } else {
       // Only stop a session the schedule itself started — never a manual one.
-      if (_recorder.isRecording && _scheduleStartedRecording) {
+      if (_captureLifecycle.value.capabilities.canStop &&
+          _scheduleStartedRecording) {
         _diagnostics.add('Schedule window ended; stopping recording.');
         await stopRecording();
         _scheduleStartedRecording = false;
@@ -919,8 +956,8 @@ class AppController implements MfaGateController {
     if (!schedule.enabled || !schedule.isActiveAt(DateTime.now())) {
       return; // only ask inside a scheduled window
     }
-    if (_recorder.isRecording) {
-      return; // only ask when not already recording
+    if (!_captureLifecycle.value.capabilities.canStart) {
+      return; // only ask from the authoritative stopped state
     }
     if (_consentRequest.valueOrNull != null) {
       return; // a consent request is already awaiting the user's answer
@@ -954,7 +991,7 @@ class AppController implements MfaGateController {
     _consentRequest.add(null);
     unawaited(_localNotifications.clearConsentPrompt());
     final config = _config.valueOrNull;
-    if (config == null || _recorder.isRecording) {
+    if (config == null || !_captureLifecycle.value.capabilities.canStart) {
       return;
     }
     final schedule = config.recordingSchedule;
@@ -1328,7 +1365,7 @@ class AppController implements MfaGateController {
       throw StateError(message);
     }
     try {
-      if (_recorder.isRecording) {
+      if (_captureLifecycle.value.capabilities.canStop) {
         await stopRecording();
       }
       await _playback.stop();
@@ -1439,12 +1476,12 @@ class AppController implements MfaGateController {
   Future<void> _applySignedOutCaptureChoice({
     required bool keepRecording,
   }) async {
+    final lifecycle = _captureLifecycle.value;
     final shouldStop = _captureAuthPolicy.signedOut(
-      isRecording: _recorder.isRecording,
-      isStarting: _isStarting.value,
+      isRecording: lifecycle.intendsCapture,
+      isStarting: lifecycle.isBusy,
       keepRecording: keepRecording,
     );
-    await _persistCaptureAuthenticationPolicy();
     if (shouldStop) {
       _diagnostics.add(
         'Authentication ended; pausing capture until the next AAL2 sign-in.',
@@ -1455,6 +1492,7 @@ class AppController implements MfaGateController {
         'Authentication ended; continuing local capture by explicit choice.',
       );
     }
+    await _persistCaptureAuthenticationPolicy();
   }
 
   Future<void> _resumeCaptureAfterAuthentication() async {
@@ -3071,6 +3109,143 @@ class AppController implements MfaGateController {
     }
   }
 
+  CaptureLifecycleSnapshot get captureLifecycle => _captureLifecycle.value;
+
+  CaptureTransition _transitionCapture(CaptureEvent event) {
+    final transition = CaptureLifecycleMachine.transition(
+      _captureLifecycle.value,
+      event,
+    );
+    if (transition.after != _captureLifecycle.value) {
+      _captureLifecycle.add(transition.after);
+    }
+    _isStarting.add(
+      transition.after.phase == CapturePhase.starting ||
+          transition.after.phase == CapturePhase.restarting,
+    );
+    _diagnostics.add(
+      'Capture lifecycle ${event.kind.name}: '
+      '${transition.before.phase.name} -> ${transition.after.phase.name} '
+      '(${transition.disposition.name}; generation '
+      '${transition.after.generation}).',
+    );
+    return transition;
+  }
+
+  Future<void> _requestCapture(
+    CaptureEvent event, {
+    bool scheduleInitiated = false,
+    bool preserveAuthenticationResume = false,
+    bool announceRestart = false,
+    bool showRejection = true,
+  }) {
+    final transition = _transitionCapture(event);
+    final effect = transition.effect;
+    if (effect == null) {
+      if (showRejection &&
+          transition.disposition == CaptureTransitionDisposition.rejected) {
+        _message.add(transition.reason);
+      }
+      return Future<void>.value();
+    }
+
+    final pending = _captureEffectTail.then(
+      (_) => _executeCaptureEffect(
+        effect,
+        scheduleInitiated: scheduleInitiated,
+        preserveAuthenticationResume: preserveAuthenticationResume,
+        announceRestart: announceRestart,
+      ),
+    );
+    // _executeCaptureEffect converts every environmental failure into a state
+    // transition, so this tail remains usable for later compensating effects.
+    _captureEffectTail = pending;
+    return pending;
+  }
+
+  Future<void> _executeCaptureEffect(
+    CaptureEffect effect, {
+    required bool scheduleInitiated,
+    required bool preserveAuthenticationResume,
+    required bool announceRestart,
+  }) async {
+    try {
+      switch (effect.kind) {
+        case CaptureEffectKind.startCapture:
+          if (effect.operation == CaptureOperation.recover) {
+            // An interruption can leave a plugin stream in an unknown state.
+            // Reconcile it to stopped before recovery; only the generation-
+            // checked recovery completion may publish Recording again.
+            final wasScheduleOwned = _scheduleStartedRecording;
+            await _stopCaptureSideEffects(
+              preserveAuthenticationResume: true,
+              emitMessage: false,
+              clearScheduleOwnership: false,
+            );
+            await _startCaptureSideEffects(
+              scheduleInitiated: scheduleInitiated || wasScheduleOwned,
+              emitMessage: false,
+            );
+          } else {
+            await _startCaptureSideEffects(
+              scheduleInitiated: scheduleInitiated,
+            );
+          }
+        case CaptureEffectKind.stopCapture:
+          await _stopCaptureSideEffects(
+            preserveAuthenticationResume: preserveAuthenticationResume,
+          );
+        case CaptureEffectKind.restartCapture:
+          if (announceRestart) {
+            await _feedback.say('Restarting recording', force: true);
+          }
+          final wasScheduleOwned = _scheduleStartedRecording;
+          await _stopCaptureSideEffects(
+            preserveAuthenticationResume: true,
+            emitMessage: false,
+            clearScheduleOwnership: false,
+          );
+          await _startCaptureSideEffects(
+            scheduleInitiated: wasScheduleOwned,
+            emitMessage: false,
+          );
+          _message.add('Recording restarted.');
+      }
+      final completion = _transitionCapture(
+        CaptureEvent.operationSucceeded(effect.operationId),
+      );
+      if (completion.disposition == CaptureTransitionDisposition.stale) {
+        _diagnostics.add(
+          'Ignored stale ${effect.operation.name} completion '
+          '${effect.operationId}; a newer capture operation is authoritative.',
+        );
+      }
+    } on _CaptureEffectFailure catch (error) {
+      _transitionCapture(
+        CaptureEvent.operationFailed(
+          effect.operationId,
+          reason: error.message,
+          retryable: error.retryable,
+        ),
+      );
+      _message.add(error.message);
+    } catch (error) {
+      final reason = 'Capture ${effect.operation.name} failed: $error';
+      _transitionCapture(
+        CaptureEvent.operationFailed(
+          effect.operationId,
+          reason: reason,
+          retryable:
+              effect.operation == CaptureOperation.start ||
+              effect.operation == CaptureOperation.restart ||
+              effect.operation == CaptureOperation.resume ||
+              effect.operation == CaptureOperation.recover,
+        ),
+      );
+      _message.add(reason);
+    }
+  }
+
   Future<void> startRecording({bool scheduleInitiated = false}) async {
     if (!_captureAuthPolicy.mayRecord) {
       _message.add(
@@ -3084,6 +3259,16 @@ class AppController implements MfaGateController {
       );
       return;
     }
+    final event = _captureLifecycle.value.capabilities.canRecover
+        ? const CaptureEvent.recoveryRequested()
+        : const CaptureEvent.startRequested();
+    await _requestCapture(event, scheduleInitiated: scheduleInitiated);
+  }
+
+  Future<void> _startCaptureSideEffects({
+    required bool scheduleInitiated,
+    bool emitMessage = true,
+  }) async {
     // Any start — manual, voice, or scheduled — supersedes a pending pause.
     _cancelPendingPauseResume();
     // Ownership: a manual start clears schedule ownership, a schedule-driven
@@ -3092,96 +3277,158 @@ class AppController implements MfaGateController {
     _scheduleStartedRecording = scheduleInitiated;
     _diagnostics.add('Start recording requested.');
     _consentRequest.add(null);
-    // Surface a busy state for the whole flow — the notification + microphone
-    // permission prompts can take a moment to appear, and the button should
-    // spin rather than look unresponsive while the user waits for them.
-    _isStarting.add(true);
+    String? backgroundError;
+    var recorderMayBeActive = false;
     try {
-      final backgroundError = await _backgroundCaptureService.start();
+      backgroundError = await _backgroundCaptureService.start();
       if (backgroundError != null) {
         _diagnostics.add(backgroundError);
       }
-      try {
-        if (!_captureAuthPolicy.mayRecord) {
-          await _backgroundCaptureService.stop();
-          _diagnostics.add(
-            'Recorder start cancelled because authentication ended.',
-          );
-          return;
-        }
-        _diagnostics.add('Starting PCM microphone stream.');
-        await _recorder.start(_config.value);
-        if (!_captureAuthPolicy.mayRecord) {
-          await _recorder.stop();
-          await _backgroundCaptureService.stop();
-          _diagnostics.add(
-            'Recorder stopped because authentication ended during startup.',
-          );
-          return;
-        }
-        // Capture is live: from here a dropped stream should be auto-resumed.
-        _intendRecording = true;
-        if (_captureAuthPolicy.resumePending) {
-          _captureAuthPolicy.resumedSuccessfully();
-          await _persistCaptureAuthenticationPolicy();
-        }
-        _diagnostics.add('PCM microphone stream started.');
-        _startCollisionMonitoring();
-        unawaited(_feedback.say('Recording started'));
+      if (!_captureAuthPolicy.mayRecord) {
+        throw const _CaptureEffectFailure(
+          'Recorder start cancelled because authentication ended.',
+          retryable: false,
+        );
+      }
+      _diagnostics.add('Starting PCM microphone stream.');
+      await _recorder.start(_config.value);
+      recorderMayBeActive = true;
+      if (!_captureAuthPolicy.mayRecord) {
+        throw const _CaptureEffectFailure(
+          'Recorder stopped because authentication ended during startup.',
+          retryable: false,
+        );
+      }
+      // Capture is live: from here a dropped stream should be auto-resumed.
+      if (_captureAuthPolicy.resumePending) {
+        _captureAuthPolicy.resumedSuccessfully();
+        await _persistCaptureAuthenticationPolicy();
+      }
+      _diagnostics.add('PCM microphone stream started.');
+      _startCollisionMonitoring();
+      unawaited(_feedback.say('Recording started'));
+      if (emitMessage) {
         _message.add(
           backgroundError == null
               ? 'Recording started.'
               : 'Recording started locally. $backgroundError',
         );
-      } catch (error) {
-        _diagnostics.add('Recorder start failed: $error.');
-        await _backgroundCaptureService.stop();
-        _message.add(error.toString());
       }
-    } finally {
-      _isStarting.add(false);
+    } catch (error) {
+      _diagnostics.add('Recorder start failed: $error.');
+      final cleanupFailures = <String>[];
+      try {
+        await _stopCollisionMonitoring();
+      } catch (cleanupError) {
+        _diagnostics.add('Collision monitor cleanup failed: $cleanupError.');
+      }
+      if (recorderMayBeActive || _recorder.isRecording) {
+        try {
+          await _recorder.stop();
+        } catch (cleanupError) {
+          cleanupFailures.add('recorder cleanup failed: $cleanupError');
+        }
+      }
+      try {
+        await _backgroundCaptureService.stop();
+      } catch (cleanupError) {
+        cleanupFailures.add('background cleanup failed: $cleanupError');
+      }
+      try {
+        await _updateContextTriggers();
+      } catch (cleanupError) {
+        _diagnostics.add('Context trigger recovery failed: $cleanupError.');
+      }
+      final base = error is _CaptureEffectFailure
+          ? error.message
+          : error.toString();
+      final message = cleanupFailures.isEmpty
+          ? base
+          : '$base ${cleanupFailures.join('; ')}.';
+      throw _CaptureEffectFailure(
+        message,
+        retryable:
+            cleanupFailures.isEmpty &&
+            (error is! _CaptureEffectFailure || error.retryable),
+      );
     }
-    // Recording is now (probably) live — pause context sources while we capture.
-    await _updateContextTriggers();
+    // Recording is live — pause context sources while we capture.
+    try {
+      await _updateContextTriggers();
+    } catch (error) {
+      _diagnostics.add('Context trigger update failed after start: $error.');
+    }
   }
 
   Future<void> stopRecording() =>
       _stopRecording(preserveAuthenticationResume: false);
 
-  Future<void> _stopRecording({
+  Future<void> _stopRecording({required bool preserveAuthenticationResume}) =>
+      _requestCapture(
+        const CaptureEvent.stopRequested(),
+        preserveAuthenticationResume: preserveAuthenticationResume,
+      );
+
+  Future<void> _stopCaptureSideEffects({
     required bool preserveAuthenticationResume,
+    bool emitMessage = true,
+    bool clearScheduleOwnership = true,
   }) async {
+    final failures = <String>[];
     if (!preserveAuthenticationResume) {
       _captureAuthPolicy.stoppedExplicitly();
-      await _persistCaptureAuthenticationPolicy();
+      try {
+        await _persistCaptureAuthenticationPolicy();
+      } catch (error) {
+        failures.add('capture intent persistence failed: $error');
+      }
     }
     _diagnostics.add('Stop recording requested.');
     // An explicit stop supersedes a pending pause auto-resume.
     _cancelPendingPauseResume();
-    // Clear intent first so an in-flight resume request does not re-start us.
-    _intendRecording = false;
-    await _stopCollisionMonitoring();
-    Object? recorderError;
+    if (clearScheduleOwnership) {
+      _scheduleStartedRecording = false;
+    }
+    try {
+      await _stopCollisionMonitoring();
+    } catch (error) {
+      _diagnostics.add('Collision monitor stop failed: $error.');
+    }
     try {
       await _recorder.stop();
       _diagnostics.add('PCM microphone stream stopped.');
     } catch (error) {
-      recorderError = error;
+      failures.add('recorder stop failed: $error');
       _diagnostics.add('Recorder stop failed: $error.');
-    } finally {
+    }
+    try {
       await _backgroundCaptureService.stop();
+    } catch (error) {
+      failures.add('background service stop failed: $error');
     }
     unawaited(_feedback.say('Recording stopped'));
-    _message.add(
-      recorderError == null
-          ? 'Recording stopped.'
-          : 'Foreground service stopped after recorder error: $recorderError',
-    );
+    if (emitMessage) {
+      _message.add(
+        failures.isEmpty
+            ? 'Recording stopped.'
+            : 'Recording stop needs attention: ${failures.join('; ')}',
+      );
+    }
     _diagnostics.add('Stop recording completed.');
     requestUploadDrain();
     // Idle again — if we're still inside a window, re-arm context sources so a
     // later event can offer to resume.
-    await _updateContextTriggers();
+    try {
+      await _updateContextTriggers();
+    } catch (error) {
+      _diagnostics.add('Context trigger update failed after stop: $error.');
+    }
+    if (failures.isNotEmpty) {
+      throw _CaptureEffectFailure(
+        'Recording stop needs attention: ${failures.join('; ')}',
+        retryable: false,
+      );
+    }
   }
 
   void _cancelPendingPauseResume() {
@@ -3196,8 +3443,12 @@ class AppController implements MfaGateController {
   /// scheduled resume.
   Future<void> pauseRecordingFor(Duration duration) async {
     _cancelPendingPauseResume();
-    if (_recorder.isRecording) {
-      await stopRecording();
+    await _requestCapture(
+      const CaptureEvent.pauseRequested(),
+      preserveAuthenticationResume: true,
+    );
+    if (_captureLifecycle.value.phase != CapturePhase.paused) {
+      return;
     }
     final resumeAt = DateTime.now().toUtc().add(duration);
     _pauseResumeAtUtc = resumeAt;
@@ -3205,7 +3456,7 @@ class AppController implements MfaGateController {
       _pauseResumeTimer = null;
       _pauseResumeAtUtc = null;
       _diagnostics.add('Pause elapsed; resuming recording.');
-      unawaited(startRecording());
+      unawaited(_resumeRecording());
     });
     _diagnostics.add(
       'Recording paused until ${resumeAt.toIso8601String()} '
@@ -3214,6 +3465,24 @@ class AppController implements MfaGateController {
     _message.add(
       'Recording paused; resuming automatically in '
       '${describeSpokenDuration(duration.inSeconds)}.',
+    );
+  }
+
+  Future<void> _resumeRecording() async {
+    if (!_captureAuthPolicy.mayRecord || !hasValidRecordingConsent) {
+      await _requestCapture(
+        const CaptureEvent.stopRequested(),
+        preserveAuthenticationResume: false,
+        showRejection: false,
+      );
+      _message.add(
+        'Recording remains paused until authentication and consent are valid.',
+      );
+      return;
+    }
+    await _requestCapture(
+      const CaptureEvent.resumeRequested(),
+      preserveAuthenticationResume: true,
     );
   }
 
@@ -3342,21 +3611,19 @@ class AppController implements MfaGateController {
   /// is false (e.g. when a quality switch already announced the change).
   Future<void> restartRecording({bool announce = true}) async {
     _diagnostics.add('Restart recording requested.');
-    if (announce) {
-      await _feedback.say('Restarting recording', force: true);
-    }
-    // Preserve schedule ownership across a restart (quality switch, fresh
-    // segment) so a mid-window restart doesn't reclassify the session as manual.
-    final wasScheduleOwned = _scheduleStartedRecording;
-    await stopRecording();
-    await startRecording(scheduleInitiated: wasScheduleOwned);
+    await _requestCapture(
+      const CaptureEvent.restartRequested(),
+      preserveAuthenticationResume: true,
+      announceRestart: announce,
+    );
   }
 
   /// Restarts capture after the recorder reports an interruption/stall it could
   /// not resume itself. Silent (no spoken cue, no schedule-ownership change) and
   /// rate-limited so a device that genuinely cannot record does not spin.
   Future<void> _handleAutoResume(String reason) async {
-    if (!_intendRecording || _autoResuming) {
+    final lifecycle = _captureLifecycle.value;
+    if (!lifecycle.intendsCapture || _autoResuming) {
       return;
     }
     final now = DateTime.now();
@@ -3364,13 +3631,22 @@ class AppController implements MfaGateController {
       (t) => now.difference(t) > const Duration(seconds: 60),
     );
     if (_recentAutoResumes.length >= _maxAutoResumesPerMinute) {
+      if (_captureLifecycle.value.phase == CapturePhase.recording) {
+        _transitionCapture(
+          CaptureEvent.captureInterrupted(reason: reason, retryable: false),
+        );
+      }
+      await _requestCapture(
+        const CaptureEvent.stopRequested(),
+        preserveAuthenticationResume: true,
+        showRejection: false,
+      );
       _diagnostics.add(
         'Auto-resume suppressed after '
         '${_recentAutoResumes.length} attempts in 60s ($reason).',
       );
       _message.add(
-        'Recording was interrupted and could not restart automatically. '
-        'Tap record to resume.',
+        'Recording stopped after repeated interruptions. Tap Record to retry.',
       );
       return;
     }
@@ -3378,7 +3654,16 @@ class AppController implements MfaGateController {
     _autoResuming = true;
     _diagnostics.add('Auto-resuming capture ($reason).');
     try {
-      await restartRecording(announce: false);
+      if (_captureLifecycle.value.phase == CapturePhase.recording) {
+        _transitionCapture(
+          CaptureEvent.captureInterrupted(reason: reason, retryable: true),
+        );
+      }
+      await _requestCapture(
+        const CaptureEvent.recoveryRequested(),
+        preserveAuthenticationResume: true,
+        showRejection: false,
+      );
     } catch (error) {
       _diagnostics.add('Auto-resume restart failed: $error.');
     } finally {
@@ -4207,6 +4492,7 @@ class AppController implements MfaGateController {
       _segments.close(),
       _isInitializing.close(),
       _isStarting.close(),
+      _captureLifecycle.close(),
       _isUploading.close(),
       _transfer.close(),
       _message.close(),

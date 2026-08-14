@@ -35,6 +35,7 @@ import 'package:window_manager/window_manager.dart';
 import 'src/app/app_controller.dart';
 import 'src/platform/runtime_platform.dart';
 import 'src/app/app_view_model.dart';
+import 'src/app/capture_lifecycle_machine.dart';
 import 'src/models/cloud_connection.dart';
 import 'src/models/cloud_provider.dart';
 import 'src/models/consent.dart';
@@ -747,13 +748,22 @@ class _ThisDevicePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final recording = vm.recorder.isRecording;
+    final lifecycle = vm.captureLifecycle;
+    final lifecycleLabel = switch (lifecycle.phase) {
+      CapturePhase.stopped => 'Stopped',
+      CapturePhase.starting => 'Starting…',
+      CapturePhase.recording => 'Recording',
+      CapturePhase.stopping => 'Stopping…',
+      CapturePhase.restarting => 'Restarting…',
+      CapturePhase.paused => 'Paused',
+      CapturePhase.failed => 'Needs attention',
+    };
     final peak = ((vm.recorder.peakDb + 60) / 60).clamp(0.0, 1.0);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          recording ? 'Recording' : 'Stopped',
+          lifecycleLabel,
           style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
         ),
         Text(
@@ -766,20 +776,24 @@ class _ThisDevicePanel extends StatelessWidget {
           runSpacing: 12,
           children: [
             FilledButton.icon(
-              onPressed: recording || vm.recorder.isStarting
-                  ? null
-                  : controller.startRecording,
+              onPressed: lifecycle.capabilities.canStart
+                  ? controller.startRecording
+                  : null,
               icon: const Icon(Icons.fiber_manual_record),
               label: const Text('Record'),
               style: FilledButton.styleFrom(backgroundColor: _greenBright),
             ),
             OutlinedButton.icon(
-              onPressed: recording ? controller.stopRecording : null,
+              onPressed: lifecycle.capabilities.canStop
+                  ? controller.stopRecording
+                  : null,
               icon: const Icon(Icons.stop),
               label: const Text('Stop'),
             ),
             OutlinedButton.icon(
-              onPressed: recording ? controller.restartRecording : null,
+              onPressed: lifecycle.capabilities.canRestart
+                  ? controller.restartRecording
+                  : null,
               icon: const Icon(Icons.refresh),
               label: const Text('Restart'),
             ),
