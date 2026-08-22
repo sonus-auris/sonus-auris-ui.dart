@@ -60,6 +60,48 @@ npx --yes --package="$QUINT_PACKAGE" quint verify \
   --max-steps=12 --invariant=capture_lifecycle_safety
 ```
 
+## Rust presence WebSocket lifecycle
+
+`rust_presence_lifecycle.qnt` models the fallback device-presence connection as
+a generation-scoped protocol: idle, connecting, authenticating, connected,
+waiting to retry, and explicitly closed. Every transport callback and timer is
+tagged with the generation that created it. A callback from a replaced, failed,
+or closed transport must stutter and therefore cannot authenticate, close, or
+start heartbeats on the current connection.
+
+The production refinement is the pure
+`lib/src/services/rust_presence_lifecycle.dart` transition function interpreted
+by `RustDevicePresenceClient`. It also gives reconnect timers a capped monotone
+backoff, rejects presence data before authentication, and makes explicit close
+terminal until a new configure event. Transport frames and server-provided
+device identifiers are bounded before parsing or retention.
+
+`test/rust_presence_lifecycle_test.dart` independently explores the bounded
+Dart graph and checks totality, determinism, generation monotonicity, permitted
+effect/phase pairs, retry bounds, and stale-event suppression. The fake-channel
+client tests then exercise the async refinement with delayed readiness failures
+and replacement credentials. Deterministic Quint traces cover the same races;
+CI also simulates the aggregate `lifecycle_safety` invariant and requires
+authenticated, retry-wait, and terminal-close witnesses.
+
+The claim is safety, not network liveness: the model does not assume that DNS,
+TLS, the API, or a mobile radio eventually succeeds. It establishes that any
+late completion in the modeled finite lifecycle cannot regain authority over a
+newer transport and that no heartbeat or presence side effect occurs in an
+invalid phase.
+
+```bash
+QUINT_PACKAGE='@informalsystems/quint@0.32.0'
+npx --yes --package="$QUINT_PACKAGE" quint typecheck formal/rust_presence_lifecycle.qnt
+npx --yes --package="$QUINT_PACKAGE" quint test \
+  formal/rust_presence_lifecycle_test.qnt \
+  --main=rust_presence_lifecycle_test --match='.*Test$'
+npx --yes --package="$QUINT_PACKAGE" quint run \
+  formal/rust_presence_lifecycle.qnt --main=rust_presence_lifecycle \
+  --max-samples=10000 --max-steps=25 --invariant=lifecycle_safety \
+  --witnesses authenticated_connection_reached retry_wait_reached terminal_close_reached
+```
+
 ## First model: encrypted segment lifecycle
 
 `segment_lifecycle.qnt` models one rolling audio segment through:
