@@ -6,6 +6,60 @@ tracked in DEN-565 will eventually discover `fm.toml`, execute the selected
 backend, normalize ITF traces, and replay them through language adapters. The
 product model remains next to the Dart implementation it describes.
 
+## Application capture lifecycle
+
+`capture_lifecycle.qnt` is the cross-platform application state model used by
+the Flutter mobile and desktop entrypoints and mirrored byte-for-byte in the
+pure-Rust desktop repository. Its stable states are `stopped`, `recording`,
+`paused`, and `failed`; its transitional states are `starting`, `stopping`, and
+`restarting`.
+
+The production transition relation is
+`lib/src/app/capture_lifecycle_machine.dart`. `AppController` interprets user
+commands only through effects returned by that pure function, serializes
+platform effects, and commits success/failure with the effect's generation
+token. Environmental audio interruptions enter through explicit interruption
+events and a fail-closed stop-before-recover effect. Mobile and desktop button
+enablement comes from `CaptureCapabilities`, not from plugin booleans.
+
+The aggregate `capture_lifecycle_safety` invariant checks:
+
+1. every phase and operation remains in its finite domain;
+2. transitional states have exactly one active operation token;
+3. active tokens equal the monotonic generation and each transient phase has
+   only its permitted operation kind;
+4. stopped, recording, and paused intent remains coherent;
+5. failure details exist exactly in the controlled `failed` state; and
+6. stale completions stutter because their token cannot match the active one.
+
+`test/capture_lifecycle_machine_test.dart` independently explores the reachable
+production Dart state graph through four operation generations and checks
+totality, determinism, invariant preservation, stale-result suppression, UI
+capabilities, and recovery reachability.
+
+The formal claim is deliberately bounded. It proves the abstract state machine
+for the declared finite domains and 12-step Apalache executions; it does not
+prove that Android, CoreAudio, storage, or a network provider cannot fail. Those
+failures are environmental inputs and must map to `failed`, a retryable recovery
+path, or a completed stop without bypassing the transition function.
+
+Local capture-model commands:
+
+```bash
+QUINT_PACKAGE='@informalsystems/quint@0.32.0'
+npx --yes --package="$QUINT_PACKAGE" quint typecheck formal/capture_lifecycle.qnt
+npx --yes --package="$QUINT_PACKAGE" quint test \
+  formal/capture_lifecycle_test.qnt \
+  --main=capture_lifecycle_test --match='.*Test$'
+npx --yes --package="$QUINT_PACKAGE" quint run \
+  formal/capture_lifecycle.qnt --main=capture_lifecycle \
+  --max-samples=10000 --max-steps=24 \
+  --invariant=capture_lifecycle_safety
+npx --yes --package="$QUINT_PACKAGE" quint verify \
+  formal/capture_lifecycle.qnt --main=capture_lifecycle \
+  --max-steps=12 --invariant=capture_lifecycle_safety
+```
+
 ## First model: encrypted segment lifecycle
 
 `segment_lifecycle.qnt` models one rolling audio segment through:

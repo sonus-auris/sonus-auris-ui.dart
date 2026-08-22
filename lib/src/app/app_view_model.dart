@@ -13,6 +13,7 @@ import '../models/storage_estimate.dart';
 import '../models/supabase_session.dart';
 import '../models/transfer_gate_status.dart';
 import '../retention/local_retention_policy.dart';
+import 'capture_lifecycle_machine.dart';
 
 class AppViewModel {
   const AppViewModel({
@@ -26,6 +27,7 @@ class AppViewModel {
     required this.isUploading,
     this.accountStatus = const AccountStatus(),
     this.isStarting = false,
+    this.captureLifecycle = const CaptureLifecycleSnapshot.initial(),
     this.transferStatus = const TransferGateStatus.unknown(),
     this.message,
     this.detections = const [],
@@ -46,6 +48,12 @@ class AppViewModel {
   /// covers the wait while the OS permission prompts load, so the button can show
   /// a spinner instead of looking frozen.
   final bool isStarting;
+
+  /// Authoritative application-level capture state. RecorderSnapshot reflects
+  /// the platform plugin; UI commands and lifecycle labels derive from this
+  /// formally specified state machine so transient plugin observations cannot
+  /// expose contradictory controls.
+  final CaptureLifecycleSnapshot captureLifecycle;
 
   /// Most recent acoustic-intelligence detections, newest first.
   final List<AcousticDetection> detections;

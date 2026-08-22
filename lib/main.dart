@@ -16,6 +16,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'src/app/app_controller.dart';
 import 'src/app/app_view_model.dart';
+import 'src/app/capture_lifecycle_machine.dart';
 import 'src/models/account_status.dart';
 import 'src/platform/form_factor.dart';
 import 'src/platform/offline_development_mode.dart';
@@ -4674,6 +4675,16 @@ class _StatusSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final recorder = viewModel.recorder;
+    final lifecycle = viewModel.captureLifecycle;
+    final lifecycleLabel = switch (lifecycle.phase) {
+      CapturePhase.stopped => 'Stopped',
+      CapturePhase.starting => 'Starting…',
+      CapturePhase.recording => 'Recording',
+      CapturePhase.stopping => 'Stopping…',
+      CapturePhase.restarting => 'Restarting…',
+      CapturePhase.paused => 'Paused',
+      CapturePhase.failed => 'Needs attention',
+    };
     // Drive the live bar from the *instantaneous* level (averageDb = the plugin's
     // amplitude.current), not peakDb (amplitude.max), which is monotonic
     // max-since-start and so latches at the top once you speak loudly once.
@@ -4684,7 +4695,7 @@ class _StatusSection extends StatelessWidget {
         : (viewModel.localWindowDuration.inSeconds / localCapacitySeconds)
               .clamp(0.0, 1.0);
     // Live capture takes the site's orange "REC" accent; idle stays muted green.
-    final statusColor = recorder.isRecording
+    final statusColor = lifecycle.isRecording
         ? SonusColors.orange500
         : theme.colorScheme.outline;
     final isHighQuality =
@@ -4706,7 +4717,7 @@ class _StatusSection extends StatelessWidget {
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Icon(
-                  recorder.isRecording ? Icons.mic : Icons.mic_off,
+                  lifecycle.isRecording ? Icons.mic : Icons.mic_off,
                   color: statusColor,
                 ),
               ),
@@ -4716,14 +4727,14 @@ class _StatusSection extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      recorder.isRecording ? 'Recording' : 'Stopped',
+                      lifecycleLabel,
                       style: theme.textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      recorder.isRecording
+                      lifecycle.isRecording
                           ? _formatDuration(viewModel.activeRecordingDuration)
                           : '${viewModel.config.deviceRetentionHours} h local window',
                       style: theme.textTheme.bodyMedium?.copyWith(
@@ -4814,17 +4825,17 @@ class _StatusSection extends StatelessWidget {
               // wait while the OS permission prompts load — so the button shows a
               // spinner instead of looking unresponsive (recorder.isStarting only
               // flips once the mic stream itself begins, after permissions).
-              if (viewModel.isStarting || recorder.isStarting)
-                const Row(
+              if (lifecycle.isBusy)
+                Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     SonusGradientButton(
-                      label: 'Starting…',
+                      label: lifecycleLabel,
                       icon: Icons.fiber_manual_record,
                       onPressed: null,
                     ),
-                    SizedBox(width: 10),
-                    SizedBox(
+                    const SizedBox(width: 10),
+                    const SizedBox(
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
@@ -4835,19 +4846,15 @@ class _StatusSection extends StatelessWidget {
                 SonusGradientButton(
                   label: 'Start',
                   icon: Icons.fiber_manual_record,
-                  onPressed: recorder.isRecording ? null : onStart,
+                  onPressed: lifecycle.capabilities.canStart ? onStart : null,
                 ),
               OutlinedButton.icon(
-                onPressed: recorder.isRecording || recorder.isStarting
-                    ? onStop
-                    : null,
+                onPressed: lifecycle.capabilities.canStop ? onStop : null,
                 icon: const Icon(Icons.stop),
                 label: const Text('Stop'),
               ),
               OutlinedButton.icon(
-                onPressed: recorder.isRecording || recorder.isStarting
-                    ? onRestart
-                    : null,
+                onPressed: lifecycle.capabilities.canRestart ? onRestart : null,
                 icon: const Icon(Icons.refresh),
                 label: const Text('Restart'),
               ),
