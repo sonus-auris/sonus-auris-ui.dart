@@ -1,29 +1,48 @@
 name: Formal methods
 
+# ---------------------------------------------------------------------------
+# This repository carries a copy of the encrypted-segment-lifecycle model and
+# the retention-journal procedure and, until this file existed, had no .github/
+# directory at all: both were run by nothing. This workflow runs them.
+#
+# It mirrors sonus-auris-flutter.dart/.github/workflows/formal-methods.yml --
+# same toolchain pin, same manifest-driven witness enforcement, same
+# pull-request trade -- because formal/fm.toml here declares the same model
+# under the same name (`encrypted-segment-lifecycle-v1`).
+#
+# What is NOT checked here, and should be: that this copy still agrees byte for
+# byte with the copy in sonus-auris-flutter.dart. Nothing in this repository
+# can check that -- the other repository is not checked out here -- so two
+# copies of "the same" model can drift apart without either workflow noticing.
+# Closing that needs a cross-repository job with read access to both, of the
+# kind sonus-auris-test/android-recorder-emulator-e2e's formal-source-pins.json
+# describes but does not yet run.
+#
+# WHAT A PULL REQUEST RUN DOES AND DOES NOT CHECK
+#
+# On every event: the retention-journal procedure and its crash-recovery
+# replay, `quint typecheck`, `quint test`, randomized simulation of
+# `segment_lifecycle_safety`, and the reachability of every declared witness
+# (enforced -- `quint run` exits 0 whether or not a witness was reached).
+#
+# It does NOT run Apalache; that needs a JVM and minutes per invariant. The
+# `verification` job runs it on push to main, on the weekly schedule and on
+# dispatch, and is SKIPPED on pull requests -- a grey neutral result, not a
+# green one.
+# ---------------------------------------------------------------------------
+
 on:
   pull_request:
     paths:
       - '.github/workflows/formal-methods.yml'
       - 'formal/**'
-      - 'lib/src/models/recording_segment.dart'
-      - 'lib/src/app/app_controller.dart'
-      - 'lib/src/services/segment_index.dart'
-      - 'lib/src/services/s3_storage_client.dart'
-      - 'lib/src/services/sound_recorder_backend_client.dart'
-      - 'lib/src/retention/local_retention_policy.dart'
   push:
     branches: [main]
     paths:
       - '.github/workflows/formal-methods.yml'
       - 'formal/**'
-      - 'lib/src/models/recording_segment.dart'
-      - 'lib/src/app/app_controller.dart'
-      - 'lib/src/services/segment_index.dart'
-      - 'lib/src/services/s3_storage_client.dart'
-      - 'lib/src/services/sound_recorder_backend_client.dart'
-      - 'lib/src/retention/local_retention_policy.dart'
   schedule:
-    - cron: '41 6 * * 2'
+    - cron: '47 6 * * 2'
   workflow_dispatch:
 
 permissions:
@@ -35,6 +54,7 @@ concurrency:
 
 env:
   QUINT_PACKAGE: '@informalsystems/quint@0.32.0'
+  MANIFEST: formal/fm.toml
 
 jobs:
   encrypted-segment-lifecycle:
@@ -47,11 +67,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Self-test the manifest-driven CI judgements
+        run: python3 formal/ci/quint_ci.py self-test
+
       - name: Check retention journal procedure and crash recovery
         run: python3 formal/retention_journal_model.py
 
       - name: Replay crash-after-delete JSON-lines witness
         run: |
+          # The `crash` step discards the volatile in-memory segment view a
+          # real restart would lose; removing it from this event list changes
+          # the resulting trace. See formal/retention_journal_model.py.
           printf '%s\n' \
             '{"op":"replay","backed_up":false,"events":["tombstone","delete","crash","recover"]}' \
             | python3 formal/retention_journal_model.py --json-stdin
@@ -60,6 +86,14 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
+
+      - name: Cross-check the installed quint against the manifest pin
+        run: |
+          set -o pipefail
+          installed=$(npx --yes --package="$QUINT_PACKAGE" quint --version 2>&1 | tail -n 1)
+          echo "quint --version reports: $installed"
+          python3 formal/ci/quint_ci.py assert-toolchain \
+            --manifest "$MANIFEST" --actual "$installed"
 
       - name: Typecheck model and deterministic traces
         run: |
@@ -87,52 +121,30 @@ jobs:
         run: |
           mkdir -p .formal-artifacts/simulation
           set -o pipefail
+          samples=$(python3 formal/ci/quint_ci.py field --manifest "$MANIFEST" --key simulation.max_samples)
+          steps=$(python3 formal/ci/quint_ci.py field --manifest "$MANIFEST" --key simulation.max_steps)
+          invariant=$(python3 formal/ci/quint_ci.py list \
+            --manifest "$MANIFEST" --key invariants --require-nonempty | head -n 1)
+          mapfile -t witnesses < <(python3 formal/ci/quint_ci.py list \
+            --manifest "$MANIFEST" --key witnesses --require-nonempty)
+          if [ "${#witnesses[@]}" -eq 0 ] || [ -z "$invariant" ]; then
+            echo "::error::no invariant or witnesses could be read from $MANIFEST"
+            exit 1
+          fi
+          printf 'checking %d declared witnesses against %s\n' "${#witnesses[@]}" "$invariant"
           npx --yes --package="$QUINT_PACKAGE" quint run \
             formal/segment_lifecycle.qnt \
             --main=segment_lifecycle \
-            --max-samples=10000 \
-            --max-steps=35 \
-            --invariant=segment_lifecycle_safety \
-            --witnesses \
-              direct_upload_reached \
-              partial_remote_without_ack_reached \
-              retry_generation_reached \
-              retention_tombstone_reached \
+            --max-samples="$samples" \
+            --max-steps="$steps" \
+            --invariant="$invariant" \
+            --witnesses "${witnesses[@]}" \
             2>&1 | tee .formal-artifacts/simulation/quint-run.log
 
-      - name: Generate model-based testing traces
+      - name: Every declared witness must be reachable
         run: |
-          mkdir -p .formal-artifacts/mbt
-          set -o pipefail
-          npx --yes --package="$QUINT_PACKAGE" quint run \
-            formal/segment_lifecycle.qnt \
-            --main=segment_lifecycle \
-            --max-samples=500 \
-            --max-steps=25 \
-            --n-traces=8 \
-            --mbt \
-            --out-itf='.formal-artifacts/mbt/segment-lifecycle-{seq}.itf.json' \
-            2>&1 | tee .formal-artifacts/mbt/quint-run.log
-
-      - name: Install Java for bounded verification
-        if: github.event_name != 'pull_request'
-        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Exhaustively check bounded executions with Apalache
-        if: github.event_name != 'pull_request'
-        run: |
-          mkdir -p .formal-artifacts/verify
-          set -o pipefail
-          npx --yes --package="$QUINT_PACKAGE" quint verify \
-            formal/segment_lifecycle.qnt \
-            --main=segment_lifecycle \
-            --max-steps=12 \
-            --invariant=segment_lifecycle_safety \
-            --out-itf='.formal-artifacts/verify/counterexample-{seq}.itf.json' \
-            2>&1 | tee .formal-artifacts/verify/quint-verify.log
+          python3 formal/ci/quint_ci.py assert-witnesses \
+            --manifest "$MANIFEST" --log .formal-artifacts/simulation/quint-run.log
 
       - name: Record verification inputs
         if: always()
@@ -143,22 +155,83 @@ jobs:
             printf 'event=%s\n' "$GITHUB_EVENT_NAME"
             printf 'runner_os=%s\n' "$RUNNER_OS"
             printf 'node=' && node --version
-            printf 'java=' && (java -version 2>&1 | head -n 1 || true)
             printf 'quint_package=%s\n' "$QUINT_PACKAGE"
-            printf 'plaintext_retention_hours=100\n'
             sha256sum \
               formal/fm.toml \
               formal/segment_lifecycle.qnt \
               formal/segment_lifecycle_test.qnt \
               formal/retention_journal_model.py \
-              formal/RETENTION_PROCEDURE.md
+              formal/ci/quint_ci.py
           } > .formal-artifacts/provenance.txt
+
+      - name: Say what this run checked
+        if: always()
+        run: |
+          python3 formal/ci/quint_ci.py summary \
+            --manifest "$MANIFEST" --event "$GITHUB_EVENT_NAME" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload traces and provenance
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sonus-auris-segment-lifecycle-formal-artifacts
+          name: sonus-auris-ui-segment-lifecycle-formal-artifacts
+          path: .formal-artifacts
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
+  verification:
+    name: Apalache encrypted segment lifecycle
+    # Skipped on pull requests. A skipped job is neutral, not green.
+    if: github.event_name != 'pull_request'
+    needs: encrypted-segment-lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Install Java for bounded verification
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Invariants must hold
+        run: |
+          mkdir -p .formal-artifacts/verify
+          set -o pipefail
+          steps=$(python3 formal/ci/quint_ci.py field --manifest "$MANIFEST" --key verification.max_steps)
+          failures=0
+          while IFS= read -r invariant; do
+            [ -n "$invariant" ] || continue
+            log=".formal-artifacts/verify/$invariant.log"
+            status=0
+            npx --yes --package="$QUINT_PACKAGE" quint verify \
+              formal/segment_lifecycle.qnt \
+              --main=segment_lifecycle \
+              --max-steps="$steps" \
+              --invariant="$invariant" \
+              --out-itf=".formal-artifacts/verify/$invariant-{seq}.itf.json" \
+              2>&1 | tee "$log" || status=$?
+            python3 formal/ci/quint_ci.py assert-invariant \
+              --name "$invariant" --log "$log" --status "$status" || failures=$((failures + 1))
+          done < <(python3 formal/ci/quint_ci.py list \
+            --manifest "$MANIFEST" --key invariants --require-nonempty)
+          exit "$failures"
+
+      - name: Upload counterexamples and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sonus-auris-ui-segment-lifecycle-verification
           path: .formal-artifacts
           include-hidden-files: true
           if-no-files-found: warn

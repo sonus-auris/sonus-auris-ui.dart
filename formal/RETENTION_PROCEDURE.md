@@ -15,7 +15,7 @@ The rolling-audio client may keep local plaintext for no more than the configure
 | `persist_index` | clear the local path and surface unbacked expiry |
 | `clear_journal` | complete only after artifacts and metadata converge |
 | `recover` | `loadSegments` replays unfinished tombstones idempotently |
-| crash boundary | `RetentionMutationStage` hooks and crash-injection tests |
+| `crash` | discards the in-memory `SegmentIndex`, reloading it from the persisted index; the tombstone and the on-disk deletion survive. Refined by `RetentionMutationStage` hooks and crash-injection tests |
 
 ## Required invariants
 
