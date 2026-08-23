@@ -1,0 +1,193 @@
+name: External Rust device-probe validation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/rust-device-probe-external.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-device-probe-external-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_REPOSITORY: sonus-auris/desktop.app.rs
+  RUST_HEAD_SHA: 0c9065312fbd9f336a88c969e8316634acae44c2
+
+jobs:
+  linux-cli-and-suite:
+    name: Rust CLI contracts and full Linux suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact Rust PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: sonus-auris/desktop.app.rs
+          ref: 0c9065312fbd9f336a88c969e8316634acae44c2
+          path: rust-app
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact immutable source
+        run: |
+          set -euo pipefail
+          actual="$(git -C rust-app rev-parse HEAD)"
+          test "$actual" = "$RUST_HEAD_SHA"
+          test -z "$(git -C rust-app status --porcelain --untracked-files=no)"
+          printf 'validated_repository=%s\nvalidated_sha=%s\n' "$RUST_REPOSITORY" "$actual"
+
+      - name: Install Linux audio and device dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
+
+      - name: Install stable Rust toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Enforce formatting
+        run: cargo fmt --manifest-path rust-app/Cargo.toml -- --check
+
+      - name: Run compiled device-probe CLI contracts without UI features
+        run: |
+          cargo test \
+            --manifest-path rust-app/Cargo.toml \
+            --locked \
+            --no-default-features \
+            --test device_probe_cli \
+            -- --nocapture
+
+      - name: Run full suite without UI features
+        run: cargo test --manifest-path rust-app/Cargo.toml --locked --no-default-features
+
+      - name: Run compiled device-probe CLI contracts with default features
+        run: |
+          cargo test \
+            --manifest-path rust-app/Cargo.toml \
+            --locked \
+            --test device_probe_cli \
+            -- --nocapture
+
+      - name: Run full default-feature suite
+        run: cargo test --manifest-path rust-app/Cargo.toml --locked
+
+      - name: Clippy all targets and features
+        run: |
+          cargo clippy \
+            --manifest-path rust-app/Cargo.toml \
+            --locked \
+            --all-targets \
+            --all-features \
+            -- \
+            -D warnings
+
+  macos-coreaudio:
+    name: Exact-head macOS CoreAudio metadata probe
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      SONUS_DEVICE_LAB_DIR: ${{ runner.temp }}/sonus-rust-coreaudio-evidence
+    steps:
+      - name: Check out exact Rust PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: sonus-auris/desktop.app.rs
+          ref: 0c9065312fbd9f336a88c969e8316634acae44c2
+          path: rust-app
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact immutable source
+        run: |
+          set -euo pipefail
+          actual="$(git -C rust-app rev-parse HEAD)"
+          test "$actual" = "$RUST_HEAD_SHA"
+          test -z "$(git -C rust-app status --porcelain --untracked-files=no)"
+          printf 'validated_repository=%s\nvalidated_sha=%s\n' "$RUST_REPOSITORY" "$actual"
+
+      - name: Install stable Rust toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustc --version
+          cargo --version
+          sw_vers
+
+      - name: Run compiled CLI contract tests on macOS
+        run: |
+          cargo test \
+            --manifest-path rust-app/Cargo.toml \
+            --locked \
+            --test device_probe_cli \
+            -- --nocapture
+
+      - name: Build exact release binaries
+        run: cargo build --manifest-path rust-app/Cargo.toml --release --locked --bins
+
+      - name: Enumerate CoreAudio twice without opening an input stream
+        run: |
+          set -euo pipefail
+          mkdir -p "$SONUS_DEVICE_LAB_DIR"
+          probe=rust-app/target/release/sonus-auris-device-probe
+          "$probe" --require-device > "$SONUS_DEVICE_LAB_DIR/coreaudio.json"
+          "$probe" --require-device > "$SONUS_DEVICE_LAB_DIR/coreaudio-repeat.json"
+          cmp "$SONUS_DEVICE_LAB_DIR/coreaudio.json" "$SONUS_DEVICE_LAB_DIR/coreaudio-repeat.json"
+          python3 - "$SONUS_DEVICE_LAB_DIR/coreaudio.json" "$RUST_HEAD_SHA" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert payload["schema"] == "sonus-auris-device-probe/v1"
+          assert payload["recording_requested"] is False
+          assert payload["recording"] is None
+          assert payload["device_count"] >= 1
+          assert len(payload["devices"]) == payload["device_count"]
+          for row in payload["devices"]:
+              assert set(row) == {"fingerprint"}
+              fingerprint = row["fingerprint"]
+              assert len(fingerprint) == 12
+              assert all(character in "0123456789abcdef" for character in fingerprint)
+          Path(sys.argv[1]).with_name("source.txt").write_text(
+              "repository=sonus-auris/desktop.app.rs\n"
+              f"commit={sys.argv[2]}\n"
+              "recording_requested=false\n"
+              "raw_device_names_retained=false\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Apply Rust evidence policy
+        id: evidence_policy
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 rust-app/scripts/device-lab/evidence-policy.py \
+            --redact "$SONUS_DEVICE_LAB_DIR"
+
+      - name: Audit retained Rust artifact
+        if: ${{ always() && steps.evidence_policy.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          python3 rust-app/scripts/device-lab/artifact-audit.py \
+            "$SONUS_DEVICE_LAB_DIR" \
+            --max-total-bytes 2097152 \
+            | tee "$SONUS_DEVICE_LAB_DIR/audit.json"
+
+      - name: Upload sanitized exact-head CoreAudio evidence
+        if: ${{ always() && steps.evidence_policy.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonus-rust-coreaudio-exact-head-0c906531
+          path: ${{ runner.temp }}/sonus-rust-coreaudio-evidence
+          if-no-files-found: error
+          retention-days: 7

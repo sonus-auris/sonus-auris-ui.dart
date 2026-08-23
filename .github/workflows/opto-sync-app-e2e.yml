@@ -1,0 +1,68 @@
+name: Flutter mobile app contract
+
+on:
+  pull_request:
+    paths:
+      - 'lib/**'
+      - 'test/**'
+      - 'packages/**'
+      - 'pubspec.yaml'
+      - 'android/**'
+      - '.github/workflows/opto-sync-app-e2e.yml'
+  workflow_dispatch:
+    inputs:
+      wrapper_contract:
+        description: Validate the exact private Sonus sync wrapper boundary
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          cache: false
+      - run: flutter pub get
+      - run: flutter test --reporter expanded test/opto_sync_app_e2e_test.dart
+      - name: Compile the real Android application
+        run: flutter build apk --debug
+      - name: Reject empty Android artifacts
+        run: test -s build/app/outputs/flutter-apk/app-debug.apk
+
+  wrapper-contract:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.wrapper_contract }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SYNC_FLEET_TOKEN: ${{ secrets.SYNC_FLEET_TOKEN }}
+    steps:
+      - name: Require private wrapper credentials
+        run: test -n "$SYNC_FLEET_TOKEN"
+      - name: Checkout exact Sonus sync wrapper under review
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: sonus-auris/sonus-auris-sync
+          ref: 38b2e19b7c72ffcac2b27491b2f75d3d3d10b7c5
+          path: .sync-wrapper
+          token: ${{ secrets.SYNC_FLEET_TOKEN }}
+          persist-credentials: false
+      - name: Verify metadata-only wrapper boundary
+        run: |
+          test -f .sync-wrapper/opto-sync-adapter.json
+          grep -F 'opto-sync/opto-sync-clients' .sync-wrapper/.zpkg.toml
+          grep -F 'raw audio' .sync-wrapper/opto-sync-adapter.json
+          grep -F 'downstream-wrapper-reusable.yml@dcf5ee5d15e4ed6aeb24952b296947b4ffb39e88' .sync-wrapper/.github/workflows/opto-sync-wrapper-resilience.yml

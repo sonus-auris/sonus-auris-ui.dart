@@ -6,7 +6,10 @@ on:
       - "lib/src/pagelets/**"
       - "test/pagelet_*"
       - "test/fixtures/pagelets/**"
+      - "test/scripts/**"
       - "scripts/pagelet_conformance_report.py"
+      - "scripts/pagelet_interface_lock.py"
+      - "docs/pagelets.md"
       - ".github/workflows/pagelet-conformance.yml"
   workflow_dispatch:
 
@@ -20,17 +23,122 @@ concurrency:
 jobs:
   flutter-pagelet-report:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Checkout Flutter host without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Run dependency-free lock and report-policy tests
+        run: |
+          python3 -m compileall -q scripts test/scripts
+          python3 -m unittest discover -s test/scripts -p '*_test.py' -v
+
+      - name: Resolve the immutable interface dependency
+        id: interface-lock
+        run: >-
+          python3 scripts/pagelet_interface_lock.py
+          --lock test/fixtures/pagelets/interface-contract.lock.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Require least-privilege cross-repository App credentials
+        shell: bash
+        env:
+          APP_ID: ${{ vars.SONUS_CROSS_REPO_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.SONUS_CROSS_REPO_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${APP_ID:-}" ]] || missing+=(SONUS_CROSS_REPO_APP_ID)
+          [[ -n "${APP_PRIVATE_KEY:-}" ]] || missing+=(SONUS_CROSS_REPO_APP_PRIVATE_KEY)
+          if ((${#missing[@]} > 0)); then
+            printf 'Immutable interface checkout requires the Sonus cross-repository GitHub App; missing:' >&2
+            printf ' %s' "${missing[@]}" >&2
+            printf '\n' >&2
+            exit 1
+          fi
+
+      - name: Create a read-only token for the interfaces repository
+        id: interface-app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.SONUS_CROSS_REPO_APP_ID }}
+          private-key: ${{ secrets.SONUS_CROSS_REPO_APP_PRIVATE_KEY }}
+          owner: sonus-auris
+          repositories: sonus-auris-interfaces
+          permission-contents: read
+
+      - name: Checkout the exact interface commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ steps.interface-lock.outputs.repository }}
+          ref: ${{ steps.interface-lock.outputs.commit }}
+          path: .interface-contract
+          token: ${{ steps.interface-app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Prove the interface checkout did not move
+        shell: bash
+        env:
+          EXPECTED_INTERFACE_SHA: ${{ steps.interface-lock.outputs.commit }}
+        run: |
+          set -euo pipefail
+          actual="$(git -C .interface-contract rev-parse HEAD)"
+          test "$actual" = "$EXPECTED_INTERFACE_SHA"
+          test -z "$(git -C .interface-contract status --porcelain)"
+          echo "Locked interface commit: $actual"
+
+      - name: Setup Node for canonical interface tooling
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: .interface-contract/package-lock.json
+
+      - name: Install and validate the locked interface repository
+        working-directory: .interface-contract
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+          npm run test:pagelets
+          npm run test:release
+
+      - name: Seal the exact locked interface bundle
+        working-directory: .interface-contract
+        shell: bash
+        env:
+          LOCKED_INTERFACE_REPOSITORY: ${{ steps.interface-lock.outputs.repository }}
+          LOCKED_INTERFACE_SHA: ${{ steps.interface-lock.outputs.commit }}
+          SOURCE_DATE_EPOCH: "0"
+        run: |
+          set -euo pipefail
+          GITHUB_REPOSITORY="$LOCKED_INTERFACE_REPOSITORY" \
+          GITHUB_SHA="$LOCKED_INTERFACE_SHA" \
+          GITHUB_REF_NAME=locked-interface \
+            npm run bundle:seal
+
+      - name: Reject drift in copied canonical pagelet fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          while read -r local_path canonical_path; do
+            cmp "$local_path" ".interface-contract/$canonical_path"
+          done <<'FIXTURES'
+          test/fixtures/pagelets/conformance-scenarios.json pagelets/v1/conformance-scenarios.json
+          test/fixtures/pagelets/device-summary.json pagelets/v1/examples/device-summary.json
+          test/fixtures/pagelets/device-summary-rename.json pagelets/v1/examples/device-summary-rename.json
+          test/fixtures/pagelets/device-summary-envelope.json pagelets/v1/examples/device-summary-envelope.json
+          FIXTURES
+
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
         with:
           flutter-version: "3.44.2"
           channel: stable
           cache: true
+
       - run: flutter pub get
+
       - name: Run focused native pagelet tests
         run: >-
           flutter test
@@ -38,16 +146,54 @@ jobs:
           test/pagelet_protocol_test.dart
           test/pagelet_action_dispatcher_test.dart
           test/pagelet_conformance_negative_test.dart
-      - name: Generate honest coverage report
+
+      - name: Derive exact interface and Flutter host provenance
+        shell: bash
+        env:
+          HOST_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/pagelet-conformance
+          node .interface-contract/scripts/pagelets/create-conformance-provenance.mjs \
+            --bundle .interface-contract/artifacts/interface-bundle/stage/INTERFACE-BUNDLE.json \
+            --schema .interface-contract/pagelets/v1/conformance-report.schema.json \
+            --scenarios .interface-contract/pagelets/v1/conformance-scenarios.json \
+            --host-repository sonus-auris/sonus-auris-ui.dart \
+            --host-commit "$GITHUB_SHA" \
+            --run-url "$HOST_RUN_URL" \
+            --out build/pagelet-conformance/provenance.json
+
+      - name: Generate provenance-bound Flutter coverage report
         run: |
           python3 scripts/pagelet_conformance_report.py \
             --host flutter \
-            --scenarios test/fixtures/pagelets/conformance-scenarios.json \
+            --scenarios .interface-contract/pagelets/v1/conformance-scenarios.json \
             --coverage test/fixtures/pagelets/conformance-coverage.json \
+            --provenance build/pagelet-conformance/provenance.json \
+            --report-schema .interface-contract/pagelets/v1/conformance-report.schema.json \
             --output build/pagelet-conformance/flutter-report.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+
+      - name: Certify the report against the sealed interface and exact Flutter head
+        run: |
+          node .interface-contract/scripts/pagelets/verify-conformance-report.mjs \
+            --report build/pagelet-conformance/flutter-report.json \
+            --bundle .interface-contract/artifacts/interface-bundle/stage/INTERFACE-BUNDLE.json \
+            --schema .interface-contract/pagelets/v1/conformance-report.schema.json \
+            --scenarios .interface-contract/pagelets/v1/conformance-scenarios.json \
+            --expected-host-repository sonus-auris/sonus-auris-ui.dart \
+            --expected-host-commit "$GITHUB_SHA" \
+            --evidence build/pagelet-conformance/verification.json
+
+      - name: Retain report, certification, and exact interface identities
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: flutter-pagelet-conformance
-          path: build/pagelet-conformance/flutter-report.json
+          name: flutter-pagelet-conformance-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            test/fixtures/pagelets/interface-contract.lock.json
+            build/pagelet-conformance/
+            .interface-contract/artifacts/interface-bundle/stage/INTERFACE-BUNDLE.json
+            .interface-contract/artifacts/interface-bundle/stage/INTERFACE-PAYLOAD.sha256
+            .interface-contract/artifacts/interface-bundle/evidence/bundle-evidence.json
           if-no-files-found: error
-          retention-days: 14
+          include-hidden-files: true
+          retention-days: 30

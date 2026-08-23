@@ -1,3 +1,9 @@
+> [!IMPORTANT]
+> **Deprecated.** This Flutter recorder and its Git history have moved to
+> [sonus-auris-flutter.dart](https://github.com/sonus-auris/sonus-auris-flutter.dart).
+> Do not open new work or releases from this repository. Use the canonical
+> Flutter repository for mobile, desktop, and recorder development.
+
 # Audio Dashcam
 
 Flutter Android/iOS app for continuous rolling audio capture. It keeps one microphone stream open, writes short overlapped `.wav` segments, keeps the most recent local window on-device, and uploads segments through either the sound-recorder backend or a direct S3-compatible fallback.
@@ -244,6 +250,18 @@ app itself requests it:
 ```sh
 scripts/e2e/local-supabase-auth.mjs
 ```
+
+To prove the same local Auth and RLS path through a real HTTPS reverse proxy or
+Cloudflare Tunnel, override only the public API origin; Mailpit and the public
+client key still come from the local stack:
+
+```sh
+SONUS_E2E_SUPABASE_URL=https://your-tunnel.example \
+  scripts/e2e/local-supabase-auth.mjs
+```
+
+Set `SONUS_E2E_DEVICE=emulator-5554` (or another Flutter device ID) to run the
+rendered leg on that emulator or device.
 
 Run on a configured device:
 
