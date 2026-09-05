@@ -55,6 +55,7 @@ jobs:
       SONUS_SUPABASE_ANON_KEY: ${{ secrets.SONUS_SUPABASE_ANON_KEY }}
       SONUS_BUILD_NAME: ${{ inputs.build_name }}
       SONUS_BUILD_NUMBER: ${{ inputs.build_number != '' && inputs.build_number || github.run_number }}
+      SONUS_ANDROID_APPLICATION_ID: com.ores.sonus_auris
       KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
       STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
       KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
@@ -63,6 +64,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+
+      - name: Verify Android package identity contract
+        run: >-
+          python3 scripts/release/check_android_package_contract.py
+          --expected "$SONUS_ANDROID_APPLICATION_ID"
 
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
@@ -121,6 +127,12 @@ jobs:
       - name: Build signed Play App Bundle
         run: scripts/release/android-build-aab.sh
 
+      - name: Verify exact AAB package and upload signer
+        run: >-
+          bash scripts/release/verify-android-publication.sh
+          "$SONUS_ANDROID_APPLICATION_ID"
+          build/app/outputs/bundle/release/app-release.aab
+
       - name: Build and verify signed direct-install APK
         run: bash scripts/release/android-build-apk.sh
 
@@ -128,7 +140,7 @@ jobs:
         run: >-
           python3 scripts/release/publish_google_play.py
           --dry-run
-          --package-name com.ores.audio_dashcam
+          --package-name "$SONUS_ANDROID_APPLICATION_ID"
           --aab build/app/outputs/bundle/release/app-release.aab
           --track '${{ inputs.play_track }}'
           --status '${{ inputs.play_status }}'
@@ -179,7 +191,7 @@ jobs:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: >-
           python3 scripts/release/publish_google_play.py
-          --package-name com.ores.audio_dashcam
+          --package-name "$SONUS_ANDROID_APPLICATION_ID"
           --aab build/app/outputs/bundle/release/app-release.aab
           --track '${{ inputs.play_track }}'
           --status '${{ inputs.play_status }}'
