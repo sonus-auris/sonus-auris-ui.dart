@@ -22,6 +22,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verify Android package identity contract
+        run: >-
+          python3 scripts/release/check_android_package_contract.py
+          --expected com.ores.sonus_auris
+
       - name: Verify desktop build configuration contract
         run: bash tests/ci/desktop-build-config.test.sh
 
