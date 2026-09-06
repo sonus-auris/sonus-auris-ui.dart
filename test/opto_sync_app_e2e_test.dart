@@ -43,7 +43,10 @@ void main() {
     expect(find.byType(LoadingPage), findsOneWidget);
     expect(find.byType(ErrorPage), findsNothing);
 
-    await tester.pump();
+    // AudioDashcamRoot intentionally starts plugin-backed services from a
+    // post-frame zero-delay timer. Advance fake time so the timer fires and
+    // the resulting error frame is rendered deterministically.
+    await tester.pump(const Duration(milliseconds: 1));
     expect(find.byType(ErrorPage), findsOneWidget);
     expect(find.textContaining('sync bootstrap failed'), findsOneWidget);
     expect(find.byType(SelectableText), findsOneWidget);

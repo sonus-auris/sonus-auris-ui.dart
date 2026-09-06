@@ -30,6 +30,11 @@ else soft "no upload keystore/key.properties — store bundle is blocked (run an
 
 echo "== Android policy contract =="
 grep -q 'targetSdk = 36' android/app/build.gradle.kts && ok "targets Android API 36" || bad "targetSdk 36 is required for the 2026 Play deadline"
+if python3 scripts/release/check_android_package_contract.py --expected com.ores.sonus_auris; then
+  ok "Gradle and Play publication use com.ores.sonus_auris"
+else
+  bad "Android package identity diverges between Gradle and the release workflow"
+fi
 if grep -qE 'android.permission.(USE_EXACT_ALARM|USE_FULL_SCREEN_INTENT)' android/app/src/main/AndroidManifest.xml; then
   bad "restricted/unused exact-alarm or full-screen-intent permission is present"
 else
