@@ -1,0 +1,70 @@
+name: Mobile legal bundle canary
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  source-and-widget:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: node --test scripts/legal/bundle.test.mjs
+      - run: node scripts/legal/verify-source.mjs
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: 3.44.3
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos lib/src/legal lib/main_legal_review.dart test/legal_review_bundle_test.dart
+      - run: flutter test test/legal_review_bundle_test.dart
+  android-bundle:
+    needs: source-and-widget
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: 3.44.3
+          cache: true
+      - run: flutter pub get
+      - name: Build ordinary app debug APK without release credentials
+        run: flutter build apk --debug
+      - name: Verify actual APK contains exact external legal bytes
+        run: node scripts/legal/verify-artifact.mjs
+        env:
+          SONUS_LEGAL_ARTIFACT: build/app/outputs/flutter-apk/app-debug.apk
+  ios-bundle:
+    needs: source-and-widget
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: 3.44.3
+          cache: true
+      - run: flutter pub get
+      - name: Build ordinary app for iOS simulator without signing
+        run: flutter build ios --simulator --debug --no-codesign
+      - name: Verify actual simulator application legal bytes
+        run: node scripts/legal/verify-artifact.mjs
+        env:
+          SONUS_LEGAL_ARTIFACT: build/ios/iphonesimulator/Runner.app
