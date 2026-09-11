@@ -40,6 +40,9 @@ if [[ -n "${SONUS_BUILD_NUMBER:-}" ]]; then
   build_args+=(--build-number="$SONUS_BUILD_NUMBER")
 fi
 
+# Review assets may compile unsigned; they must not enter signed distributions.
+node scripts/legal/require-production.mjs
+
 echo "Flutter: $(flutter --version | head -1)"
 flutter pub get
 
