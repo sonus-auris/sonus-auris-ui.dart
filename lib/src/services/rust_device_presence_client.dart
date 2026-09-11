@@ -5,12 +5,41 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:rxdart/rxdart.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/app_config.dart';
 import '../models/cloud_secrets.dart';
+import 'rust_presence_lifecycle.dart';
 
-typedef RustPresenceWebSocketFactory = WebSocketChannel Function(Uri uri);
+typedef RustPresenceWebSocketFactory = RustPresenceChannel Function(Uri uri);
+
+abstract interface class RustPresenceChannel {
+  Future<void> get ready;
+  Stream<dynamic> get stream;
+  void add(Object data);
+  Future<void> close();
+}
+
+final class _WebSocketPresenceChannel implements RustPresenceChannel {
+  _WebSocketPresenceChannel(this._delegate);
+
+  final WebSocketChannel _delegate;
+
+  @override
+  Future<void> get ready => _delegate.ready;
+
+  @override
+  Stream<dynamic> get stream => _delegate.stream;
+
+  @override
+  void add(Object data) => _delegate.sink.add(data);
+
+  @override
+  Future<void> close() async {
+    await _delegate.sink.close();
+  }
+}
 
 class RustPresenceSnapshot {
   const RustPresenceSnapshot({
@@ -26,39 +55,61 @@ Set<String> rustOnlineDeviceIds(Object? payload) {
   if (payload is! Map || payload['onlineDeviceIds'] is! List) {
     return const <String>{};
   }
-  return {
-    for (final id in payload['onlineDeviceIds'] as List)
-      if (id is String && id.trim().isNotEmpty) id.trim(),
-  };
+  final result = <String>{};
+  for (final value in (payload['onlineDeviceIds'] as List).take(256)) {
+    if (value is! String) continue;
+    final id = value.trim();
+    if (id.isEmpty || id.length > 128) continue;
+    result.add(id);
+  }
+  return result;
 }
 
 class RustDevicePresenceClient {
-  RustDevicePresenceClient({RustPresenceWebSocketFactory? channelFactory})
-    : _channelFactory = channelFactory ?? WebSocketChannel.connect;
+  RustDevicePresenceClient({
+    RustPresenceWebSocketFactory? channelFactory,
+    this.transitionObserver,
+  }) : _channelFactory =
+           channelFactory ??
+           ((uri) => _WebSocketPresenceChannel(WebSocketChannel.connect(uri)));
 
   static const _heartbeatInterval = Duration(seconds: 25);
-  static const _maxReconnectDelay = Duration(minutes: 1);
+  static const _maxFrameCharacters = 64 * 1024;
 
   final RustPresenceWebSocketFactory _channelFactory;
-  final StreamController<RustPresenceSnapshot> _snapshots =
-      StreamController<RustPresenceSnapshot>.broadcast();
+  final RustPresenceTransitionObserver? transitionObserver;
+  final BehaviorSubject<RustPresenceSnapshot> _snapshots =
+      BehaviorSubject<RustPresenceSnapshot>.seeded(
+        const RustPresenceSnapshot(),
+      );
 
-  WebSocketChannel? _channel;
+  RustPresenceChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
   Timer? _heartbeatTimer;
   Timer? _reconnectTimer;
   AppConfig? _config;
   String _deviceToken = '';
-  int _reconnectAttempt = 0;
-  bool _connected = false;
-  bool _closed = false;
+  RustPresenceLifecycle _lifecycle = const RustPresenceLifecycle();
 
-  Stream<RustPresenceSnapshot> get snapshots => _snapshots.stream;
+  ValueStream<RustPresenceSnapshot> get snapshots => _snapshots.stream;
+  RustPresenceLifecycle get lifecycle => _lifecycle;
 
   static Uri presenceUri(AppConfig config) {
-    final base = Uri.parse(config.backendBaseUrl.trim());
-    final loopback = base.host == 'localhost' || base.host == '127.0.0.1';
+    final rawBase = config.backendBaseUrl.trim();
+    final base = Uri.parse(rawBase);
+    final hasDotSegment = RegExp(
+      r'/(?:\.|%2e)(?:\.|%2e)?(?:/|$)',
+      caseSensitive: false,
+    ).hasMatch(rawBase);
+    final loopback =
+        base.host == 'localhost' ||
+        base.host == '127.0.0.1' ||
+        base.host == '::1';
     if (base.host.isEmpty ||
+        base.userInfo.isNotEmpty ||
+        base.hasQuery ||
+        base.hasFragment ||
+        hasDotSegment ||
         (base.scheme != 'https' && !(loopback && base.scheme == 'http'))) {
       throw const FormatException(
         'Backend presence requires HTTPS except loopback development.',
@@ -90,14 +141,17 @@ class RustDevicePresenceClient {
         _deviceToken != token;
     _config = config;
     _deviceToken = token;
-    _closed = false;
-    if (changed) _closeChannel();
-    if (_channel == null) _open();
+    if (changed ||
+        _lifecycle.phase == RustPresencePhase.idle ||
+        _lifecycle.phase == RustPresencePhase.closed ||
+        _lifecycle.phase == RustPresencePhase.retryExhausted) {
+      _dispatch(RustPresenceInput.configure);
+    }
   }
 
   void close() {
-    _closed = true;
-    _closeChannel();
+    _dispatch(RustPresenceInput.close);
+    _emit(const <String>{});
   }
 
   Future<void> dispose() async {
@@ -105,46 +159,117 @@ class RustDevicePresenceClient {
     await _snapshots.close();
   }
 
-  void _open() {
+  void _dispatch(RustPresenceInput input, {int? eventGeneration}) {
+    final previousState = _lifecycle;
+    final transition = previousState.advance(
+      input,
+      eventGeneration: eventGeneration,
+    );
+    _lifecycle = transition.state;
+    if (!transition.isStutter) {
+      try {
+        transitionObserver?.call(previousState, input, transition);
+      } catch (_) {
+        // Observability must never affect presence or audio recording.
+      }
+    }
+    for (final effect in transition.effects) {
+      _perform(effect);
+    }
+  }
+
+  void _perform(RustPresenceEffect effect) {
+    switch (effect) {
+      case RustPresenceEffect.closeTransport:
+        _closeTransport();
+      case RustPresenceEffect.openTransport:
+        _openTransport();
+      case RustPresenceEffect.sendAuthentication:
+        _sendAuthentication();
+      case RustPresenceEffect.startHeartbeat:
+        _startHeartbeat();
+      case RustPresenceEffect.sendHeartbeat:
+        _sendHeartbeat();
+      case RustPresenceEffect.scheduleReconnect:
+        _scheduleReconnect();
+    }
+  }
+
+  void _openTransport() {
     final config = _config;
-    if (_closed || config == null || _deviceToken.isEmpty) return;
+    if (_lifecycle.phase != RustPresencePhase.connecting ||
+        config == null ||
+        _deviceToken.isEmpty) {
+      return;
+    }
+    final generation = _lifecycle.generation;
     _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     try {
       final channel = _channelFactory(presenceUri(config));
       _channel = channel;
       _subscription = channel.stream.listen(
-        _handleMessage,
-        onError: (_, _) => _handleDisconnect(),
-        onDone: _handleDisconnect,
+        (raw) => _handleMessage(generation, channel, raw),
+        onError: (_, _) => _handleTransportFailure(generation, channel),
+        onDone: () => _handleTransportFailure(generation, channel),
         cancelOnError: true,
       );
       unawaited(
         channel.ready.then<void>((_) {
-          if (_channel != channel || _closed) return;
-          channel.sink.add(
-            jsonEncode({'type': 'authenticate', 'deviceToken': _deviceToken}),
+          if (!_owns(generation, channel)) return;
+          _dispatch(
+            RustPresenceInput.transportReady,
+            eventGeneration: generation,
           );
-        }, onError: (_, _) => _handleDisconnect()),
+        }, onError: (_, _) => _handleTransportFailure(generation, channel)),
       );
     } catch (_) {
-      _handleDisconnect();
+      _dispatch(RustPresenceInput.transportFailed, eventGeneration: generation);
     }
   }
 
-  void _handleMessage(dynamic raw) {
-    if (raw is! String) return;
+  void _sendAuthentication() {
+    final channel = _channel;
+    final generation = _lifecycle.generation;
+    if (channel == null ||
+        _lifecycle.phase != RustPresencePhase.authenticating) {
+      return;
+    }
+    try {
+      channel.add(
+        jsonEncode({'type': 'authenticate', 'deviceToken': _deviceToken}),
+      );
+    } catch (_) {
+      _handleTransportFailure(generation, channel);
+    }
+  }
+
+  void _handleMessage(
+    int generation,
+    RustPresenceChannel channel,
+    dynamic raw,
+  ) {
+    if (!_owns(generation, channel) ||
+        raw is! String ||
+        raw.length > _maxFrameCharacters) {
+      return;
+    }
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return;
       final type = decoded['type']?.toString();
       if (type == 'ready') {
-        _connected = true;
-        _reconnectAttempt = 0;
-        _startHeartbeat();
-        _emit(const <String>{});
-      } else if (type == 'presence') {
-        _connected = true;
+        final wasAuthenticating =
+            _lifecycle.phase == RustPresencePhase.authenticating;
+        _dispatch(RustPresenceInput.authenticated, eventGeneration: generation);
+        if (wasAuthenticating && _lifecycle.acceptsPresence) {
+          _emit(const <String>{});
+        }
+      } else if (type == 'presence' && _lifecycle.acceptsPresence) {
+        _dispatch(RustPresenceInput.presenceFrame, eventGeneration: generation);
         _emit(rustOnlineDeviceIds(decoded));
+      } else if (type == 'error') {
+        _handleTransportFailure(generation, channel);
       }
     } catch (_) {
       // The fallback channel must never affect recording.
@@ -153,48 +278,69 @@ class RustDevicePresenceClient {
 
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
+    final generation = _lifecycle.generation;
     _heartbeatTimer = Timer.periodic(_heartbeatInterval, (_) {
-      try {
-        _channel?.sink.add(jsonEncode(const {'type': 'heartbeat'}));
-      } catch (_) {
-        _handleDisconnect();
-      }
+      _dispatch(RustPresenceInput.heartbeatTimer, eventGeneration: generation);
     });
+  }
+
+  void _sendHeartbeat() {
+    final channel = _channel;
+    final generation = _lifecycle.generation;
+    if (channel == null || !_owns(generation, channel)) return;
+    try {
+      channel.add(jsonEncode(const {'type': 'heartbeat'}));
+    } catch (_) {
+      _handleTransportFailure(generation, channel);
+    }
   }
 
   void _emit(Set<String> onlineDeviceIds) {
     if (_snapshots.isClosed) return;
     _snapshots.add(
       RustPresenceSnapshot(
-        connected: _connected,
+        connected: _lifecycle.acceptsPresence,
         onlineDeviceIds: Set<String>.unmodifiable(onlineDeviceIds),
       ),
     );
   }
 
-  void _handleDisconnect() {
-    _closeChannel();
-    if (_closed || _config == null) return;
-    final exponent = _reconnectAttempt.clamp(0, 6).toInt();
-    final seconds = 1 << exponent;
-    _reconnectAttempt += 1;
-    final delay = seconds >= _maxReconnectDelay.inSeconds
-        ? _maxReconnectDelay
-        : Duration(seconds: seconds);
-    _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(delay, _open);
+  bool _owns(int generation, RustPresenceChannel channel) =>
+      generation == _lifecycle.generation && identical(_channel, channel);
+
+  void _handleTransportFailure(int generation, RustPresenceChannel channel) {
+    if (!_owns(generation, channel)) return;
+    _dispatch(RustPresenceInput.transportFailed, eventGeneration: generation);
+    _emit(const <String>{});
   }
 
-  void _closeChannel() {
-    _connected = false;
+  void _scheduleReconnect() {
+    if (_lifecycle.phase != RustPresencePhase.waitingToRetry ||
+        _config == null) {
+      return;
+    }
+    final generation = _lifecycle.generation;
+    final delay = _lifecycle.reconnectDelay;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(delay, () {
+      _dispatch(RustPresenceInput.retryTimer, eventGeneration: generation);
+    });
+  }
+
+  void _closeTransport() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
-    _subscription?.cancel();
+    final subscription = _subscription;
     _subscription = null;
-    _channel?.sink.close();
+    final channel = _channel;
     _channel = null;
-    _emit(const <String>{});
+    if (subscription != null) {
+      unawaited(subscription.cancel().catchError((Object _) {}));
+    }
+    if (channel != null) {
+      unawaited(channel.close().catchError((Object _) {}));
+    }
   }
 }

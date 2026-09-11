@@ -10,6 +10,8 @@ on:
       - 'lib/src/services/segment_index.dart'
       - 'lib/src/services/s3_storage_client.dart'
       - 'lib/src/services/sound_recorder_backend_client.dart'
+      - 'lib/src/services/rust_device_presence_client.dart'
+      - 'lib/src/services/rust_presence_lifecycle.dart'
       - 'lib/src/retention/local_retention_policy.dart'
   push:
     branches: [main]
@@ -21,6 +23,8 @@ on:
       - 'lib/src/services/segment_index.dart'
       - 'lib/src/services/s3_storage_client.dart'
       - 'lib/src/services/sound_recorder_backend_client.dart'
+      - 'lib/src/services/rust_device_presence_client.dart'
+      - 'lib/src/services/rust_presence_lifecycle.dart'
       - 'lib/src/retention/local_retention_policy.dart'
   schedule:
     - cron: '41 6 * * 2'
@@ -160,6 +164,87 @@ jobs:
         with:
           name: sonus-auris-segment-lifecycle-formal-artifacts
           path: .formal-artifacts
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
+  rust-presence-lifecycle:
+    name: Quint Rust presence lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Typecheck presence model
+        run: |
+          mkdir -p .formal-presence-artifacts/typecheck
+          set -o pipefail
+          status=0
+          npx --yes --package="$QUINT_PACKAGE" quint typecheck formal/rust_presence_lifecycle.qnt \
+            2>&1 | tee .formal-presence-artifacts/typecheck/lifecycle.log || status=$?
+          npx --yes --package="$QUINT_PACKAGE" quint typecheck formal/rust_presence_lifecycle_test.qnt \
+            2>&1 | tee .formal-presence-artifacts/typecheck/lifecycle-test.log || status=$?
+          exit "$status"
+
+      - name: Run deterministic presence traces
+        run: |
+          mkdir -p .formal-presence-artifacts/tests
+          set -o pipefail
+          npx --yes --package="$QUINT_PACKAGE" quint test \
+            formal/rust_presence_lifecycle_test.qnt \
+            --main=rust_presence_lifecycle_test \
+            --match='.*Test$' \
+            --out-itf='.formal-presence-artifacts/tests/{test}-{seq}.itf.json' \
+            2>&1 | tee .formal-presence-artifacts/tests/quint-test.log
+
+      - name: Simulate presence invariants
+        run: |
+          mkdir -p .formal-presence-artifacts/simulation
+          set -o pipefail
+          npx --yes --package="$QUINT_PACKAGE" quint run \
+            formal/rust_presence_lifecycle.qnt \
+            --main=rust_presence_lifecycle \
+            --max-samples=10000 \
+            --max-steps=24 \
+            --invariant=lifecycle_safety \
+            --witnesses \
+              authenticated_connection_reached \
+              retry_wait_reached \
+              terminal_close_reached \
+            2>&1 | tee .formal-presence-artifacts/simulation/quint-run.log
+
+      - name: Record presence verification inputs
+        if: always()
+        run: |
+          mkdir -p .formal-presence-artifacts
+          {
+            printf 'commit=%s\n' "$GITHUB_SHA"
+            printf 'event=%s\n' "$GITHUB_EVENT_NAME"
+            printf 'runner_os=%s\n' "$RUNNER_OS"
+            printf 'node=' && node --version
+            printf 'quint_package=%s\n' "$QUINT_PACKAGE"
+            printf 'production_retry_attempts=7\n'
+            sha256sum \
+              formal/rust_presence_lifecycle.qnt \
+              formal/rust_presence_lifecycle_test.qnt \
+              lib/src/services/rust_presence_lifecycle.dart \
+              lib/src/services/rust_device_presence_client.dart
+          } > .formal-presence-artifacts/provenance.txt
+
+      - name: Upload presence traces and provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sonus-auris-rust-presence-lifecycle-formal-artifacts
+          path: .formal-presence-artifacts
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14

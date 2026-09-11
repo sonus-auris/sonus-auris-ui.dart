@@ -67,6 +67,39 @@ sidecar partial failure and retry, restart-visible upload retry, stale-result
 suppression, free-space deletion, deadline deletion, and crashes at two journal
 stages.
 
+## Rust presence lifecycle model
+
+`rust_presence_lifecycle.qnt` models the Flutter client's secondary Rust API
+WebSocket as an explicit generation-scoped state machine. It corresponds to
+`lib/src/services/rust_presence_lifecycle.dart` and the transport owner in
+`lib/src/services/rust_device_presence_client.dart`.
+
+Together with the pure Dart transition tests, the aggregate `lifecycle_safety`
+invariant and eight named traces check that:
+
+1. readiness, messages, failures, heartbeats, and retry timers from a stale or
+   missing generation stutter;
+2. authentication and heartbeat effects occur only in their named phases;
+3. a failure invalidates the active generation before transport teardown can
+   produce another callback;
+4. retry delay is capped in Dart and the retry budget is exactly seven attempts
+   in both Dart and Quint;
+5. exhausted and closed states cannot reopen from a timer or transport event;
+   only explicit configuration starts a new generation; and
+6. connected presence cannot be accepted before authentication.
+
+The production tests use `fake_async` to advance every backoff interval without
+wall-clock sleeps and prove that retry exhaustion and close leave zero timers.
+The snapshot surface uses RxDart `BehaviorSubject` only for the useful bounded
+semantic it provides: a late subscriber receives one current state containing
+at most 256 normalized identifiers. Lifecycle instrumentation is payload-free
+and observer failures cannot affect the connection or recording.
+
+This model covers the platform-specific Flutter fallback named in DEN-3888. It
+does not claim that the desktop Rust application has an equivalent fallback;
+the Rust API/server presence transports remain separate DEN-3888 work and are
+linked from that issue.
+
 ## Exact bounds and claim strength
 
 This is a finite design model, not yet a proof that every Dart execution refines
@@ -122,6 +155,23 @@ npx --yes --package="$QUINT_PACKAGE" quint run \
     retry_generation_reached \
     retention_tombstone_reached \
     unbacked_retention_failure_reached
+
+npx --yes --package="$QUINT_PACKAGE" quint typecheck formal/rust_presence_lifecycle.qnt
+npx --yes --package="$QUINT_PACKAGE" quint typecheck formal/rust_presence_lifecycle_test.qnt
+npx --yes --package="$QUINT_PACKAGE" quint test \
+  formal/rust_presence_lifecycle_test.qnt \
+  --main=rust_presence_lifecycle_test \
+  --match='.*Test$'
+npx --yes --package="$QUINT_PACKAGE" quint run \
+  formal/rust_presence_lifecycle.qnt \
+  --main=rust_presence_lifecycle \
+  --max-samples=10000 \
+  --max-steps=24 \
+  --invariant=lifecycle_safety \
+  --witnesses \
+    authenticated_connection_reached \
+    retry_wait_reached \
+    terminal_close_reached
 ```
 
 Java 17 or newer is required for bounded `quint verify`.
