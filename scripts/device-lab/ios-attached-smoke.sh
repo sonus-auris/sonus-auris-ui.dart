@@ -121,7 +121,7 @@ shared_evidence_policy=true
 SCOPE
 
 run_launch_cycle() {
-  local cycle="${1:?cycle is required}" label
+  local cycle="${1:?cycle is required}" label status
   if [[ "$cycle" == "1" ]]; then
     label="first-launch"
   else
@@ -147,6 +147,12 @@ run_launch_cycle() {
         --dart-define=SONUS_SUPABASE_URL=https://ci.supabase.co \
         --dart-define=SONUS_SUPABASE_ANON_KEY=sb_publishable_physical_device_lab
   )
+  status=$?
+  set -e
+  if (( status != 0 )); then
+    echo "$label failed: controller=$status" >&2
+    return "$status"
+  fi
 }
 
 completed=0
@@ -168,6 +174,8 @@ retained_log_max_bytes=524288
 launch_cycles_completed=$completed
 chunked_log_drain=true
 readiness_hold_completed=true
+terminal_output_drained=true
+fatal_runtime_markers_checked=true
 shared_evidence_policy=true
 RESULT
 

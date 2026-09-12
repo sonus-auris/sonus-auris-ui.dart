@@ -26,8 +26,8 @@ grep -Fq '"$productionApplicationId.permission_lab"' "$GRADLE"
 grep -Fq 'Sonus Auris Permission Lab' "$GRADLE"
 grep -Fq 'sonusauris-permission-lab' "$GRADLE"
 grep -Fq 'deviceLabAndroidBuild && permissionLabAndroidBuild' "$GRADLE"
-grep -Fq 'permissionLabAndroidBuild && releaseTask != null' "$GRADLE"
-grep -Fq 'Permission-lab probes are debug-only' "$GRADLE"
+grep -Fq 'if (deviceLabAndroidBuild || permissionLabAndroidBuild)' "$GRADLE"
+grep -Fq 'device and permission lab identities are debug-only and cannot run release tasks' "$GRADLE"
 echo 'permission-denial contract group 1 passed: isolated build identity'
 
 # 2. Dart refuses to run outside the compile-time lab gate and proves denial
