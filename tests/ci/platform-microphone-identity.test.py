@@ -16,6 +16,9 @@ MACOS_CONFIG = ROOT / "macos/Runner/Configs/AppInfo.xcconfig"
 MACOS_DEBUG_ENTITLEMENTS = ROOT / "macos/Runner/DebugProfile.entitlements"
 MACOS_RELEASE_ENTITLEMENTS = ROOT / "macos/Runner/Release.entitlements"
 ANDROID_MANIFEST = ROOT / "android/app/src/main/AndroidManifest.xml"
+ANDROID_GRADLE = ROOT / "android/app/build.gradle.kts"
+PUBSPEC = ROOT / "pubspec.yaml"
+PUBSPEC_LOCK = ROOT / "pubspec.lock"
 ANDROID_NS = "http://schemas.android.com/apk/res/android"
 ANDROID = f"{{{ANDROID_NS}}}"
 EXPECTED_NAME = "Sonus Auris"
@@ -50,6 +53,19 @@ def assert_usage_description(value: object, platform: str) -> None:
     assert "audio" in normalized or "microphone" in normalized
 
 
+def locked_package_version(content: str, package: str) -> str | None:
+    in_package = False
+    for line in content.splitlines():
+        if line == f"  {package}:":
+            in_package = True
+            continue
+        if in_package and line.startswith("  ") and not line.startswith("    "):
+            return None
+        if in_package and line.startswith('    version: "') and line.endswith('"'):
+            return line.removeprefix('    version: "').removesuffix('"')
+    return None
+
+
 def validate(
     *,
     ios_info: bytes,
@@ -58,6 +74,9 @@ def validate(
     macos_debug_entitlements: bytes,
     macos_release_entitlements: bytes,
     android_manifest: str,
+    android_gradle: str,
+    pubspec: str,
+    pubspec_lock: str,
 ) -> None:
     ios = load_plist(ios_info)
     assert ios.get("CFBundleDisplayName") == EXPECTED_NAME
@@ -70,6 +89,13 @@ def validate(
     assert ios.get("BGTaskSchedulerPermittedIdentifiers") == [
         "com.pravera.flutter_foreground_task.refresh"
     ]
+    assert re.search(
+        r"(?m)^\s{2}flutter_foreground_task:\s*\^11\.0\.3\s*$",
+        pubspec,
+    ), "iOS UIScene startup requires flutter_foreground_task >=11.0.3"
+    assert locked_package_version(pubspec_lock, "flutter_foreground_task") == "11.0.3", (
+        "locked foreground-task plugin must include the early native registrar"
+    )
 
     macos = load_plist(macos_info)
     assert macos.get("CFBundleDisplayName") == EXPECTED_NAME
@@ -107,7 +133,11 @@ def validate(
 
     application = root.find("application")
     assert application is not None
-    assert application.get(ANDROID + "label") == EXPECTED_NAME
+    assert application.get(ANDROID + "label") == "${sonusAppLabel}"
+    app_label_block = android_gradle.split(
+        "val resolvedAppLabel = when {", 1
+    )[1].split("}", 1)[0]
+    assert f'else -> "{EXPECTED_NAME}"' in app_label_block
     assert application.get(ANDROID + "allowBackup") == "false"
     assert application.get(ANDROID + "usesCleartextTraffic") == "false"
 
@@ -135,6 +165,9 @@ def read_sources() -> dict[str, object]:
         "macos_debug_entitlements": MACOS_DEBUG_ENTITLEMENTS.read_bytes(),
         "macos_release_entitlements": MACOS_RELEASE_ENTITLEMENTS.read_bytes(),
         "android_manifest": ANDROID_MANIFEST.read_text(encoding="utf-8"),
+        "android_gradle": ANDROID_GRADLE.read_text(encoding="utf-8"),
+        "pubspec": PUBSPEC.read_text(encoding="utf-8"),
+        "pubspec_lock": PUBSPEC_LOCK.read_text(encoding="utf-8"),
     }
 
 
@@ -157,7 +190,7 @@ def main() -> None:
 
     mutated = dict(sources)
     mutated["android_manifest"] = str(sources["android_manifest"]).replace(
-        'android:label="Sonus Auris"',
+        'android:label="${sonusAppLabel}"',
         'android:label="sonus_auris_flutter"',
         1,
     )
@@ -199,6 +232,14 @@ def main() -> None:
     expect_mutation_failure(mutated, "missing iOS audio background mode")
 
     mutated = dict(sources)
+    mutated["pubspec_lock"] = str(sources["pubspec_lock"]).replace(
+        '    version: "11.0.3"',
+        '    version: "9.2.2"',
+        1,
+    )
+    expect_mutation_failure(mutated, "late iOS background-task registration")
+
+    mutated = dict(sources)
     mutated["macos_config"] = str(sources["macos_config"]).replace(
         "PRODUCT_NAME = Sonus Auris",
         "PRODUCT_NAME = Runner",
@@ -225,7 +266,8 @@ def main() -> None:
     print(
         "platform microphone identity contract passed: iOS identity/disclosure/background + "
         "macOS identity/disclosure/debug+release entitlements + Android label/permissions/"
-        "non-exported foreground microphone service + 8 mutation refusals"
+        "non-exported foreground microphone service + safe iOS task registrar + "
+        "9 mutation refusals"
     )
 
 
