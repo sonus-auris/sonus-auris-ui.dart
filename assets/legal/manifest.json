@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "sonus-auris/sonus-auris-docs",
+  "sourceCommit": "8e21168887f32b627328adcbb7f9978d178011e5",
+  "sourceContract": "contracts/mobile-legal.json",
+  "profile": "review-only",
+  "approvedForRelease": false,
+  "documents": [
+    {"id": "SONUS-EXT-MOBILE-EULA", "path": "docs/legal/external/additional/mobile-eula.md", "asset": "mobile-eula.md", "gitBlobSha": "3375edfb0b10e5672589d016ca8326d402ffee81", "bytes": 5274},
+    {"id": "SONUS-EXT-APPLE", "path": "docs/legal/external/additional/apple-platform-addendum.md", "asset": "apple-platform-addendum.md", "gitBlobSha": "b6ba0dfbc7502187d235dc83d9a1061cdc08a2e8", "bytes": 3587},
+    {"id": "SONUS-EXT-SUBSCRIPTION", "path": "docs/legal/external/additional/mobile-subscription-agreement.md", "asset": "mobile-subscription-agreement.md", "gitBlobSha": "0cfc38da4c878c3a45d64534001bbc04d4d85d7b", "bytes": 4169}
+  ]
+}
