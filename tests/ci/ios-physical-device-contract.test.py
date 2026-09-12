@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/device-lab/ios-attached-smoke.sh"
-CONTROLLER = ROOT / "scripts/device-lab/flutter-run-controller.py"
+DRIVER = ROOT / "scripts/device-lab/flutter-run-driver.py"
 
 PHYSICAL_ID = "00008120-001234567890001E"
 SIMULATOR_ID = "11111111-2222-3333-4444-555555555555"
@@ -150,10 +150,11 @@ def assert_redacted(evidence: Path) -> None:
 def main() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
-    subprocess.run([sys.executable, "-m", "py_compile", str(CONTROLLER)], check=True)
+    subprocess.run([sys.executable, "-m", "py_compile", str(DRIVER)], check=True)
 
-    assert "python3 scripts/device-lab/flutter-run-controller.py" in source
+    assert "python3 scripts/device-lab/flutter-run-driver.py" in source
     assert "--policy scripts/device-lab/evidence-policy.py" in source
+    assert "--max-log-bytes 524288" in source
     assert 'terminal_output_drained=true' in source
     assert 'fatal_runtime_markers_checked=true' in source
     assert "selectors" not in source, "the inline monitor should remain extracted"

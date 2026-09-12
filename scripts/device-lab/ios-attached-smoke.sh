@@ -116,7 +116,7 @@ driver_hold_required=true
 premature_exit_rejected=true
 retained_log_max_bytes=524288
 launch_cycles_requested=$LAUNCH_CYCLES
-controller=chunked-binary-stream
+driver=bounded-chunked-stream
 shared_evidence_policy=true
 SCOPE
 
@@ -131,11 +131,12 @@ run_launch_cycle() {
   set +e
   (
     cd "$ROOT"
-    python3 scripts/device-lab/flutter-run-controller.py \
+    python3 scripts/device-lab/flutter-run-driver.py \
       --policy scripts/device-lab/evidence-policy.py \
       --log "$EVIDENCE_DIR/$label-flutter-run.txt" \
       --timeout-seconds "$RUN_TIMEOUT_SECONDS" \
       --hold-seconds "$READY_HOLD_SECONDS" \
+      --max-log-bytes 524288 \
       --quit-timeout-seconds "$QUIT_TIMEOUT_SECONDS" \
       -- \
       flutter run \
