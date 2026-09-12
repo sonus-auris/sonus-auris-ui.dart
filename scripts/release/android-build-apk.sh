@@ -20,6 +20,11 @@ if [[ ! -f android/key.properties ]]; then
   exit 1
 fi
 
+if [[ -z "${SONUS_ANDROID_UPLOAD_CERT_SHA256:-}" ]]; then
+  echo "SONUS_ANDROID_UPLOAD_CERT_SHA256 is required for every release build." >&2
+  exit 1
+fi
+
 missing_config=()
 for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do
   [[ -n "${!name:-}" ]] || missing_config+=("$name")
@@ -50,7 +55,7 @@ fi
 node scripts/legal/require-production.mjs
 
 echo "Flutter: $(flutter --version | head -1)"
-flutter pub get
+flutter pub get --enforce-lockfile
 
 dart_define_args=()
 for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY; do

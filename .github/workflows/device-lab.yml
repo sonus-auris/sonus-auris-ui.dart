@@ -132,8 +132,9 @@ jobs:
           grep -Fq 'launch_cycles_completed=' "$ios_device"
           grep -Fq 'terminal_output_drained=true' "$ios_device"
           grep -Fq 'fatal_runtime_markers_checked=true' "$ios_device"
-          grep -Fq 'python3 "$CYCLE_MONITOR"' "$ios_device"
-          grep -Fq 'python3 "$EVIDENCE_POLICY" --stream' "$ios_device"
+          grep -Fq 'python3 scripts/device-lab/flutter-run-driver.py' "$ios_device"
+          grep -Fq -- '--policy scripts/device-lab/evidence-policy.py' "$ios_device"
+          grep -Fq -- '--max-log-bytes 524288' "$ios_device"
           grep -Fq 'selected.get("emulator")' "$ios_device"
           grep -Fq 'The requested Flutter target is an emulator, not a physical iPhone' "$ios_device"
           grep -Fq 'data_container_preserved=true' "$ios_simulator"
@@ -172,7 +173,7 @@ jobs:
           grep -Fq 'login_item_mutation_suppressed=true' "$script"
           grep -Fq 'recording_automated=false' "$script"
           grep -Fq 'preexisting_app_disturbed=false' "$script"
-          grep -Fq "tell application id \\\"\$RUNTIME_BUNDLE_ID\\\" to quit" "$script"
+          grep -Fq 'tell application id \"$RUNTIME_BUNDLE_ID\" to quit' "$script"
           grep -Fq "const bool kSonusDeviceLabNoSideEffects" "$source"
           grep -Fq "if (!isSupported || kSonusDeviceLabNoSideEffects) return;" "$source"
           if grep -En 'rm -|rm$|find .* -delete|simctl erase|adb(_)? .*uninstall' scripts/device-lab/*.sh; then
@@ -180,7 +181,7 @@ jobs:
             exit 1
           fi
           unexpected_clears="$(
-            grep -En 'pm clear' scripts/device-lab/*.sh 2>/dev/null |
+            grep -En 'pm[[:space:]]+clear([[:space:]]|$)' scripts/device-lab/*.sh 2>/dev/null |
               grep -Fv 'android-recording-probe.sh:' |
               grep -Fv 'pm clear "$LAB_PKG"' || true
           )"
@@ -310,26 +311,19 @@ jobs:
           disable-animations: true
           script: bash scripts/device-lab/android-emulator-probes.sh
 
-      - name: Redact and verify permission-denial evidence
-        id: permission_evidence_policy
+      - name: Redact and verify isolated Android evidence
+        id: evidence_policy
         if: always()
         env:
-          SONUS_DEVICE_LAB_DIR: ${{ github.workspace }}/isolated-android-permission-evidence
+          SONUS_ANDROID_PERMISSION_EVIDENCE_DIR: ${{ github.workspace }}/isolated-android-permission-evidence
+          SONUS_ANDROID_RECORDING_EVIDENCE_DIR: ${{ github.workspace }}/isolated-android-recording-evidence
         run: |
-          mkdir -p "$SONUS_DEVICE_LAB_DIR"
-          python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
-
-      - name: Redact and verify recording evidence
-        id: recording_evidence_policy
-        if: always()
-        env:
-          SONUS_DEVICE_LAB_DIR: ${{ github.workspace }}/isolated-android-recording-evidence
-        run: |
-          mkdir -p "$SONUS_DEVICE_LAB_DIR"
-          python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_DEVICE_LAB_DIR"
+          mkdir -p "$SONUS_ANDROID_PERMISSION_EVIDENCE_DIR" "$SONUS_ANDROID_RECORDING_EVIDENCE_DIR"
+          python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_ANDROID_PERMISSION_EVIDENCE_DIR"
+          python3 scripts/device-lab/evidence-policy.py --redact "$SONUS_ANDROID_RECORDING_EVIDENCE_DIR"
 
       - name: Upload sanitized permission-denial evidence
-        if: ${{ always() && steps.permission_evidence_policy.outcome == 'success' }}
+        if: ${{ always() && steps.evidence_policy.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonus-isolated-android-permission-denial-evidence
@@ -338,7 +332,7 @@ jobs:
           retention-days: 7
 
       - name: Upload sanitized recording evidence
-        if: ${{ always() && steps.recording_evidence_policy.outcome == 'success' }}
+        if: ${{ always() && steps.evidence_policy.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sonus-isolated-android-recording-evidence
