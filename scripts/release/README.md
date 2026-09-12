@@ -9,13 +9,16 @@ The durable Android/Google Play identity is `com.ores.sonus_auris`. The earlier
 `com.ores.audio_dashcam` identifier is not a supported publication target and has
 no store migration role. The release workflow fails before compilation when its
 package target diverges from Gradle, then inspects the built AAB with a pinned,
-checksum-verified bundletool and confirms its signer matches the configured upload
-keystore before any Google Play edit can be created.
+checksum-verified bundletool and confirms its signer matches both the configured
+upload keystore and the owner-reviewed `SONUS_ANDROID_UPLOAD_CERT_SHA256` before
+any Google Play edit can be created. No release task has a debug-signing bypass.
 
 - **[preflight.sh](preflight.sh)** — read-only pre-release gate; non-zero exit if
   a hard gate fails, warnings for soft gates (compliance docs, signing).
 - **[check_android_package_contract.py](check_android_package_contract.py)** —
   fail-closed static comparison of Gradle and both Play publication calls.
+- **[test_android_release_contract.py](test_android_release_contract.py)** —
+  adversarial static checks for identity, signing, workflow, and cleanup drift.
 - **[verify-android-publication.sh](verify-android-publication.sh)** — inspect the
   exact AAB package and compare its SHA-256 signing-certificate fingerprint with
   the protected upload keystore.

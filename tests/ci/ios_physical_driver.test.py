@@ -146,6 +146,7 @@ class PhysicalIosDriverTest(unittest.TestCase):
     def test_physical_harness_uses_driver_and_remains_non_destructive(self) -> None:
         script = IOS_SCRIPT_PATH.read_text(encoding="utf-8")
         self.assertIn('flutter-run-driver.py', script)
+        self.assertIn('--policy scripts/device-lab/evidence-policy.py', script)
         self.assertIn('--max-log-bytes 524288', script)
         self.assertNotIn('subprocess.Popen(', script)
         self.assertNotIn('return_code not in (0, -15)', script)
