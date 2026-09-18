@@ -46,7 +46,7 @@ if [[ -n "${SONUS_BUILD_NUMBER:-}" ]]; then
   build_args+=(--build-number="$SONUS_BUILD_NUMBER")
 fi
 
-echo "Flutter: $(flutter --version | head -1)"
+# Review-only legal assets may compile in unsigned canaries, but signed production artifacts must fail closed until approval.\nnode scripts/legal/require-production.mjs\n\necho "Flutter: $(flutter --version | head -1)"
 flutter pub get
 
 dart_define_args=()
