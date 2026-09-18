@@ -77,7 +77,10 @@ dependencies:
   path: ^1.9.1
   audio_session: ^0.2.3
   flutter_tts: ^4.2.0
-  flutter_foreground_task: ^9.2.2
+  # 11.0.3 registers iOS BGTaskScheduler handlers before application launch
+  # completes under Flutter's UIScene/implicit-engine lifecycle. Earlier
+  # releases crash at startup when Flutter replays didFinishLaunching later.
+  flutter_foreground_task: ^11.0.3
   battery_plus: ^6.2.1
   connectivity_plus: ^6.1.0
   fftea: ^1.5.0+1
@@ -115,3 +118,8 @@ flutter:
   assets:
     - macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_32.png
     - windows/runner/resources/app_icon.ico
+    # Immutable external-only legal review snapshots. Production is gated.
+    - assets/legal/manifest.json
+    - assets/legal/mobile-eula.md
+    - assets/legal/apple-platform-addendum.md
+    - assets/legal/mobile-subscription-agreement.md
