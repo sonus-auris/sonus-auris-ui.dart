@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import codecs
+import importlib.util
 import os
 import re
 import selectors
@@ -21,7 +22,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence, TextIO
+from typing import Callable, Sequence, TextIO
 
 DEFAULT_MAX_LOG_BYTES = 512 * 1024
 DEFAULT_QUIT_TIMEOUT_SECONDS = 30.0
@@ -97,6 +98,24 @@ def sanitize(text: str) -> str:
     for pattern, replacement in REDACTIONS:
         clean = pattern.sub(replacement, clean)
     return clean
+
+
+def load_sanitizer(path: Path) -> Callable[[str], str]:
+    spec = importlib.util.spec_from_file_location("sonus_evidence_policy", path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"cannot load evidence policy: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    sanitize_text = getattr(module, "sanitize_text", None)
+    if not callable(sanitize_text):
+        raise ValueError(f"evidence policy does not expose sanitize_text: {path}")
+
+    def combined(text: str) -> str:
+        clean, _ = sanitize_text(text)
+        return sanitize(clean)
+
+    return combined
 
 
 def utf8_prefix(data: bytes, limit: int) -> bytes:
@@ -218,6 +237,7 @@ def run_driver(
     max_log_bytes: int = DEFAULT_MAX_LOG_BYTES,
     quit_timeout_seconds: float = DEFAULT_QUIT_TIMEOUT_SECONDS,
     output: TextIO = sys.stdout,
+    sanitizer: Callable[[str], str] = sanitize,
 ) -> DriverResult:
     if not command:
         raise ValueError("a flutter command is required")
@@ -260,7 +280,7 @@ def run_driver(
                 ready_at = time.monotonic()
             if any(marker in line for marker in FAILURE_MARKERS):
                 failure_marker_seen = True
-            emit(sanitize(line), output, retained)
+            emit(sanitizer(line), output, retained)
         if final and pending:
             line = pending
             pending = ""
@@ -268,7 +288,7 @@ def run_driver(
                 ready_at = time.monotonic()
             if any(marker in line for marker in FAILURE_MARKERS):
                 failure_marker_seen = True
-            emit(sanitize(line), output, retained)
+            emit(sanitizer(line), output, retained)
 
     try:
         while True:
@@ -372,6 +392,7 @@ def run_driver(
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--policy", required=True, type=Path)
     parser.add_argument("--log", required=True, type=Path)
     parser.add_argument("--timeout-seconds", required=True, type=float)
     parser.add_argument("--hold-seconds", required=True, type=float)
@@ -397,6 +418,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         hold_seconds=args.hold_seconds,
         max_log_bytes=args.max_log_bytes,
         quit_timeout_seconds=args.quit_timeout_seconds,
+        sanitizer=load_sanitizer(args.policy),
     )
     return 0 if result.passed else 1
 
