@@ -5,6 +5,8 @@
 # file. Read by android/app/build.gradle.kts. storeFile is relative to android/app/.
 #
 # With Play App Signing enabled (recommended), this is only your *upload* key.
+# Every release build also requires SONUS_ANDROID_UPLOAD_CERT_SHA256 to contain
+# the owner-reviewed SHA-256 fingerprint for this exact upload certificate.
 
 storeFile=upload-keystore.jks
 keyAlias=upload

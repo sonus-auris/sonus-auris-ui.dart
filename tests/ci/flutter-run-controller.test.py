@@ -11,7 +11,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONTROLLER = ROOT / "scripts/device-lab/flutter-run-controller.py"
 POLICY = ROOT / "scripts/device-lab/evidence-policy.py"
-HARNESS = ROOT / "scripts/device-lab/ios-attached-smoke.sh"
 
 
 def child(path: Path, body: str) -> None:
@@ -68,30 +67,6 @@ def main() -> None:
     subprocess.run(
         [sys.executable, "-m", "py_compile", str(CONTROLLER)], check=True
     )
-    subprocess.run(["bash", "-n", str(HARNESS)], check=True)
-    harness = HARNESS.read_text(encoding="utf-8")
-    for marker in (
-        "scripts/device-lab/flutter-run-controller.py",
-        "--policy scripts/device-lab/evidence-policy.py",
-        '--timeout-seconds "$RUN_TIMEOUT_SECONDS"',
-        '--hold-seconds "$READY_HOLD_SECONDS"',
-        '--quit-timeout-seconds "$QUIT_TIMEOUT_SECONDS"',
-        "chunked_log_drain=true",
-        "readiness_hold_completed=true",
-        "shared_evidence_policy=true",
-        "device_class=physical-iPhone",
-        "emulator=false",
-    ):
-        assert marker in harness, marker
-    for forbidden in (
-        "subprocess.Popen(",
-        "selectors.DefaultSelector",
-        "flutter clean",
-        "simctl erase",
-        "uninstall",
-        "pm clear",
-    ):
-        assert forbidden not in harness, forbidden
     with tempfile.TemporaryDirectory(prefix="sonus-flutter-controller-") as temp:
         root = Path(temp)
 

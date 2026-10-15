@@ -45,6 +45,8 @@ Android signing and Play upload:
 - `ANDROID_UPLOAD_KEYSTORE_PASSWORD`
 - `ANDROID_UPLOAD_KEY_ALIAS`
 - `ANDROID_UPLOAD_KEY_PASSWORD`
+- `ANDROID_UPLOAD_CERT_SHA256` — owner-reviewed SHA-256 fingerprint for the
+  enrolled upload certificate; a different otherwise-valid key fails closed
 - `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` — service account with only the required
   app/track permissions in Play Console
 
@@ -63,6 +65,18 @@ Publication is a separate boolean dispatch input and remains behind the protecte
 environment. Android defaults to the internal track. The iOS upload only sends a
 build to App Store Connect for processing/TestFlight; it does not submit an app
 version for review or release it to customers.
+
+`sonus-auris/sonus-auris-ui.dart` is the sole source allowed to publish the
+`com.ores.sonus_auris` Android package. The older
+`sonus-auris/sonus-auris-flutter.dart` repository must not publish or register a
+second app with that identity. Resolve or retire its duplicate release workflow
+before any provider submission.
+
+Android release inputs are explicit: both version name and version code are
+required at dispatch. There is no debug-signed release bypass. Gradle validates
+the keystore, alias, key password, non-debug certificate, and owner-pinned
+fingerprint before it creates a release artifact; the post-build verifier then
+checks that the AAB package and signer still match those authorities.
 
 The Android artifact includes both formats with one checksum manifest:
 

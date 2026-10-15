@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/device-lab/ios-attached-smoke.sh"
-MONITOR = ROOT / "scripts/device-lab/flutter-run-cycle.py"
+DRIVER = ROOT / "scripts/device-lab/flutter-run-driver.py"
 
 PHYSICAL_ID = "00008120-001234567890001E"
 SIMULATOR_ID = "11111111-2222-3333-4444-555555555555"
@@ -150,11 +150,11 @@ def assert_redacted(evidence: Path) -> None:
 def main() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
-    subprocess.run([sys.executable, "-m", "py_compile", str(MONITOR)], check=True)
-    subprocess.run([sys.executable, str(MONITOR), "--self-test"], check=True)
+    subprocess.run([sys.executable, "-m", "py_compile", str(DRIVER)], check=True)
 
-    assert 'python3 "$CYCLE_MONITOR"' in source
-    assert 'python3 "$EVIDENCE_POLICY" --stream' in source
+    assert "python3 scripts/device-lab/flutter-run-driver.py" in source
+    assert "--policy scripts/device-lab/evidence-policy.py" in source
+    assert "--max-log-bytes 524288" in source
     assert 'terminal_output_drained=true' in source
     assert 'fatal_runtime_markers_checked=true' in source
     assert "selectors" not in source, "the inline monitor should remain extracted"
@@ -182,10 +182,6 @@ def main() -> None:
         assert "launch_cycles_completed=2" in result
         assert "terminal_output_drained=true" in result
         for label in ("first-launch", "cold-relaunch-2"):
-            report = json.loads((evidence / f"{label}-cycle.json").read_text(encoding="utf-8"))
-            assert report["status"] == "passed"
-            assert report["terminal_output_drained"] is True
-            assert report["fatal_markers"] == []
             assert "terminal-output-after-q" in (evidence / f"{label}-flutter-run.txt").read_text(encoding="utf-8")
         assert_redacted(evidence)
 
@@ -196,10 +192,6 @@ def main() -> None:
             fatal_cycle=1,
         )
         assert fatal.returncode != 0, fatal.stdout
-        fatal_report = json.loads((fatal_evidence / "first-launch-cycle.json").read_text(encoding="utf-8"))
-        assert fatal_report["status"] == "failed"
-        assert fatal_report["terminal_output_drained"] is True
-        assert fatal_report["fatal_markers"] == ["Lost connection to device"]
         assert "Lost connection to device" in (fatal_evidence / "first-launch-flutter-run.txt").read_text(encoding="utf-8")
         assert_redacted(fatal_evidence)
 

@@ -11,6 +11,9 @@ on:
       - macos/Runner/DebugProfile.entitlements
       - macos/Runner/Release.entitlements
       - android/app/src/main/AndroidManifest.xml
+      - android/app/build.gradle.kts
+      - pubspec.yaml
+      - pubspec.lock
       - tests/ci/platform-microphone-identity.test.py
       - .github/workflows/platform-microphone-identity.yml
   pull_request:
@@ -21,6 +24,9 @@ on:
       - macos/Runner/DebugProfile.entitlements
       - macos/Runner/Release.entitlements
       - android/app/src/main/AndroidManifest.xml
+      - android/app/build.gradle.kts
+      - pubspec.yaml
+      - pubspec.lock
       - tests/ci/platform-microphone-identity.test.py
       - .github/workflows/platform-microphone-identity.yml
 
