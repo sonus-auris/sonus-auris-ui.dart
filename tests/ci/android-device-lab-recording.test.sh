@@ -34,8 +34,8 @@ python3 "$BOUNDED_LOG" --self-test
 # environment gate, and that identity must remain release-ineligible.
 grep -Fq 'System.getenv("SONUS_DEVICE_LAB_ANDROID") == "1"' "$GRADLE"
 grep -Fq '"$productionApplicationId.device_lab"' "$GRADLE"
-grep -Fq 'if (deviceLabAndroidBuild && releaseTask != null)' "$GRADLE"
-grep -Fq 'Device-lab recording probes are debug-only' "$GRADLE"
+grep -Fq 'if (deviceLabAndroidBuild || permissionLabAndroidBuild)' "$GRADLE"
+grep -Fq 'device and permission lab identities are debug-only and cannot run release tasks' "$GRADLE"
 
 # 2. The visible label and all custom-scheme handlers must be placeholders so
 # the isolated package cannot impersonate production auth/invite/OAuth links.

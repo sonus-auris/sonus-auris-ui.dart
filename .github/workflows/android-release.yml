@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       build_name:
-        description: Public version name (leave blank to use pubspec.yaml)
+        description: Public semantic version name (for example 1.2.3)
         type: string
-        required: false
+        required: true
       build_number:
-        description: Monotonically increasing Play versionCode (blank uses this workflow run number)
+        description: Positive, monotonically increasing Play versionCode
         type: string
-        required: false
+        required: true
       publish_to_play:
         description: Upload and commit this build through the Google Play Developer API
         type: boolean
@@ -60,6 +60,7 @@ jobs:
       STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
       KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
       KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+      SONUS_ANDROID_UPLOAD_CERT_SHA256: ${{ secrets.ANDROID_UPLOAD_CERT_SHA256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -85,7 +86,7 @@ jobs:
       - name: Require production configuration and upload key
         run: |
           missing=()
-          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY KEYSTORE_B64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD SONUS_BUILD_NUMBER; do
+          for name in SONUS_BACKEND_BASE_URL SONUS_SUPABASE_URL SONUS_SUPABASE_ANON_KEY KEYSTORE_B64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD SONUS_ANDROID_UPLOAD_CERT_SHA256 SONUS_BUILD_NAME SONUS_BUILD_NUMBER; do
             [[ -n "${!name:-}" ]] || missing+=("$name")
           done
           if (( ${#missing[@]} > 0 )); then
@@ -94,6 +95,15 @@ jobs:
           fi
           [[ "$SONUS_BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
             echo "::error::build_number must be a positive integer"
+            exit 1
+          }
+          [[ "$SONUS_BUILD_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][A-Za-z0-9.-]+)?$ ]] || {
+            echo "::error::build_name must be SemVer-like"
+            exit 1
+          }
+          normalized_fingerprint="${SONUS_ANDROID_UPLOAD_CERT_SHA256//:/}"
+          [[ "$normalized_fingerprint" =~ ^[0-9A-Fa-f]{64}$ ]] || {
+            echo "::error::ANDROID_UPLOAD_CERT_SHA256 must be a 64-digit SHA-256 fingerprint"
             exit 1
           }
 
@@ -110,17 +120,19 @@ jobs:
       - name: Install ephemeral Android upload key
         run: |
           umask 077
-          printf '%s' "$KEYSTORE_B64" | base64 --decode > android/app/upload-keystore.jks
+          keystore_path="$RUNNER_TEMP/sonus-auris-upload-keystore.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$keystore_path"
           {
-            printf 'storeFile=upload-keystore.jks\n'
+            printf 'storeFile=%s\n' "$keystore_path"
             printf 'storePassword=%s\n' "$STORE_PASSWORD"
             printf 'keyAlias=%s\n' "$KEY_ALIAS"
             printf 'keyPassword=%s\n' "$KEY_PASSWORD"
           } > android/key.properties
+          printf 'ANDROID_UPLOAD_KEYSTORE_PATH=%s\n' "$keystore_path" >> "$GITHUB_ENV"
 
       - name: Test release candidate
         run: |
-          flutter pub get
+          flutter pub get --enforce-lockfile
           flutter analyze --no-fatal-infos
           flutter test
 
@@ -199,4 +211,8 @@ jobs:
 
       - name: Remove ephemeral upload key
         if: always()
-        run: rm -f android/key.properties android/app/upload-keystore.jks
+        run: |
+          keystore_path="${ANDROID_UPLOAD_KEYSTORE_PATH:-$RUNNER_TEMP/sonus-auris-upload-keystore.jks}"
+          for path in android/key.properties "$keystore_path"; do
+            [[ ! -e "$path" ]] || shred --force --remove "$path"
+          done

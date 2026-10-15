@@ -1,5 +1,9 @@
+import java.io.File
 import java.io.FileInputStream
+import java.security.KeyStore
+import java.security.MessageDigest
 import java.util.Properties
+import org.gradle.api.GradleException
 
 plugins {
     id("com.android.application")
@@ -7,15 +11,81 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// Release signing is driven by an untracked `android/key.properties` (already in
-// android/.gitignore). When it is absent — local dev, CI without secrets — the
-// release build falls back to the debug keystore so `flutter run --release` still
-// works exactly as before. Provide key.properties (storeFile, storePassword,
-// keyAlias, keyPassword) to ship a properly-signed, tamper-evident release.
-val keystoreProperties = Properties()
+class ReleaseSigningMaterial(
+    val keystore: File,
+    val storePassword: String,
+    val keyAlias: String,
+    val keyPassword: String,
+)
+
 val keystorePropertiesFile = rootProject.file("key.properties")
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+
+fun requiredReleaseProperty(
+    properties: Properties,
+    name: String,
+    trim: Boolean = false,
+): String {
+    val raw = properties.getProperty(name).orEmpty()
+    if (raw.isBlank() || raw == "CHANGE_ME") {
+        throw GradleException("DEN-2843: android/key.properties requires non-placeholder $name")
+    }
+    return if (trim) raw.trim() else raw
+}
+
+fun requiredReleaseEnvironment(name: String): String {
+    val value = System.getenv(name)?.trim().orEmpty()
+    if (value.isEmpty()) {
+        throw GradleException("DEN-2843: Android release signing requires non-blank $name")
+    }
+    return value
+}
+
+fun normalizeSha256Fingerprint(value: String): String {
+    val normalized = value.filter(Char::isLetterOrDigit).uppercase()
+    if (!Regex("[0-9A-F]{64}").matches(normalized)) {
+        throw GradleException(
+            "DEN-2843: SONUS_ANDROID_UPLOAD_CERT_SHA256 must be a 64-digit SHA-256 fingerprint",
+        )
+    }
+    return normalized
+}
+
+fun loadReleaseKeyStore(path: File, password: CharArray): KeyStore {
+    val failures = mutableListOf<String>()
+    for (type in listOf("PKCS12", "JKS")) {
+        try {
+            val keyStore = KeyStore.getInstance(type)
+            FileInputStream(path).use { stream -> keyStore.load(stream, password) }
+            return keyStore
+        } catch (error: Exception) {
+            failures += "$type:${error.javaClass.simpleName}"
+        }
+    }
+    throw GradleException(
+        "DEN-2843: release keystore is unreadable or its password is invalid (${failures.joinToString()})",
+    )
+}
+
+fun certificateSha256(keyStore: KeyStore, alias: String): String {
+    if (!keyStore.containsAlias(alias) || !keyStore.isKeyEntry(alias)) {
+        throw GradleException("DEN-2843: release key alias is absent or is not a private-key entry")
+    }
+    val certificate = keyStore.getCertificate(alias)
+        ?: throw GradleException("DEN-2843: release key alias has no certificate")
+    if (certificate.toString().contains("CN=Android Debug", ignoreCase = true)) {
+        throw GradleException("DEN-2843: the Android Debug certificate is forbidden for releases")
+    }
+    return MessageDigest.getInstance("SHA-256")
+        .digest(certificate.encoded)
+        .joinToString(separator = "") { byte ->
+            (byte.toInt() and 0xff).toString(16).padStart(2, '0').uppercase()
+        }
+}
+
+// Android Studio sync and ordinary debug/profile builds must not require
+// production credentials. Every explicitly requested release task does.
+val releaseTaskRequested = gradle.startParameter.taskNames.any { taskName ->
+    taskName.contains("release", ignoreCase = true)
 }
 
 // Device probes must never share the Play Store package, deep-link handlers, or
@@ -43,6 +113,66 @@ val resolvedUriScheme = when {
     deviceLabAndroidBuild -> "sonusauris-device-lab"
     permissionLabAndroidBuild -> "sonusauris-permission-lab"
     else -> "sonusauris"
+}
+
+val releaseSigningMaterial = if (releaseTaskRequested) {
+    if (deviceLabAndroidBuild || permissionLabAndroidBuild) {
+        throw GradleException(
+            "DEN-2843: device and permission lab identities are debug-only and cannot run release tasks",
+        )
+    }
+    if (!keystorePropertiesFile.isFile || !keystorePropertiesFile.canRead()) {
+        throw GradleException(
+            "DEN-2843: android/key.properties is required for every Android release task",
+        )
+    }
+
+    val properties = Properties()
+    FileInputStream(keystorePropertiesFile).use(properties::load)
+    val storePath = requiredReleaseProperty(properties, "storeFile", trim = true)
+    val storePassword = requiredReleaseProperty(properties, "storePassword")
+    val keyAlias = requiredReleaseProperty(properties, "keyAlias", trim = true)
+    val keyPassword = requiredReleaseProperty(properties, "keyPassword")
+    if (keyAlias.equals("androiddebugkey", ignoreCase = true)) {
+        throw GradleException("DEN-2843: the Android debug key alias is forbidden for releases")
+    }
+
+    val keystore = file(storePath).canonicalFile
+    val defaultDebugKeystore = File(System.getProperty("user.home"), ".android/debug.keystore")
+        .canonicalFile
+    if (!keystore.isFile || !keystore.canRead()) {
+        throw GradleException("DEN-2843: release keystore must be an existing readable file")
+    }
+    if (keystore == defaultDebugKeystore || keystore.name.equals("debug.keystore", ignoreCase = true)) {
+        throw GradleException("DEN-2843: the Android debug keystore is forbidden for releases")
+    }
+
+    val keyStore = loadReleaseKeyStore(keystore, storePassword.toCharArray())
+    try {
+        keyStore.getKey(keyAlias, keyPassword.toCharArray())
+            ?: throw GradleException("DEN-2843: release key alias has no private key")
+    } catch (error: GradleException) {
+        throw error
+    } catch (error: Exception) {
+        throw GradleException("DEN-2843: release key password is invalid", error)
+    }
+    val expectedFingerprint = normalizeSha256Fingerprint(
+        requiredReleaseEnvironment("SONUS_ANDROID_UPLOAD_CERT_SHA256"),
+    )
+    if (certificateSha256(keyStore, keyAlias) != expectedFingerprint) {
+        throw GradleException(
+            "DEN-2843: release certificate SHA-256 does not match the owner-pinned upload fingerprint",
+        )
+    }
+
+    ReleaseSigningMaterial(
+        keystore = keystore,
+        storePassword = storePassword,
+        keyAlias = keyAlias,
+        keyPassword = keyPassword,
+    )
+} else {
+    null
 }
 
 android {
@@ -84,27 +214,20 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            if (keystorePropertiesFile.exists()) {
-                keyAlias = keystoreProperties["keyAlias"] as String
-                keyPassword = keystoreProperties["keyPassword"] as String
-                storeFile = (keystoreProperties["storeFile"] as String?)?.let { file(it) }
-                storePassword = keystoreProperties["storePassword"] as String
+        releaseSigningMaterial?.let { material ->
+            create("release") {
+                keyAlias = material.keyAlias
+                keyPassword = material.keyPassword
+                storeFile = material.keystore
+                storePassword = material.storePassword
             }
         }
     }
 
     buildTypes {
         release {
-            // Sign with the real release keystore when key.properties is present;
-            // otherwise fall back to debug signing so config-time evaluation (which
-            // happens for ALL builds, including debug) never fails. The guard below
-            // is what actually blocks a *debug-signed release artifact* from being
-            // produced — deferred to execution time so only release tasks are gated.
-            signingConfig = if (keystorePropertiesFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            releaseSigningMaterial?.let {
+                signingConfig = signingConfigs.getByName("release")
             }
             // Keep rules for TFLite's reflective GPU-delegate references.
             proguardFiles(
@@ -128,51 +251,4 @@ dependencies {
 
 flutter {
     source = "../.."
-}
-
-// Guard: never ship a DEBUG-SIGNED release. Google Play rejects debug-signed
-// uploads, and an accidental upload would be signed with the wrong (non-upload)
-// key. If key.properties is missing and a release-assembling task is scheduled,
-// fail — unless the developer explicitly opts in for a local, non-store build
-// (`flutter run --release`) via -Pallow_debug_signed_release=true or
-// ALLOW_DEBUG_SIGNED_RELEASE=1. The store scripts never set these, so a mis-keyed
-// AAB/APK can never be produced by CI or `scripts/release/*`.
-gradle.taskGraph.whenReady {
-    val releaseTask = allTasks.firstOrNull { task ->
-        val name = task.name
-        name.contains("Release") &&
-            (name.startsWith("assemble") ||
-                name.startsWith("bundle") ||
-                name.startsWith("package") ||
-                name.startsWith("sign"))
-    }
-
-    // Keep independent guards for each isolated identity. The explicit
-    // recording-lab guard is also a stable contract for the parent device lab.
-    if (deviceLabAndroidBuild && releaseTask != null) {
-        throw GradleException(
-            "Refusing to build device-lab application ID '$resolvedApplicationId' " +
-                "with release task '${releaseTask.path}'. Device-lab recording probes are debug-only."
-        )
-    }
-    if (permissionLabAndroidBuild && releaseTask != null) {
-        throw GradleException(
-            "Refusing to build permission-lab application ID '$resolvedApplicationId' " +
-                "with release task '${releaseTask.path}'. Permission-lab probes are debug-only."
-        )
-    }
-
-    val keystoreMissing = !rootProject.file("key.properties").exists()
-    val allowDebugRelease =
-        (project.findProperty("allow_debug_signed_release") as String?)?.toBoolean() == true ||
-        System.getenv("ALLOW_DEBUG_SIGNED_RELEASE") == "1"
-    if (keystoreMissing && !allowDebugRelease && releaseTask != null) {
-        throw GradleException(
-            "Refusing to build a DEBUG-SIGNED release ('${releaseTask.path}'): " +
-                "android/key.properties is missing. Create it via " +
-                "scripts/release/android-generate-keystore.sh for a real signed build, " +
-                "or, for a local non-store `flutter run --release`, pass " +
-                "-Pallow_debug_signed_release=true (or ALLOW_DEBUG_SIGNED_RELEASE=1)."
-        )
-    }
 }

@@ -21,6 +21,20 @@ keystore="${ANDROID_UPLOAD_KEYSTORE_PATH:-android/app/upload-keystore.jks}"
   echo "verify-android-publication: KEY_ALIAS and STORE_PASSWORD are required" >&2
   exit 1
 }
+[[ -n "${SONUS_ANDROID_UPLOAD_CERT_SHA256:-}" ]] || {
+  echo "verify-android-publication: SONUS_ANDROID_UPLOAD_CERT_SHA256 is required" >&2
+  exit 1
+}
+
+owner_fingerprint="$(
+  printf '%s' "$SONUS_ANDROID_UPLOAD_CERT_SHA256" |
+    tr -d ':[:space:]' |
+    tr '[:lower:]' '[:upper:]'
+)"
+[[ "$owner_fingerprint" =~ ^[0-9A-F]{64}$ ]] || {
+  echo "verify-android-publication: owner-pinned SHA-256 fingerprint is malformed" >&2
+  exit 1
+}
 
 python3 scripts/release/check_android_package_contract.py \
   --expected "$expected_package" \
@@ -32,8 +46,16 @@ bundletool_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/sonus-auris-bundletool"
 bundletool_jar="$bundletool_dir/bundletool-all-$bundletool_version.jar"
 mkdir -p "$bundletool_dir"
 
+file_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 if [[ ! -f "$bundletool_jar" ]] ||
-   ! printf '%s  %s\n' "$bundletool_sha256" "$bundletool_jar" | sha256sum --check --status; then
+   [[ "$(file_sha256 "$bundletool_jar")" != "$bundletool_sha256" ]]; then
   curl --fail --location --silent --show-error \
     --retry 3 \
     --proto '=https' \
@@ -41,7 +63,7 @@ if [[ ! -f "$bundletool_jar" ]] ||
     "https://github.com/google/bundletool/releases/download/$bundletool_version/bundletool-all-$bundletool_version.jar" \
     --output "$bundletool_jar"
 fi
-printf '%s  %s\n' "$bundletool_sha256" "$bundletool_jar" | sha256sum --check --status || {
+[[ "$(file_sha256 "$bundletool_jar")" == "$bundletool_sha256" ]] || {
   echo "verify-android-publication: bundletool checksum mismatch" >&2
   exit 1
 }
@@ -62,26 +84,30 @@ actual_package="$(
 }
 
 export LC_ALL=C
-expected_fingerprint="$(
+keystore_fingerprint="$(
   keytool -list -v \
     -keystore "$keystore" \
     -alias "$KEY_ALIAS" \
     -storepass:env STORE_PASSWORD 2>/dev/null |
-    awk -F': ' '/SHA256:/{gsub(/[[:space:]]/, "", $2); print toupper($2); exit}'
+    awk -F': ' '/SHA256:/{gsub(/[^0-9A-Fa-f]/, "", $2); print toupper($2); exit}'
 )"
-actual_fingerprint="$(
+artifact_fingerprint="$(
   keytool -printcert -jarfile "$bundle" 2>/dev/null |
-    awk -F': ' '/SHA256:/{gsub(/[[:space:]]/, "", $2); print toupper($2); exit}'
+    awk -F': ' '/SHA256:/{gsub(/[^0-9A-Fa-f]/, "", $2); print toupper($2); exit}'
 )"
 
-[[ -n "$expected_fingerprint" && -n "$actual_fingerprint" ]] || {
+[[ -n "$keystore_fingerprint" && -n "$artifact_fingerprint" ]] || {
   echo "verify-android-publication: could not read both SHA-256 certificate fingerprints" >&2
   exit 1
 }
-[[ "$actual_fingerprint" == "$expected_fingerprint" ]] || {
+[[ "$keystore_fingerprint" == "$owner_fingerprint" ]] || {
+  echo "verify-android-publication: configured keystore does not match the owner-pinned upload certificate" >&2
+  exit 1
+}
+[[ "$artifact_fingerprint" == "$owner_fingerprint" ]] || {
   echo "verify-android-publication: AAB signer does not match the configured upload key" >&2
   exit 1
 }
 
 printf 'Verified Android publication artifact: package=%s signer_sha256=%s\n' \
-  "$actual_package" "$actual_fingerprint"
+  "$actual_package" "$artifact_fingerprint"
