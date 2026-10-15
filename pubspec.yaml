@@ -115,3 +115,8 @@ flutter:
   assets:
     - macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_32.png
     - windows/runner/resources/app_icon.ico
+    # Immutable external-only legal review snapshots. Production is gated.
+    - assets/legal/manifest.json
+    - assets/legal/mobile-eula.md
+    - assets/legal/apple-platform-addendum.md
+    - assets/legal/mobile-subscription-agreement.md
